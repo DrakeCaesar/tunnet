@@ -622,6 +622,11 @@ function addressRegion(address: string): string {
   return parts.length >= 2 ? parts[1] : "0";
 }
 
+function addressSubnet(address: string): string {
+  const parts = address.split(".");
+  return parts.length >= 3 ? parts[2] : "0";
+}
+
 /**
  * Phase 5 synthesizer: hierarchical "tree of rings".
  *
@@ -655,7 +660,15 @@ export function synthesizePhase5HierarchicalRings(flowGraph: FlowGraph): Synthes
 
   for (const region of regions) {
     const regionAddresses = regionMap.get(region) ?? [];
-    const stationHubs: string[] = [];
+    const subnetMap = new Map<string, string[]>();
+    for (const address of regionAddresses) {
+      const subnet = addressSubnet(address);
+      if (!subnetMap.has(subnet)) {
+        subnetMap.set(subnet, []);
+      }
+      subnetMap.get(subnet)!.push(address);
+    }
+    const subnets = [...subnetMap.keys()].sort();
 
     for (const address of regionAddresses) {
       const epId = `ep:${address}`;
@@ -683,11 +696,58 @@ export function synthesizePhase5HierarchicalRings(flowGraph: FlowGraph): Synthes
       // Endpoint station internals.
       links.push({ a: { deviceId: epId, port: 0 }, b: { deviceId: filterId, port: 1 } });
       links.push({ a: { deviceId: filterId, port: 0 }, b: { deviceId: hubId, port: 1 } });
-
-      stationHubs.push(hubId);
     }
 
-    // Add one gateway station hub/filter to the regional ring.
+    const regionUplinkHubs: string[] = [];
+    for (const subnet of subnets) {
+      const subnetGatewayHub = `hub:region:${region}:subnet:${subnet}:gateway`;
+      const subnetGatewayFilter = `filter:region:${region}:subnet:${subnet}:gateway`;
+      const subnetUplinkHub = `hub:region:${region}:subnet:${subnet}:uplink`;
+
+      devices[subnetGatewayHub] = { id: subnetGatewayHub, type: "hub", rotation: "clockwise" };
+      devices[subnetGatewayFilter] = {
+        id: subnetGatewayFilter,
+        type: "filter",
+        operatingPort: 0,
+        addressField: "destination",
+        operation: "match",
+        mask: `*.${region}.${subnet}.*`,
+        action: "send_back",
+        collisionHandling: "send_back_outbound",
+      };
+      devices[subnetUplinkHub] = { id: subnetUplinkHub, type: "hub", rotation: "clockwise" };
+
+      // Subnet gateway station internals:
+      // subnet ring <-> subnetGatewayHub:1 <-> filter:0 ; filter:1 <-> region uplink hub:1
+      links.push({
+        a: { deviceId: subnetGatewayFilter, port: 0 },
+        b: { deviceId: subnetGatewayHub, port: 1 },
+      });
+      links.push({
+        a: { deviceId: subnetGatewayFilter, port: 1 },
+        b: { deviceId: subnetUplinkHub, port: 1 },
+      });
+
+      const subnetAddresses = (subnetMap.get(subnet) ?? []).sort();
+      const subnetStationHubs = [
+        ...subnetAddresses.map((address) => `hub:region:${region}:ep:${address}`),
+        subnetGatewayHub,
+      ];
+
+      // Subnet ring hub2 -> next hub0
+      for (let i = 0; i < subnetStationHubs.length; i += 1) {
+        const current = subnetStationHubs[i];
+        const next = subnetStationHubs[(i + 1) % subnetStationHubs.length];
+        links.push({
+          a: { deviceId: current, port: 2 },
+          b: { deviceId: next, port: 0 },
+        });
+      }
+
+      regionUplinkHubs.push(subnetUplinkHub);
+    }
+
+    // Add one region gateway station to the regional ring.
     const gwHub = `hub:region:${region}:gateway`;
     const gwFilter = `filter:region:${region}:gateway`;
     devices[gwHub] = { id: gwHub, type: "hub", rotation: "clockwise" };
@@ -697,17 +757,17 @@ export function synthesizePhase5HierarchicalRings(flowGraph: FlowGraph): Synthes
       operatingPort: 0,
       addressField: "destination",
       operation: "match",
-      mask: `0.${region}.*.*`,
+      mask: `*.${region}.*.*`,
       action: "send_back",
       collisionHandling: "send_back_outbound",
     };
     links.push({ a: { deviceId: gwFilter, port: 0 }, b: { deviceId: gwHub, port: 1 } });
-    stationHubs.push(gwHub);
+    const regionRingHubs = [...regionUplinkHubs, gwHub];
 
     // Regional ring hub2 -> next hub0
-    for (let i = 0; i < stationHubs.length; i += 1) {
-      const current = stationHubs[i];
-      const next = stationHubs[(i + 1) % stationHubs.length];
+    for (let i = 0; i < regionRingHubs.length; i += 1) {
+      const current = regionRingHubs[i];
+      const next = regionRingHubs[(i + 1) % regionRingHubs.length];
       links.push({
         a: { deviceId: current, port: 2 },
         b: { deviceId: next, port: 0 },

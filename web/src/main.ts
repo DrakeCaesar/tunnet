@@ -106,7 +106,7 @@ function inferRegion(node: ViewerNode): string | undefined {
   return r?.[1];
 }
 
-/** Matches Phase 5 synthesis: sorted endpoint addresses in region, then gateway hub last on the ring. */
+/** Matches Phase 5 synthesis: regional ring = subnet uplinks in order, then region gateway hub. */
 function regionalHubRingOrder(region: string, payload: ViewerPayload): string[] {
   const addresses = payload.nodes
     .filter((n) => n.type === "endpoint" && inferRegion(n) === region)
@@ -116,8 +116,25 @@ function regionalHubRingOrder(region: string, payload: ViewerPayload): string[] 
     })
     .filter(Boolean)
     .sort();
-  const hubs = addresses.map((a) => `hub:region:${region}:ep:${a}`);
+  const subnets = Array.from(new Set(addresses.map((a) => a.split(".")[2]))).sort();
+  const hubs = subnets.map((s) => `hub:region:${region}:subnet:${s}:uplink`);
   hubs.push(`hub:region:${region}:gateway`);
+  return hubs;
+}
+
+/** Matches Phase 5 synthesis: subnet ring = endpoint hubs in subnet order, then subnet gateway hub. */
+function subnetHubRingOrder(region: string, subnet: string, payload: ViewerPayload): string[] {
+  const addresses = payload.nodes
+    .filter((n) => n.type === "endpoint" && inferRegion(n) === region)
+    .map((n) => {
+      const m = /^ep:(.+)$/.exec(n.id);
+      return m?.[1] ?? "";
+    })
+    .filter(Boolean)
+    .filter((a) => a.split(".")[2] === subnet)
+    .sort();
+  const hubs = addresses.map((a) => `hub:region:${region}:ep:${a}`);
+  hubs.push(`hub:region:${region}:subnet:${subnet}:gateway`);
   return hubs;
 }
 
@@ -170,8 +187,42 @@ function computeInitialPositions(payload: ViewerPayload): Map<string, XY> {
       corePos !== undefined
         ? Math.atan2(corePos.y - center.y, corePos.x - center.x)
         : -Math.PI / 2;
-    placeOnCircleAligned(hubOrder, center, radius, gatewayId, alignAngle).forEach((p, id) => {
-      pos.set(id, p);
+    const baseRing = placeOnCircleAligned(hubOrder, center, radius, gatewayId, alignAngle);
+
+    // Keep gateway on the outer regional loop (bridge toward core).
+    const gatewayPos = baseRing.get(gatewayId);
+    if (gatewayPos) {
+      pos.set(gatewayId, gatewayPos);
+    }
+
+    // Split x.x.0.0..x.x.3.3 into four subnet rings (third dibit s=0..3).
+    const subnetOrder = ["0", "1", "2", "3"].filter((s) =>
+      payload.nodes.some((n) => n.id.startsWith(`ep:`) && n.id.includes(`.${r}.${s}.`)),
+    );
+    const subnetCenterRadius = radius * 0.52;
+    const subnetCenters = placeOnCircleAligned(
+      subnetOrder,
+      center,
+      subnetCenterRadius,
+      subnetOrder[0] ?? "0",
+      alignAngle,
+    );
+
+    subnetOrder.forEach((s) => {
+      const hubs = subnetHubRingOrder(r, s, payload).filter((id) =>
+        payload.nodes.some((n) => n.id === id),
+      );
+      const subnetCenter = subnetCenters.get(s);
+      if (!subnetCenter || hubs.length === 0) {
+        return;
+      }
+      const outwardAngle = Math.atan2(subnetCenter.y - center.y, subnetCenter.x - center.x);
+      const subnetRadius = Math.max(70, hubs.length * 18);
+      placeOnCircleAligned(hubs, subnetCenter, subnetRadius, hubs[0], outwardAngle).forEach(
+        (p, id) => {
+          pos.set(id, p);
+        },
+      );
     });
 
     const filterIds = payload.nodes
