@@ -43,15 +43,15 @@ type GraphTheme = {
 // Layout tuning knobs for seeded positions (non-physics).
 const LAYOUT = {
   regionOrder: ["0", "1", "2", "3"] as const,
-  coreRingRadius: 700 ,
-  regionCenterRadius: 10000,
-  regionRingRadiusMin: 1000  ,
-  regionRingRadiusPerHub: 300,
-  subnetCenterRadiusFactor: 3,
-  subnetRingRadiusMin: 1000,
-  subnetRingRadiusPerHub: 180,
-  filterOffsetFromHub: 500 ,
-  leafOffsetFromParent: 500 ,
+  coreRingRadius: 600 ,
+  regionCenterRadius: 4000,
+  regionRingRadiusMin: 500  ,
+  regionRingRadiusPerHub: 200,
+  subnetCenterRadiusFactor: 2,
+  subnetRingRadiusMin: 100,
+  subnetRingRadiusPerHub: 100 ,
+  filterOffsetFromHub: 200 ,
+  leafOffsetFromParent: 200 ,
 } as const;
 
 function cssVar(name: string, fallback: string): string {
