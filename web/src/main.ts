@@ -470,30 +470,27 @@ function render(payload: ViewerPayload): void {
     })),
   );
 
-  const network = new Network(
-    graphEl,
-    { nodes, edges },
-    {
-      interaction: { hover: true, multiselect: false, dragView: true, zoomView: true },
-      physics: {
-        enabled: false,
-        solver: "forceAtlas2Based",
-        stabilization: { iterations: 800, fit: true },
-        forceAtlas2Based: {
-          gravitationalConstant: -90,
-          centralGravity: 0.001,
-          springLength: 150,
-          springConstant: 0.1,
-          damping: 0.5,
-          avoidOverlap: 0.5,
-        },
+  const networkOptions = {
+    interaction: { hover: true, multiselect: false, dragView: true, zoomView: true },
+    physics: {
+      enabled: true,
+      solver: "forceAtlas2Based",
+      stabilization: { iterations: 800, fit: true },
+      forceAtlas2Based: {
+        gravitationalConstant: -30,
+        centralGravity: 0.001,
+        springLength: 150,
+        springConstant: 0.1,
+        damping: 0.5,
+        avoidOverlap: 0.4,
       },
-      layout: { improvedLayout: true, randomSeed: 7 },
-      edges: { selectionWidth: 2 },
     },
-  );
+    layout: { improvedLayout: true, randomSeed: 7 },
+    edges: { selectionWidth: 2 },
+  };
+  const network = new Network(graphEl, { nodes, edges }, networkOptions);
 
-  let physicsEnabled = false;
+  let physicsEnabled = Boolean(networkOptions.physics.enabled);
   const setPhysicsEnabled = (enabled: boolean): void => {
     physicsEnabled = enabled;
     network.setOptions({ physics: { enabled } });
@@ -503,7 +500,7 @@ function render(payload: ViewerPayload): void {
       network.stopSimulation();
     }
   };
-  setPhysicsEnabled(false);
+  setPhysicsEnabled(physicsEnabled);
 
   window.addEventListener("keydown", (ev) => {
     if (ev.code !== "Space") return;
