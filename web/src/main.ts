@@ -358,6 +358,20 @@ function computeInitialPositions(payload: ViewerPayload): Map<string, XY> {
   return pos;
 }
 
+/** Send rate = 2^exponent (each slider step doubles/halves emission rate). */
+const SEND_RATE_EXP_MIN = -6;
+const SEND_RATE_EXP_MAX = 6;
+const SEND_RATE_EXP_DEFAULT = 0;
+
+function sendRateMultiplierFromExponent(exp: number): number {
+  return 2 ** exp;
+}
+
+function formatSendRateLabel(exp: number): string {
+  const m = sendRateMultiplierFromExponent(exp);
+  return `${m}× (2^${exp})`;
+}
+
 function mountLayout(): {
   metaEl: HTMLDivElement;
   simEl: HTMLDivElement;
@@ -365,7 +379,8 @@ function mountLayout(): {
   pauseBtn: HTMLButtonElement;
   stepBtn: HTMLButtonElement;
   speedEl: HTMLSelectElement;
-  sendRateEl: HTMLSelectElement;
+  sendRateEl: HTMLInputElement;
+  sendRateValueEl: HTMLSpanElement;
   detailsEl: HTMLDivElement;
   graphEl: HTMLDivElement;
 } {
@@ -393,14 +408,20 @@ function mountLayout(): {
                 <option value="8">8x</option>
               </select>
             </label>
-            <label class="sim-speed-label">Send rate
-              <select id="sim-send-rate">
-                <option value="0.5">0.5x</option>
-                <option value="1" selected>1x</option>
-                <option value="2">2x</option>
-                <option value="4">4x</option>
-              </select>
-            </label>
+          </div>
+          <div class="sim-send-rate-block">
+            <label class="sim-send-rate-label" for="sim-send-rate">Send rate (each step ×2)</label>
+            <div class="sim-send-rate-row">
+              <input
+                id="sim-send-rate"
+                type="range"
+                min="${SEND_RATE_EXP_MIN}"
+                max="${SEND_RATE_EXP_MAX}"
+                step="1"
+                value="${SEND_RATE_EXP_DEFAULT}"
+              />
+              <span id="sim-send-rate-value" class="sim-send-rate-value"></span>
+            </div>
           </div>
           <div id="sim-meta" class="sim-meta">Simulation paused.</div>
         </div>
@@ -417,7 +438,8 @@ function mountLayout(): {
     pauseBtn: app.querySelector<HTMLButtonElement>("#sim-pause")!,
     stepBtn: app.querySelector<HTMLButtonElement>("#sim-step")!,
     speedEl: app.querySelector<HTMLSelectElement>("#sim-speed")!,
-    sendRateEl: app.querySelector<HTMLSelectElement>("#sim-send-rate")!,
+    sendRateEl: app.querySelector<HTMLInputElement>("#sim-send-rate")!,
+    sendRateValueEl: app.querySelector<HTMLSpanElement>("#sim-send-rate-value")!,
     detailsEl: app.querySelector<HTMLDivElement>("#details")!,
     graphEl: app.querySelector<HTMLDivElement>("#graph")!,
   };
@@ -453,7 +475,7 @@ function formatFilterSpecLabel(node: ViewerNode): string {
 }
 
 function render(payload: ViewerPayload): void {
-  const { metaEl, simEl, playBtn, pauseBtn, stepBtn, speedEl, sendRateEl, detailsEl, graphEl } =
+  const { metaEl, simEl, playBtn, pauseBtn, stepBtn, speedEl, sendRateEl, sendRateValueEl, detailsEl, graphEl } =
     mountLayout();
   const theme = graphThemeFromCss();
   const seedPos = computeInitialPositions(payload);
@@ -554,7 +576,10 @@ function render(payload: ViewerPayload): void {
   let animationHandle: number | null = null;
   let playing = false;
   let speed = Number(speedEl.value) || 2;
-  let sendRate = Number(sendRateEl.value) || 1;
+  let sendRateExponent = Number(sendRateEl.value);
+  if (!Number.isFinite(sendRateExponent)) {
+    sendRateExponent = SEND_RATE_EXP_DEFAULT;
+  }
   let animating = false;
   const packetNodeIds = new Set<string>();
   let selectedPacketNodeId: string | null = null;
@@ -578,9 +603,13 @@ function render(payload: ViewerPayload): void {
     `sensitive=${packet.sensitive}\n` +
     `subject=${packet.subject ?? ""}`;
 
+  const syncSendRateDisplay = (): void => {
+    sendRateValueEl.textContent = formatSendRateLabel(sendRateExponent);
+  };
+
   const updateSimMeta = (): void => {
     simEl.textContent =
-      `State: ${playing ? "running" : "paused"}  Speed: ${speed}x  Send rate: ${sendRate}x\n` +
+      `State: ${playing ? "running" : "paused"}  Speed: ${speed}x  Send rate: ${formatSendRateLabel(sendRateExponent)}\n` +
       `Tick: ${stats.tick}  In-flight: ${currentOccupancy.length}\n` +
       `Emitted: ${stats.emitted}  Delivered: ${stats.delivered}  Dropped: ${stats.dropped}\n` +
       `Bounced: ${stats.bounced}  TTL expired: ${stats.ttlExpired}  Collisions: ${stats.collisions}`;
@@ -721,7 +750,18 @@ function render(payload: ViewerPayload): void {
     setPlaying(!playing);
   });
 
-  simulator.setSendRateMultiplier(sendRate);
+  const applySendRateFromSlider = (): void => {
+    sendRateExponent = Number(sendRateEl.value);
+    if (!Number.isFinite(sendRateExponent)) {
+      sendRateExponent = SEND_RATE_EXP_DEFAULT;
+    }
+    simulator.setSendRateMultiplier(sendRateMultiplierFromExponent(sendRateExponent));
+    syncSendRateDisplay();
+    updateSimMeta();
+  };
+
+  simulator.setSendRateMultiplier(sendRateMultiplierFromExponent(sendRateExponent));
+  syncSendRateDisplay();
   playBtn.addEventListener("click", () => setPlaying(true));
   pauseBtn.addEventListener("click", () => setPlaying(false));
   stepBtn.addEventListener("click", () => {
@@ -736,14 +776,8 @@ function render(payload: ViewerPayload): void {
       updateSimMeta();
     }
   });
-  sendRateEl.addEventListener("change", () => {
-    const parsed = Number(sendRateEl.value);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      sendRate = parsed;
-      simulator.setSendRateMultiplier(sendRate);
-      updateSimMeta();
-    }
-  });
+  sendRateEl.addEventListener("input", applySendRateFromSlider);
+  sendRateEl.addEventListener("change", applySendRateFromSlider);
 
   network.on("dragging", () => renderPackets(progress));
   network.on("zoom", () => renderPackets(progress));

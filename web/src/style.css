@@ -84,6 +84,39 @@ body {
   color: var(--meta-text);
 }
 
+.sim-send-rate-block {
+  margin-bottom: 10px;
+}
+
+.sim-send-rate-label {
+  display: block;
+  font-size: 12px;
+  color: var(--meta-text);
+  margin-bottom: 4px;
+}
+
+.sim-send-rate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sim-send-rate-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  accent-color: #89b4fa;
+}
+
+.sim-send-rate-value {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--meta-text);
+  min-width: 9em;
+  text-align: right;
+}
+
 .sim-meta {
   color: var(--meta-text);
   font-size: 12px;
