@@ -35,6 +35,54 @@ type ViewerPayload = {
 
 type XY = { x: number; y: number };
 
+function vecSub(a: XY, b: XY): XY {
+  return { x: a.x - b.x, y: a.y - b.y };
+}
+
+function vecAdd(a: XY, b: XY): XY {
+  return { x: a.x + b.x, y: a.y + b.y };
+}
+
+function vecMul(a: XY, s: number): XY {
+  return { x: a.x * s, y: a.y * s };
+}
+
+function vecLen(a: XY): number {
+  return Math.hypot(a.x, a.y);
+}
+
+function vecNorm(a: XY): XY {
+  const L = vecLen(a) || 1;
+  return { x: a.x / L, y: a.y / L };
+}
+
+/** Perpendicular (CCW 90°) — lane offset sits beside the edge. */
+function vecPerp(u: XY): XY {
+  return { x: -u.y, y: u.x };
+}
+
+function vecLerp(a: XY, b: XY, t: number): XY {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** C¹ cubic Hermite: P(0)=p0, P(1)=p1, P'(0)=m0, P'(1)=m1 */
+function cubicHermite(p0: XY, m0: XY, p1: XY, m1: XY, t: number): XY {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+  return vecAdd(vecAdd(vecMul(p0, h00), vecMul(m0, h10)), vecAdd(vecMul(p1, h01), vecMul(m1, h11)));
+}
+
+/** Packet motion: end of last hop for C¹ joins at the next node. */
+type PacketMotionState = {
+  endPos: XY;
+  endVel: XY;
+  lastTo: string;
+};
+
 type GraphTheme = {
   endpointTextColor: string;
   deviceTextColor: string;
@@ -55,6 +103,16 @@ const LAYOUT = {
   filterOffsetFromHub: 200 ,
   leafOffsetFromParent: 200 ,
 } as const;
+
+/** Packets run beside links (lanes) with inset from node centers; corners use Hermite blends. */
+const PACKET_EDGE_INSET = 28;
+const PACKET_LANE_WIDTH = 12;
+
+function packetLaneOffset(packetId: number, u: XY): XY {
+  const n = vecNorm(vecPerp(u));
+  const laneSign = (packetId % 3) - 1; // -1, 0, 1
+  return vecMul(n, laneSign * PACKET_LANE_WIDTH);
+}
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -372,13 +430,28 @@ function formatSendRateLabel(exp: number): string {
   return `${m}× (2^${exp})`;
 }
 
+/** Tick animation speed = 2^exponent (0.25× … 64×). */
+const SPEED_EXP_MIN = -2;
+const SPEED_EXP_MAX = 6;
+const SPEED_EXP_DEFAULT = 1;
+
+function speedMultiplierFromExponent(exp: number): number {
+  return 2 ** exp;
+}
+
+function formatSpeedLabel(exp: number): string {
+  const m = speedMultiplierFromExponent(exp);
+  return `${m}× (2^${exp})`;
+}
+
 function mountLayout(): {
   metaEl: HTMLDivElement;
   simEl: HTMLDivElement;
   playBtn: HTMLButtonElement;
   pauseBtn: HTMLButtonElement;
   stepBtn: HTMLButtonElement;
-  speedEl: HTMLSelectElement;
+  speedEl: HTMLInputElement;
+  speedValueEl: HTMLSpanElement;
   sendRateEl: HTMLInputElement;
   sendRateValueEl: HTMLSpanElement;
   detailsEl: HTMLDivElement;
@@ -399,15 +472,20 @@ function mountLayout(): {
             <button id="sim-play" type="button">Play</button>
             <button id="sim-pause" type="button">Pause</button>
             <button id="sim-step" type="button">Step</button>
-            <label class="sim-speed-label">Speed
-              <select id="sim-speed">
-                <option value="0.5">0.5x</option>
-                <option value="1">1x</option>
-                <option value="2" selected>2x</option>
-                <option value="4">4x</option>
-                <option value="8">8x</option>
-              </select>
-            </label>
+          </div>
+          <div class="sim-send-rate-block">
+            <label class="sim-send-rate-label" for="sim-speed">Sim speed (0.25×–64×, each step ×2)</label>
+            <div class="sim-send-rate-row">
+              <input
+                id="sim-speed"
+                type="range"
+                min="${SPEED_EXP_MIN}"
+                max="${SPEED_EXP_MAX}"
+                step="1"
+                value="${SPEED_EXP_DEFAULT}"
+              />
+              <span id="sim-speed-value" class="sim-send-rate-value"></span>
+            </div>
           </div>
           <div class="sim-send-rate-block">
             <label class="sim-send-rate-label" for="sim-send-rate">Send rate (each step ×2)</label>
@@ -437,7 +515,8 @@ function mountLayout(): {
     playBtn: app.querySelector<HTMLButtonElement>("#sim-play")!,
     pauseBtn: app.querySelector<HTMLButtonElement>("#sim-pause")!,
     stepBtn: app.querySelector<HTMLButtonElement>("#sim-step")!,
-    speedEl: app.querySelector<HTMLSelectElement>("#sim-speed")!,
+    speedEl: app.querySelector<HTMLInputElement>("#sim-speed")!,
+    speedValueEl: app.querySelector<HTMLSpanElement>("#sim-speed-value")!,
     sendRateEl: app.querySelector<HTMLInputElement>("#sim-send-rate")!,
     sendRateValueEl: app.querySelector<HTMLSpanElement>("#sim-send-rate-value")!,
     detailsEl: app.querySelector<HTMLDivElement>("#details")!,
@@ -475,7 +554,7 @@ function formatFilterSpecLabel(node: ViewerNode): string {
 }
 
 function render(payload: ViewerPayload): void {
-  const { metaEl, simEl, playBtn, pauseBtn, stepBtn, speedEl, sendRateEl, sendRateValueEl, detailsEl, graphEl } =
+  const { metaEl, simEl, playBtn, pauseBtn, stepBtn, speedEl, speedValueEl, sendRateEl, sendRateValueEl, detailsEl, graphEl } =
     mountLayout();
   const theme = graphThemeFromCss();
   const seedPos = computeInitialPositions(payload);
@@ -575,7 +654,11 @@ function render(payload: ViewerPayload): void {
   let progress = 1;
   let animationHandle: number | null = null;
   let playing = false;
-  let speed = Number(speedEl.value) || 2;
+  let speedExponent = Number(speedEl.value);
+  if (!Number.isFinite(speedExponent)) {
+    speedExponent = SPEED_EXP_DEFAULT;
+  }
+  let speed = speedMultiplierFromExponent(speedExponent);
   let sendRateExponent = Number(sendRateEl.value);
   if (!Number.isFinite(sendRateExponent)) {
     sendRateExponent = SEND_RATE_EXP_DEFAULT;
@@ -594,6 +677,10 @@ function render(payload: ViewerPayload): void {
     collisions: 0,
   };
 
+  /** Smoothed sim ticks per wall second; null until first completed tick. */
+  let emaAchievedSpeed: number | null = null;
+  const ACHIEVED_SPEED_EMA_ALPHA = 0.12;
+
   const formatPacketDetails = (packet: Packet, portDeviceId: string): string =>
     `packet=${packet.id}\n` +
     `at=${portDeviceId}\n` +
@@ -607,9 +694,18 @@ function render(payload: ViewerPayload): void {
     sendRateValueEl.textContent = formatSendRateLabel(sendRateExponent);
   };
 
+  const syncSpeedDisplay = (): void => {
+    speedValueEl.textContent = formatSpeedLabel(speedExponent);
+  };
+
   const updateSimMeta = (): void => {
+    const achievedLine =
+      emaAchievedSpeed === null
+        ? `achieved: — (no tick finished yet)`
+        : `achieved ~${emaAchievedSpeed.toFixed(2)}× (${Math.min(999, Math.round((emaAchievedSpeed / Math.max(speed, 1e-9)) * 100))}% of ${speed.toFixed(2)}× target)`;
     simEl.textContent =
-      `State: ${playing ? "running" : "paused"}  Speed: ${speed}x  Send rate: ${formatSendRateLabel(sendRateExponent)}\n` +
+      `State: ${playing ? "running" : "paused"}  Speed: ${formatSpeedLabel(speedExponent)}  ${achievedLine}\n` +
+      `Send rate: ${formatSendRateLabel(sendRateExponent)}\n` +
       `Tick: ${stats.tick}  In-flight: ${currentOccupancy.length}\n` +
       `Emitted: ${stats.emitted}  Delivered: ${stats.delivered}  Dropped: ${stats.dropped}\n` +
       `Bounced: ${stats.bounced}  TTL expired: ${stats.ttlExpired}  Collisions: ${stats.collisions}`;
@@ -625,9 +721,11 @@ function render(payload: ViewerPayload): void {
     return out;
   };
 
-  const packetOffset = (port: number): XY => {
+  const packetMotionStore = new Map<number, PacketMotionState>();
+
+  const restingPortOffset = (port: number): XY => {
     const a = (port % 4) * (Math.PI / 2);
-    return { x: Math.cos(a) * 20, y: Math.sin(a) * 20 };
+    return { x: Math.cos(a) * 8, y: Math.sin(a) * 8 };
   };
 
   const renderPackets = (t: number): void => {
@@ -641,15 +739,42 @@ function render(payload: ViewerPayload): void {
       nextPacketIds.add(packetNodeId);
       const from = prev.get(packetId);
       const fromDevice = from?.deviceId ?? deviceId;
-      const p0 = network.getPosition(fromDevice);
-      const p1 = network.getPosition(deviceId);
-      const x = p0.x + (p1.x - p0.x) * t;
-      const y = p0.y + (p1.y - p0.y) * t;
-      const offset = packetOffset(port);
+      const pa = network.getPosition(fromDevice);
+      const pb = network.getPosition(deviceId);
+      let x: number;
+      let y: number;
+      if (fromDevice === deviceId) {
+        packetMotionStore.delete(packetId);
+        const o = restingPortOffset(port);
+        x = pa.x + o.x;
+        y = pa.y + o.y;
+      } else {
+        const chord = vecSub(pb, pa);
+        const chordLen = vecLen(chord) || 1;
+        const u = vecNorm(chord);
+        const lane = packetLaneOffset(packetId, u);
+        const inset = Math.min(PACKET_EDGE_INSET, chordLen * 0.38);
+        const S = vecAdd(vecAdd(pa, vecMul(u, inset)), lane);
+        const E = vecAdd(vecSub(pb, vecMul(u, inset)), lane);
+        const segVel = vecSub(E, S);
+        const st = packetMotionStore.get(packetId);
+        const useHermite = Boolean(st && st.lastTo === fromDevice);
+        let pos: XY;
+        if (useHermite) {
+          pos = cubicHermite(st!.endPos, st!.endVel, E, segVel, t);
+        } else {
+          pos = vecLerp(S, E, t);
+        }
+        x = pos.x;
+        y = pos.y;
+        if (t >= 0.999) {
+          packetMotionStore.set(packetId, { endPos: E, endVel: segVel, lastTo: deviceId });
+        }
+      }
       updates.push({
         id: packetNodeId,
-        x: x + offset.x,
-        y: y + offset.y,
+        x,
+        y,
         fixed: { x: true, y: true },
         physics: false,
         shape: "dot",
@@ -665,6 +790,11 @@ function render(payload: ViewerPayload): void {
         title: `id=${packet.id}\nsrc=${packet.src}\ndst=${packet.dest}\nttl=${packet.ttl ?? "inf"}`,
       });
     });
+    for (const pid of Array.from(packetMotionStore.keys())) {
+      if (!curr.has(pid)) {
+        packetMotionStore.delete(pid);
+      }
+    }
     nodes.update(updates);
     packetNodeIds.forEach((oldId) => {
       if (!nextPacketIds.has(oldId)) {
@@ -706,6 +836,7 @@ function render(payload: ViewerPayload): void {
 
   const runOneTick = (): void => {
     if (animating) return;
+    const tickWallStartMs = performance.now();
     animating = true;
     previousOccupancy = currentOccupancy;
     const snapshot = simulator.step();
@@ -721,8 +852,17 @@ function render(payload: ViewerPayload): void {
         animationHandle = requestAnimationFrame(animate);
         return;
       }
+      const wallMs = performance.now() - tickWallStartMs;
+      if (wallMs > 1) {
+        const instantAchieved = 1000 / wallMs;
+        emaAchievedSpeed =
+          emaAchievedSpeed === null
+            ? instantAchieved
+            : ACHIEVED_SPEED_EMA_ALPHA * instantAchieved + (1 - ACHIEVED_SPEED_EMA_ALPHA) * emaAchievedSpeed;
+      }
       animating = false;
       animationHandle = null;
+      updateSimMeta();
       if (playing) {
         runOneTick();
       }
@@ -769,13 +909,20 @@ function render(payload: ViewerPayload): void {
       runOneTick();
     }
   });
-  speedEl.addEventListener("change", () => {
-    const parsed = Number(speedEl.value);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      speed = parsed;
-      updateSimMeta();
+  const applySpeedFromSlider = (): void => {
+    speedExponent = Number(speedEl.value);
+    if (!Number.isFinite(speedExponent)) {
+      speedExponent = SPEED_EXP_DEFAULT;
     }
-  });
+    speed = speedMultiplierFromExponent(speedExponent);
+    emaAchievedSpeed = null;
+    syncSpeedDisplay();
+    updateSimMeta();
+  };
+
+  syncSpeedDisplay();
+  speedEl.addEventListener("input", applySpeedFromSlider);
+  speedEl.addEventListener("change", applySpeedFromSlider);
   sendRateEl.addEventListener("input", applySendRateFromSlider);
   sendRateEl.addEventListener("change", applySendRateFromSlider);
 
@@ -812,9 +959,10 @@ function render(payload: ViewerPayload): void {
 
 async function main(): Promise<void> {
   try {
-    const res = await fetch("/data/topology.json");
+    const dataUrl = `${import.meta.env.BASE_URL}data/topology.json`;
+    const res = await fetch(dataUrl);
     if (!res.ok) {
-      throw new Error(`Unable to load /data/topology.json (${res.status})`);
+      throw new Error(`Unable to load topology data (${res.status})`);
     }
     const payload = (await res.json()) as ViewerPayload;
     render(payload);
