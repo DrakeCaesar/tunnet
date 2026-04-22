@@ -720,6 +720,22 @@ function render(payload: ViewerPayload): void {
   /** Smoothed sim ticks per wall second; null until first completed tick. */
   let emaAchievedSpeed: number | null = null;
   const ACHIEVED_SPEED_EMA_ALPHA = 0.12;
+  /** Actual render framerate from renderPackets(...) cadence. */
+  let emaFps: number | null = null;
+  let lastRenderFrameMs: number | null = null;
+  const FPS_EMA_ALPHA = 0.12;
+  /** Render frame breakdown (ms) for bottleneck analysis. */
+  let lastRenderTotalMs: number | null = null;
+  let lastRenderBuildMs: number | null = null;
+  let lastRenderApplyMs: number | null = null;
+  let lastRenderGuideMs: number | null = null;
+  let lastRenderOverheadMs: number | null = null;
+  let emaRenderTotalMs: number | null = null;
+  let emaRenderBuildMs: number | null = null;
+  let emaRenderApplyMs: number | null = null;
+  let emaRenderGuideMs: number | null = null;
+  let emaRenderOverheadMs: number | null = null;
+  const RENDER_BREAKDOWN_EMA_ALPHA = 0.18;
   /** Next-state compute time for simulator.step() only (ms). */
   let lastStepComputeMs: number | null = null;
   let emaStepComputeMs: number | null = null;
@@ -790,15 +806,22 @@ function render(payload: ViewerPayload): void {
         : `step compute: ${lastStepComputeMs.toFixed(2)}ms (ema ${(
             emaStepComputeMs ?? lastStepComputeMs
           ).toFixed(2)}ms)`;
+    const fpsLine = emaFps === null ? `fps: —` : `fps: ${emaFps.toFixed(1)}`;
+    const renderLine =
+      lastRenderTotalMs === null
+        ? `render: —`
+        : `render total ${lastRenderTotalMs.toFixed(2)} (ema ${(emaRenderTotalMs ?? lastRenderTotalMs).toFixed(2)}) · build ${lastRenderBuildMs?.toFixed(2)} · apply ${lastRenderApplyMs?.toFixed(2)} · guide ${lastRenderGuideMs?.toFixed(2)} · overhead ${lastRenderOverheadMs?.toFixed(2)}`;
     simEl.innerHTML = `
       <div class="status-row">
         <span class="status-chip">${playing ? "running" : "paused"}</span>
         <span class="status-label">speed ${formatSpeedLabel(speedExponent)}</span>
         <span class="status-label">${achievedLine}</span>
+        <span class="status-label">${fpsLine}</span>
       </div>
       <div class="status-row">
         <span class="status-label">send rate ${formatSendRateLabel(sendRateExponent)}</span>
         <span class="status-label">${stepComputeLine}</span>
+        <span class="status-label">${renderLine}</span>
       </div>
       <div class="stats-row">
         <div class="stat-pill"><span>Tick</span><strong>${stats.tick}</strong></div>
@@ -832,6 +855,19 @@ function render(payload: ViewerPayload): void {
   };
 
   const renderPackets = (t: number): void => {
+    const frameStart = performance.now();
+    const now = performance.now();
+    if (lastRenderFrameMs !== null) {
+      const dt = now - lastRenderFrameMs;
+      if (dt > 0) {
+        const instantFps = 1000 / dt;
+        emaFps =
+          emaFps === null
+            ? instantFps
+            : FPS_EMA_ALPHA * instantFps + (1 - FPS_EMA_ALPHA) * emaFps;
+      }
+    }
+    lastRenderFrameMs = now;
     progress = t;
     const prev = byPacketId(previousOccupancy);
     const curr = byPacketId(currentOccupancy);
@@ -915,6 +951,7 @@ function render(payload: ViewerPayload): void {
         packetMotionStore.delete(pid);
       }
     }
+    const buildEnd = performance.now();
     nodes.update(updates);
     packetNodeIds.forEach((oldId) => {
       if (!nextPacketIds.has(oldId)) {
@@ -923,35 +960,55 @@ function render(payload: ViewerPayload): void {
     });
     packetNodeIds.clear();
     nextPacketIds.forEach((id) => packetNodeIds.add(id));
+    const applyEnd = performance.now();
 
+    const guideStart = performance.now();
     if (!selectedPacketNodeId) {
       edges.remove(selectedPacketGuideEdgeId);
-      return;
+    } else {
+      const selected = nodes.get(selectedPacketNodeId) as { rawPacket?: Packet } | null;
+      const selectedPacket = selected?.rawPacket;
+      if (!selectedPacket) {
+        edges.remove(selectedPacketGuideEdgeId);
+      } else {
+        const destinationNodeId = `ep:${selectedPacket.dest}`;
+        if (!nodes.get(destinationNodeId)) {
+          edges.remove(selectedPacketGuideEdgeId);
+        } else {
+          edges.update({
+            id: selectedPacketGuideEdgeId,
+            from: selectedPacketNodeId,
+            to: destinationNodeId,
+            color: { color: "#f9e2af", opacity: 0.25 },
+            width: 1,
+            dashes: [4, 8],
+            smooth: false,
+            physics: false,
+            selectable: false,
+            hoverWidth: 0,
+            label: "",
+          });
+        }
+      }
     }
-    const selected = nodes.get(selectedPacketNodeId) as { rawPacket?: Packet } | null;
-    const selectedPacket = selected?.rawPacket;
-    if (!selectedPacket) {
-      edges.remove(selectedPacketGuideEdgeId);
-      return;
-    }
-    const destinationNodeId = `ep:${selectedPacket.dest}`;
-    if (!nodes.get(destinationNodeId)) {
-      edges.remove(selectedPacketGuideEdgeId);
-      return;
-    }
-    edges.update({
-      id: selectedPacketGuideEdgeId,
-      from: selectedPacketNodeId,
-      to: destinationNodeId,
-      color: { color: "#f9e2af", opacity: 0.25 },
-      width: 1,
-      dashes: [4, 8],
-      smooth: false,
-      physics: false,
-      selectable: false,
-      hoverWidth: 0,
-      label: "",
-    });
+    const guideEnd = performance.now();
+    const total = guideEnd - frameStart;
+    const build = buildEnd - frameStart;
+    const apply = applyEnd - buildEnd;
+    const guide = guideEnd - guideStart;
+    const overhead = total - (build + apply + guide);
+    lastRenderTotalMs = total;
+    lastRenderBuildMs = build;
+    lastRenderApplyMs = apply;
+    lastRenderGuideMs = guide;
+    lastRenderOverheadMs = overhead;
+    const alpha = RENDER_BREAKDOWN_EMA_ALPHA;
+    emaRenderTotalMs = emaRenderTotalMs === null ? total : alpha * total + (1 - alpha) * emaRenderTotalMs;
+    emaRenderBuildMs = emaRenderBuildMs === null ? build : alpha * build + (1 - alpha) * emaRenderBuildMs;
+    emaRenderApplyMs = emaRenderApplyMs === null ? apply : alpha * apply + (1 - alpha) * emaRenderApplyMs;
+    emaRenderGuideMs = emaRenderGuideMs === null ? guide : alpha * guide + (1 - alpha) * emaRenderGuideMs;
+    emaRenderOverheadMs =
+      emaRenderOverheadMs === null ? overhead : alpha * overhead + (1 - alpha) * emaRenderOverheadMs;
   };
 
   const runOneTick = (): void => {
