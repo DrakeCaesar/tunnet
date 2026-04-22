@@ -24,6 +24,7 @@ type ViewerPayload = {
   metadata: {
     generatedAt: string;
     phase: string;
+    boundaryOrder?: number;
     deviceCount: number;
     linkCount: number;
     flowCount: number;
@@ -94,7 +95,7 @@ type GraphTheme = {
 const LAYOUT = {
   regionOrder: ["0", "1", "2", "3"] as const,
   coreRingRadius: 600 ,
-  regionCenterRadius: 4000,
+  regionCenterRadius: 10000,
   regionRingRadiusMin: 500  ,
   regionRingRadiusPerHub: 200,
   subnetCenterRadiusFactor: 2,
@@ -153,6 +154,7 @@ function placeOnCircleAligned(
   radius: number,
   alignId: string,
   alignAngle: number,
+  direction: 1 | -1 = 1,
 ): Map<string, XY> {
   const out = new Map<string, XY>();
   const n = hubOrder.length;
@@ -161,9 +163,10 @@ function placeOnCircleAligned(
   }
   const g = hubOrder.indexOf(alignId);
   const step = (2 * Math.PI) / n;
-  const baseAngle = g >= 0 ? alignAngle - g * step : -Math.PI / 2;
+  const signedStep = step * direction;
+  const baseAngle = g >= 0 ? alignAngle - g * signedStep : -Math.PI / 2;
   for (let i = 0; i < n; i++) {
-    const a = baseAngle + i * step;
+    const a = baseAngle + i * signedStep;
     out.set(hubOrder[i], {
       x: center.x + Math.cos(a) * radius,
       y: center.y + Math.sin(a) * radius,
@@ -181,6 +184,8 @@ function inferRegion(node: ViewerNode): string | undefined {
   return r?.[1];
 }
 
+const BOUNDARY_CHANNELS = ["a", "b", "c", "d"] as const;
+
 /** Matches Phase 5 synthesis: regional ring = subnet uplinks in order, then region gateway hub. */
 function regionalHubRingOrder(region: string, payload: ViewerPayload): string[] {
   const addresses = payload.nodes
@@ -192,8 +197,28 @@ function regionalHubRingOrder(region: string, payload: ViewerPayload): string[] 
     .filter(Boolean)
     .sort();
   const subnets = Array.from(new Set(addresses.map((a) => a.split(".")[2]))).sort();
-  const hubs = subnets.map((s) => `hub:region:${region}:subnet:${s}:uplink`);
-  hubs.push(`hub:region:${region}:gateway`);
+  const nodeIds = new Set(payload.nodes.map((n) => n.id));
+  const hubs: string[] = [];
+  for (const s of subnets) {
+    const legacy = `hub:region:${region}:subnet:${s}:uplink`;
+    if (nodeIds.has(legacy)) {
+      hubs.push(legacy);
+    } else {
+      for (const channel of BOUNDARY_CHANNELS) {
+        const id = `hub:region:${region}:subnet:${s}:uplink:${channel}`;
+        if (nodeIds.has(id)) hubs.push(id);
+      }
+    }
+  }
+  const legacyGateway = `hub:region:${region}:gateway`;
+  if (nodeIds.has(legacyGateway)) {
+    hubs.push(legacyGateway);
+  } else {
+    for (const channel of BOUNDARY_CHANNELS) {
+      const id = `hub:region:${region}:gateway:${channel}`;
+      if (nodeIds.has(id)) hubs.push(id);
+    }
+  }
   return hubs;
 }
 
@@ -208,9 +233,44 @@ function subnetHubRingOrder(region: string, subnet: string, payload: ViewerPaylo
     .filter(Boolean)
     .filter((a) => a.split(".")[2] === subnet)
     .sort();
+  const nodeIds = new Set(payload.nodes.map((n) => n.id));
   const hubs = addresses.map((a) => `hub:region:${region}:ep:${a}`);
-  hubs.push(`hub:region:${region}:subnet:${subnet}:gateway`);
+  const legacyGateway = `hub:region:${region}:subnet:${subnet}:gateway`;
+  if (nodeIds.has(legacyGateway)) {
+    hubs.push(legacyGateway);
+  } else {
+    for (const channel of BOUNDARY_CHANNELS) {
+      const id = `hub:region:${region}:subnet:${subnet}:gateway:${channel}`;
+      if (nodeIds.has(id)) hubs.push(id);
+    }
+  }
   return hubs;
+}
+
+/** Core ring placement order grouped by region. */
+function coreHubRingOrder(payload: ViewerPayload): string[] {
+  const nodeIds = new Set(payload.nodes.map((n) => n.id));
+  const ordered: string[] = [];
+  for (const region of LAYOUT.regionOrder) {
+    const legacy = `hub:core:${region}`;
+    if (nodeIds.has(legacy)) {
+      ordered.push(legacy);
+      continue;
+    }
+    for (const channel of BOUNDARY_CHANNELS) {
+      const id = `hub:core:${region}:${channel}`;
+      if (nodeIds.has(id)) {
+        ordered.push(id);
+      }
+    }
+  }
+  if (ordered.length > 0) {
+    return ordered;
+  }
+  return payload.nodes
+    .map((n) => n.id)
+    .filter((id) => id.startsWith("hub:core:"))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function filterIdToHubId(filterId: string): string | null {
@@ -237,13 +297,15 @@ function nodeSubnetFromId(id: string, region: string): string | undefined {
   if (hub) return hub[1];
   const filt = new RegExp(`^filter:region:${region}:ep:\\d+\\.${region}\\.(\\d+)\\.`).exec(id);
   if (filt) return filt[1];
-  const gw = new RegExp(`^hub:region:${region}:subnet:(\\d+):gateway$`).exec(id);
+  const gw = new RegExp(`^hub:region:${region}:subnet:(\\d+):gateway(?::[a-z0-9_-]+)?$`).exec(id);
   if (gw) return gw[1];
-  const fg = new RegExp(`^filter:region:${region}:subnet:(\\d+):gateway(?::(?:inbound|outbound))?$`).exec(
+  const fg = new RegExp(
+    `^filter:region:${region}:subnet:(\\d+):gateway(?::[a-z0-9_-]+)?(?::(?:inbound|outbound))?$`,
+  ).exec(
     id,
   );
   if (fg) return fg[1];
-  const up = new RegExp(`^hub:region:${region}:subnet:(\\d+):uplink$`).exec(id);
+  const up = new RegExp(`^hub:region:${region}:subnet:(\\d+):uplink(?::[a-z0-9_-]+)?$`).exec(id);
   if (up) return up[1];
   return undefined;
 }
@@ -266,8 +328,8 @@ function computeInitialPositions(payload: ViewerPayload): Map<string, XY> {
 
   const pos = new Map<string, XY>();
 
-  /** Core ring order matches synthesis: region index 0→1→2→3. */
-  const coreHubs = LAYOUT.regionOrder.map((r) => `hub:core:${r}`);
+  /** Core ring order from synthesized topology (supports multi-channel core hubs). */
+  const coreHubs = coreHubRingOrder(payload);
   placeOnCircle(coreHubs, { x: 0, y: 0 }, LAYOUT.coreRingRadius).forEach((p, id) => {
     pos.set(id, p);
   });
@@ -286,14 +348,21 @@ function computeInitialPositions(payload: ViewerPayload): Map<string, XY> {
       payload.nodes.some((n) => n.id === id),
     );
     const radius = Math.max(LAYOUT.regionRingRadiusMin, hubOrder.length * LAYOUT.regionRingRadiusPerHub);
-    const coreHubId = `hub:core:${r}`;
-    const corePos = pos.get(coreHubId);
-    const gatewayId = `hub:region:${r}:gateway`;
+    const coreHubId =
+      coreHubs.find((id) => id === `hub:core:${r}:a`) ??
+      coreHubs.find((id) => id.startsWith(`hub:core:${r}:`)) ??
+      coreHubs.find((id) => id === `hub:core:${r}`);
+    const corePos = coreHubId ? pos.get(coreHubId) : undefined;
+    const gatewayIdCandidates = [
+      ...BOUNDARY_CHANNELS.map((c) => `hub:region:${r}:gateway:${c}`),
+      `hub:region:${r}:gateway`,
+    ];
+    const gatewayId = gatewayIdCandidates.find((id) => hubOrder.includes(id)) ?? hubOrder[0];
     const alignAngle =
       corePos !== undefined
         ? Math.atan2(corePos.y - center.y, corePos.x - center.x)
         : -Math.PI / 2;
-    const baseRing = placeOnCircleAligned(hubOrder, center, radius, gatewayId, alignAngle);
+    const baseRing = placeOnCircleAligned(hubOrder, center, radius, gatewayId, alignAngle, -1);
 
     // Place all regional-ring hubs (subnet uplinks + region gateway).
     baseRing.forEach((p, id) => {
@@ -314,8 +383,12 @@ function computeInitialPositions(payload: ViewerPayload): Map<string, XY> {
       alignAngle,
     );
     subnetOrder.forEach((s) => {
-      const uplinkId = `hub:region:${r}:subnet:${s}:uplink`;
-      const uplinkPos = baseRing.get(uplinkId);
+      const uplinkIdCandidates = [
+        ...BOUNDARY_CHANNELS.map((c) => `hub:region:${r}:subnet:${s}:uplink:${c}`),
+        `hub:region:${r}:subnet:${s}:uplink`,
+      ];
+      const uplinkId = uplinkIdCandidates.find((id) => baseRing.has(id));
+      const uplinkPos = uplinkId ? baseRing.get(uplinkId) : undefined;
       if (!uplinkPos) {
         const fallback = fallbackSubnetCenters.get(s);
         if (fallback) {
@@ -345,9 +418,13 @@ function computeInitialPositions(payload: ViewerPayload): Map<string, XY> {
       }
       const inwardAngle = Math.atan2(center.y - subnetCenter.y, center.x - subnetCenter.x);
       const subnetRadius = Math.max(LAYOUT.subnetRingRadiusMin, hubs.length * LAYOUT.subnetRingRadiusPerHub);
-      const gatewayId = `hub:region:${r}:subnet:${s}:gateway`;
-      const alignId = hubs.includes(gatewayId) ? gatewayId : hubs[0];
-      placeOnCircleAligned(hubs, subnetCenter, subnetRadius, alignId, inwardAngle).forEach(
+      const gatewayIdCandidates = [
+        ...BOUNDARY_CHANNELS.map((c) => `hub:region:${r}:subnet:${s}:gateway:${c}`),
+        `hub:region:${r}:subnet:${s}:gateway`,
+      ];
+      const gatewayId = gatewayIdCandidates.find((id) => hubs.includes(id));
+      const alignId = gatewayId && hubs.includes(gatewayId) ? gatewayId : hubs[0];
+      placeOnCircleAligned(hubs, subnetCenter, subnetRadius, alignId, inwardAngle, 1).forEach(
         (p, id) => {
           pos.set(id, p);
         },
@@ -448,9 +525,12 @@ function mountLayout(): {
   metaEl: HTMLDivElement;
   simEl: HTMLDivElement;
   timingBodyEl: HTMLTableSectionElement;
+  topologyOrderEl: HTMLInputElement;
+  topologyOrderValueEl: HTMLSpanElement;
   playBtn: HTMLButtonElement;
   pauseBtn: HTMLButtonElement;
   stepBtn: HTMLButtonElement;
+  clearBtn: HTMLButtonElement;
   speedEl: HTMLInputElement;
   speedValueEl: HTMLSpanElement;
   sendRateEl: HTMLInputElement;
@@ -469,10 +549,18 @@ function mountLayout(): {
         <h1 class="panel-title">Tunnet Topology Viewer</h1>
         <div id="meta" class="meta card"></div>
         <div class="sim-controls card">
+          <div class="sim-send-rate-block">
+            <label class="sim-send-rate-label" for="topology-order">Topology order (boundary channels)</label>
+            <div class="sim-send-rate-row">
+              <input id="topology-order" type="range" min="1" max="4" step="1" value="2" />
+              <span id="topology-order-value" class="sim-send-rate-value"></span>
+            </div>
+          </div>
           <div class="sim-buttons">
             <button id="sim-play" type="button">Play</button>
             <button id="sim-pause" type="button">Pause</button>
             <button id="sim-step" type="button">Step</button>
+            <button id="sim-clear" type="button">Clear</button>
           </div>
           <div class="sim-send-rate-block">
             <label class="sim-send-rate-label" for="sim-speed">Sim speed (0.25×–64×, each step ×2)</label>
@@ -534,9 +622,12 @@ function mountLayout(): {
     metaEl: app.querySelector<HTMLDivElement>("#meta")!,
     simEl: app.querySelector<HTMLDivElement>("#sim-meta")!,
     timingBodyEl: app.querySelector<HTMLTableSectionElement>("#timing-body")!,
+    topologyOrderEl: app.querySelector<HTMLInputElement>("#topology-order")!,
+    topologyOrderValueEl: app.querySelector<HTMLSpanElement>("#topology-order-value")!,
     playBtn: app.querySelector<HTMLButtonElement>("#sim-play")!,
     pauseBtn: app.querySelector<HTMLButtonElement>("#sim-pause")!,
     stepBtn: app.querySelector<HTMLButtonElement>("#sim-step")!,
+    clearBtn: app.querySelector<HTMLButtonElement>("#sim-clear")!,
     speedEl: app.querySelector<HTMLInputElement>("#sim-speed")!,
     speedValueEl: app.querySelector<HTMLSpanElement>("#sim-speed-value")!,
     sendRateEl: app.querySelector<HTMLInputElement>("#sim-send-rate")!,
@@ -575,14 +666,17 @@ function formatFilterSpecLabel(node: ViewerNode): string {
   return `${node.id}\n${rows.join("\n")}`;
 }
 
-function render(payload: ViewerPayload): void {
+function render(payload: ViewerPayload, boundaryOrder: number): void {
   const {
     metaEl,
     simEl,
     timingBodyEl,
+    topologyOrderEl,
+    topologyOrderValueEl,
     playBtn,
     pauseBtn,
     stepBtn,
+    clearBtn,
     speedEl,
     speedValueEl,
     sendRateEl,
@@ -602,6 +696,7 @@ function render(payload: ViewerPayload): void {
   metaEl.innerHTML = `
     <div class="section-title">Build</div>
     <div class="kv"><span>Phase</span><strong>${payload.metadata.phase}</strong></div>
+    <div class="kv"><span>Boundary order</span><strong>${boundaryOrder}</strong></div>
     <div class="kv"><span>Generated</span><strong>${payload.metadata.generatedAt}</strong></div>
     <div class="stats-row">
       <div class="stat-pill"><span>Devices</span><strong>${payload.metadata.deviceCount}</strong></div>
@@ -609,6 +704,8 @@ function render(payload: ViewerPayload): void {
       <div class="stat-pill"><span>Flows</span><strong>${payload.metadata.flowCount}</strong></div>
     </div>
   `;
+  topologyOrderEl.value = String(boundaryOrder);
+  topologyOrderValueEl.textContent = `${boundaryOrder}`;
 
   const nodes = new DataSet<any>(
     payload.nodes.map((n) => {
@@ -688,7 +785,7 @@ function render(payload: ViewerPayload): void {
   };
   setPhysicsEnabled(physicsEnabled);
 
-  const simulator = new TunnetSimulator(payload.topology, 1337);
+  let simulator = new TunnetSimulator(payload.topology, 1337);
   let currentOccupancy = simulator.getPortOccupancy();
   let previousOccupancy = currentOccupancy;
   let progress = 1;
@@ -1020,6 +1117,70 @@ function render(payload: ViewerPayload): void {
       emaRenderOverheadMs === null ? overhead : alpha * overhead + (1 - alpha) * emaRenderOverheadMs;
   };
 
+  const resetSimulationState = (): void => {
+    if (animationHandle !== null) {
+      cancelAnimationFrame(animationHandle);
+      animationHandle = null;
+    }
+    playing = false;
+    animating = false;
+
+    // Clear runtime packet visuals before reinitializing.
+    packetNodeIds.forEach((id) => nodes.remove(id));
+    packetNodeIds.clear();
+    edges.remove(selectedPacketGuideEdgeId);
+    selectedPacketNodeId = null;
+    detailsEl.textContent = "No node selected.";
+
+    simulator = new TunnetSimulator(payload.topology, 1337);
+    simulator.setSendRateMultiplier(sendRateMultiplierFromExponent(sendRateExponent));
+    currentOccupancy = simulator.getPortOccupancy();
+    previousOccupancy = currentOccupancy;
+    progress = 1;
+
+    stats = {
+      tick: 0,
+      emitted: 0,
+      delivered: 0,
+      dropped: 0,
+      bounced: 0,
+      ttlExpired: 0,
+      collisions: 0,
+    };
+    previousStatsTotals = { ...stats };
+    deliveredPerTick = null;
+    deliveredPerTickAvg100 = null;
+    deliveredHistory.length = 0;
+    dropPctTick = null;
+    dropPctCumulative = null;
+
+    emaAchievedSpeed = null;
+    lastStepComputeMs = null;
+    emaStepComputeMs = null;
+    emaFps = null;
+    lastRenderFrameMs = null;
+    lastRenderTotalMs = null;
+    lastRenderBuildMs = null;
+    lastRenderApplyMs = null;
+    lastRenderGuideMs = null;
+    lastRenderOverheadMs = null;
+    emaRenderTotalMs = null;
+    emaRenderBuildMs = null;
+    emaRenderApplyMs = null;
+    emaRenderGuideMs = null;
+    emaRenderOverheadMs = null;
+
+    timingRows.length = 0;
+    pendingTimingIndex = null;
+    previousStepStartMs = null;
+    packetMotionStore.clear();
+    packetBirthTick.clear();
+
+    renderPackets(1);
+    renderTimingTable();
+    updateSimMeta();
+  };
+
   const runOneTick = (): void => {
     if (animating) return;
     const tickWallStartMs = performance.now();
@@ -1144,6 +1305,7 @@ function render(payload: ViewerPayload): void {
       runOneTick();
     }
   });
+  clearBtn.addEventListener("click", resetSimulationState);
   const applySpeedFromSlider = (): void => {
     speedExponent = Number(speedEl.value);
     if (!Number.isFinite(speedExponent)) {
@@ -1166,6 +1328,23 @@ function render(payload: ViewerPayload): void {
   speedEl.addEventListener("change", applySpeedFromSlider);
   sendRateEl.addEventListener("input", applySendRateFromSlider);
   sendRateEl.addEventListener("change", applySendRateFromSlider);
+  const applyTopologyOrderFromSlider = (): void => {
+    const parsed = Number(topologyOrderEl.value);
+    const nextOrder = Number.isFinite(parsed) ? Math.max(1, Math.min(4, Math.round(parsed))) : 2;
+    topologyOrderValueEl.textContent = String(nextOrder);
+    if (nextOrder === boundaryOrder) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("order", String(nextOrder));
+    window.location.href = url.toString();
+  };
+  topologyOrderEl.addEventListener("input", () => {
+    const parsed = Number(topologyOrderEl.value);
+    const nextOrder = Number.isFinite(parsed) ? Math.max(1, Math.min(4, Math.round(parsed))) : 2;
+    topologyOrderValueEl.textContent = String(nextOrder);
+  });
+  topologyOrderEl.addEventListener("change", applyTopologyOrderFromSlider);
 
   network.on("dragging", () => renderPackets(progress));
   network.on("zoom", () => renderPackets(progress));
@@ -1202,15 +1381,23 @@ function render(payload: ViewerPayload): void {
   });
 }
 
+function getBoundaryOrderFromUrl(): number {
+  const raw = new URLSearchParams(window.location.search).get("order");
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return 2;
+  return Math.max(1, Math.min(4, Math.round(parsed)));
+}
+
 async function main(): Promise<void> {
   try {
-    const dataUrl = `${import.meta.env.BASE_URL}data/topology.json`;
+    const boundaryOrder = getBoundaryOrderFromUrl();
+    const dataUrl = `${import.meta.env.BASE_URL}data/topology.${boundaryOrder}.json`;
     const res = await fetch(dataUrl);
     if (!res.ok) {
       throw new Error(`Unable to load topology data (${res.status})`);
     }
     const payload = (await res.json()) as ViewerPayload;
-    render(payload);
+    render(payload, boundaryOrder);
   } catch (err) {
     const { detailsEl } = mountLayout();
     detailsEl.textContent = `Failed to load topology data.\nRun: pnpm viewer:build\n\n${String(err)}`;

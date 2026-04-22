@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { synthesizePhase5HierarchicalRings } from "./topology.js";
+import { synthesizePhase5HierarchicalRingsWithOrder } from "./topology.js";
 import { Device, FlowEdge, FlowGraph, Topology } from "./types.js";
 
 interface ViewerNode {
@@ -22,6 +22,7 @@ interface ViewerPayload {
   metadata: {
     generatedAt: string;
     phase: string;
+    boundaryOrder: number;
     deviceCount: number;
     linkCount: number;
     flowCount: number;
@@ -184,11 +185,11 @@ function filterFlowGraphToEndpoints(flow: FlowGraph, allowed: Set<string>): Flow
   return { nodes, nodeColors, edges };
 }
 
-function buildViewerPayload(): ViewerPayload {
+function buildViewerPayload(boundaryOrder: number): ViewerPayload {
   const sourceEndpoints = loadEndpointAddressSet("data.normalized.json");
   const flowFromData = buildFlowGraphFromNormalized("data.normalized.json");
   const filteredFlow = filterFlowGraphToEndpoints(flowFromData, sourceEndpoints);
-  const phase5 = synthesizePhase5HierarchicalRings(filteredFlow);
+  const phase5 = synthesizePhase5HierarchicalRingsWithOrder(filteredFlow, boundaryOrder);
 
   const nodes = Object.values(phase5.topology.devices).map((device) => ({
     id: device.id,
@@ -210,6 +211,7 @@ function buildViewerPayload(): ViewerPayload {
     metadata: {
       generatedAt: new Date().toISOString(),
       phase: "phase5-hierarchical-rings",
+      boundaryOrder,
       deviceCount: nodes.length,
       linkCount: edges.length,
       flowCount: filteredFlow.edges.length,
@@ -222,12 +224,18 @@ function buildViewerPayload(): ViewerPayload {
 }
 
 function main(): void {
-  const payload = buildViewerPayload();
+  const orders = [1, 2, 3, 4];
   mkdirSync("web/public/data", { recursive: true });
-  writeFileSync("web/public/data/topology.json", JSON.stringify(payload, null, 2), "utf8");
-  console.log(
-    `Wrote web/public/data/topology.json (nodes=${payload.metadata.deviceCount}, links=${payload.metadata.linkCount})`,
-  );
+  for (const order of orders) {
+    const payload = buildViewerPayload(order);
+    const outPath = `web/public/data/topology.${order}.json`;
+    writeFileSync(outPath, JSON.stringify(payload, null, 2), "utf8");
+    if (order === 2) {
+      writeFileSync("web/public/data/topology.json", JSON.stringify(payload, null, 2), "utf8");
+    }
+    console.log(`Wrote ${outPath} (nodes=${payload.metadata.deviceCount}, links=${payload.metadata.linkCount})`);
+  }
+  console.log("Updated default alias web/public/data/topology.json -> order 2");
 }
 
 main();
