@@ -166,9 +166,9 @@ export class TunnetSimulator {
     const targetKey = makePortKey(move.to);
     if (ctx.nextPortPackets.has(targetKey)) {
       // Multiple packets trying to arrive at same port in same tick -> collision.
-      ctx.nextPortPackets.delete(targetKey);
+      // Keep the first packet that already claimed this target; drop the later one.
       ctx.stats.collisions += 1;
-      ctx.stats.dropped += 2;
+      ctx.stats.dropped += 1;
       return;
     }
     ctx.nextPortPackets.set(targetKey, move.packet);

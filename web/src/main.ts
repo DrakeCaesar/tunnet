@@ -824,6 +824,7 @@ function render(payload: ViewerPayload): void {
   };
 
   const packetMotionStore = new Map<number, PacketMotionState>();
+  const packetBirthTick = new Map<number, number>();
 
   const restingPortOffset = (port: number): XY => {
     const a = (port % 4) * (Math.PI / 2);
@@ -835,12 +836,24 @@ function render(payload: ViewerPayload): void {
     const prev = byPacketId(previousOccupancy);
     const curr = byPacketId(currentOccupancy);
     const nextPacketIds = new Set<string>();
+    const seenPacketIds = new Set<number>();
     const updates: any[] = [];
     curr.forEach(({ deviceId, port, packet }, packetId) => {
+      seenPacketIds.add(packetId);
+      if (!packetBirthTick.has(packetId)) {
+        packetBirthTick.set(packetId, stats.tick);
+      }
+      const birthTick = packetBirthTick.get(packetId) ?? stats.tick;
+      const packetAge = Math.max(0, stats.tick - birthTick);
+      const hue = (packetId * 47) % 360;
+      const normalBg = `hsl(${hue} 82% 64%)`;
+      const normalBorder = `hsl(${hue} 82% 44%)`;
       const packetNodeId = `pkt:${packetId}`;
       nextPacketIds.add(packetNodeId);
       const from = prev.get(packetId);
-      const fromDevice = from?.deviceId ?? deviceId;
+      const sourceEndpointId = `ep:${packet.src}`;
+      const fallbackSpawnDevice = nodes.get(sourceEndpointId) ? sourceEndpointId : deviceId;
+      const fromDevice = from?.deviceId ?? fallbackSpawnDevice;
       const pa = network.getPosition(fromDevice);
       const pb = network.getPosition(deviceId);
       let x: number;
@@ -884,14 +897,19 @@ function render(payload: ViewerPayload): void {
         color:
           packetNodeId === selectedPacketNodeId
             ? { background: "#fab387", border: "#f9e2af" }
-            : { background: "#f38ba8", border: "#eba0ac" },
+            : { background: normalBg, border: normalBorder },
         borderWidth: packetNodeId === selectedPacketNodeId ? 3 : 1,
         label: "",
         rawPacket: packet,
         packetAt: deviceId,
-        title: `id=${packet.id}\nsrc=${packet.src}\ndst=${packet.dest}\nttl=${packet.ttl ?? "inf"}`,
+        title: `id=${packet.id}\nage=${packetAge}\nsrc=${packet.src}\ndst=${packet.dest}\nttl=${packet.ttl ?? "inf"}`,
       });
     });
+    for (const packetId of Array.from(packetBirthTick.keys())) {
+      if (!seenPacketIds.has(packetId)) {
+        packetBirthTick.delete(packetId);
+      }
+    }
     for (const pid of Array.from(packetMotionStore.keys())) {
       if (!curr.has(pid)) {
         packetMotionStore.delete(pid);
@@ -1084,7 +1102,10 @@ function render(payload: ViewerPayload): void {
     if (node?.rawPacket) {
       selectedPacketNodeId = params.nodes[0];
       renderPackets(progress);
-      detailsEl.textContent = formatPacketDetails(node.rawPacket, node.packetAt ?? "?");
+      const birthTick = packetBirthTick.get(node.rawPacket.id) ?? stats.tick;
+      const age = Math.max(0, stats.tick - birthTick);
+      detailsEl.textContent =
+        `${formatPacketDetails(node.rawPacket, node.packetAt ?? "?")}\n` + `age=${age}`;
       return;
     }
     if (!node?.raw) {
