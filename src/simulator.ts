@@ -198,9 +198,24 @@ export class TunnetSimulator {
 
   private processEndpoint(device: EndpointDevice, ctx: StepContext): void {
     const inbound = this.packetAt({ deviceId: device.id, port: 0 });
+    let repliedThisTick = false;
     if (inbound) {
       if (inbound.dest === device.address) {
         ctx.stats.delivered += 1;
+        const replyTo = new Set(device.generator?.replyToSources ?? []);
+        if (replyTo.has(inbound.src)) {
+          const reply: Packet = {
+            id: ctx.packetIdCounter++,
+            src: device.address,
+            dest: inbound.src,
+            ttl: device.generator?.ttl,
+            sensitive: false,
+            subject: undefined,
+          };
+          this.enqueueOutbound(ctx, device.id, 0, reply);
+          ctx.stats.emitted += 1;
+          repliedThisTick = true;
+        }
       } else if (inbound.sensitive) {
         ctx.stats.dropped += 1;
       } else {
@@ -219,6 +234,9 @@ export class TunnetSimulator {
       return;
     }
     if (ctx.tick < device.state.nextSendTick) {
+      return;
+    }
+    if (repliedThisTick) {
       return;
     }
     const destinations = device.generator.destinations.filter((d) => d !== device.address);

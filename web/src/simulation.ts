@@ -11,6 +11,7 @@ export interface Packet {
 
 export interface EndpointGeneratorConfig {
   destinations: Address[];
+  replyToSources?: Address[];
   minIntervalTicks: number;
   maxIntervalTicks: number;
   sensitiveChance: number;
@@ -146,6 +147,34 @@ function buildAdjacency(topology: Topology): Map<string, PortRef> {
   return out;
 }
 
+function cloneTopology(topology: Topology): Topology {
+  const devices: Record<string, Device> = {};
+  for (const [id, device] of Object.entries(topology.devices)) {
+    if (device.type === "endpoint") {
+      devices[id] = {
+        ...device,
+        generator: device.generator
+          ? {
+              ...device.generator,
+              destinations: [...device.generator.destinations],
+              replyToSources: device.generator.replyToSources
+                ? [...device.generator.replyToSources]
+                : undefined,
+            }
+          : undefined,
+        state: { ...device.state },
+      };
+      continue;
+    }
+    devices[id] = { ...device };
+  }
+  const links = topology.links.map((link) => ({
+    a: { ...link.a },
+    b: { ...link.b },
+  }));
+  return { devices, links };
+}
+
 export class TunnetSimulator {
   private readonly topology: Topology;
   private readonly adjacency: Map<string, PortRef>;
@@ -157,8 +186,8 @@ export class TunnetSimulator {
   private sendRateMultiplier = 1;
 
   constructor(topology: Topology, seed = 1337) {
-    this.topology = topology;
-    this.adjacency = buildAdjacency(topology);
+    this.topology = cloneTopology(topology);
+    this.adjacency = buildAdjacency(this.topology);
     this.rndState = seed >>> 0;
     this.stats = {
       tick: 0,
@@ -211,9 +240,24 @@ export class TunnetSimulator {
 
   private processEndpoint(device: EndpointDevice, ctx: StepContext): void {
     const inbound = this.packetAt({ deviceId: device.id, port: 0 });
+    let repliedThisTick = false;
     if (inbound) {
       if (inbound.dest === device.address) {
         ctx.stats.delivered += 1;
+        const replyTo = new Set(device.generator?.replyToSources ?? []);
+        if (replyTo.has(inbound.src)) {
+          const reply: Packet = {
+            id: ctx.packetIdCounter++,
+            src: device.address,
+            dest: inbound.src,
+            ttl: device.generator?.ttl,
+            sensitive: false,
+            subject: undefined,
+          };
+          this.enqueueOutbound(ctx, device.id, 0, reply);
+          ctx.stats.emitted += 1;
+          repliedThisTick = true;
+        }
       } else if (inbound.sensitive) {
         ctx.stats.dropped += 1;
       } else {
@@ -230,6 +274,7 @@ export class TunnetSimulator {
 
     if (!device.generator) return;
     if (ctx.tick < device.state.nextSendTick) return;
+    if (repliedThisTick) return;
     const destinations = device.generator.destinations.filter((d) => d !== device.address);
     if (destinations.length === 0) return;
 

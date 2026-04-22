@@ -18,6 +18,7 @@ export interface BaseDevice {
 
 export interface EndpointGeneratorConfig {
   destinations: Address[];
+  replyToSources?: Address[];
   minIntervalTicks: number;
   maxIntervalTicks: number;
   sensitiveChance: number;

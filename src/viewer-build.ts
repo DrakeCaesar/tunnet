@@ -36,6 +36,7 @@ interface ViewerPayload {
 interface NormalizedEndpointRow {
   address: string;
   sends_to?: string[];
+  replies_to?: string[];
   receives_from?: string[];
 }
 
@@ -63,6 +64,7 @@ function deviceSettingsObject(device: Device): Record<string, string> {
     return {
       address: device.address,
       destinations: device.generator ? device.generator.destinations.join(", ") : "",
+      replyToSources: device.generator?.replyToSources ? device.generator.replyToSources.join(", ") : "",
       interval: device.generator
         ? `${device.generator.minIntervalTicks}-${device.generator.maxIntervalTicks}`
         : "n/a",
@@ -107,12 +109,6 @@ function nodeLabel(device: Device): string {
   return `${device.id}\nfilter`;
 }
 
-function loadEndpointAddressSet(path: string): Set<string> {
-  const text = readFileSync(path, "utf8");
-  const data = JSON.parse(text) as NormalizedEndpointFile;
-  return new Set(data.endpoints.map((e) => e.address));
-}
-
 function matchMask(mask: string, address: string): boolean {
   const m = mask.split(".");
   const a = address.split(".");
@@ -131,9 +127,12 @@ function expandAddressOrMask(value: string, endpoints: Set<string>): string[] {
   return [...endpoints].filter((addr) => matchMask(value, addr));
 }
 
-function buildFlowGraphFromNormalized(path: string): FlowGraph {
+function loadNormalizedEndpointFile(path: string): NormalizedEndpointFile {
   const text = readFileSync(path, "utf8");
-  const data = JSON.parse(text) as NormalizedEndpointFile;
+  return JSON.parse(text) as NormalizedEndpointFile;
+}
+
+function buildFlowGraphFromNormalized(data: NormalizedEndpointFile): FlowGraph {
   const endpointSet = new Set(data.endpoints.map((e) => e.address));
   const edgeSet = new Set<string>();
   const edges: FlowEdge[] = [];
@@ -151,6 +150,12 @@ function buildFlowGraphFromNormalized(path: string): FlowGraph {
 
     for (const target of row.sends_to ?? []) {
       for (const dst of expandAddressOrMask(target, endpointSet)) {
+        addEdge(src, dst);
+      }
+    }
+
+    for (const source of row.replies_to ?? []) {
+      for (const dst of expandAddressOrMask(source, endpointSet)) {
         addEdge(src, dst);
       }
     }
@@ -185,11 +190,61 @@ function filterFlowGraphToEndpoints(flow: FlowGraph, allowed: Set<string>): Flow
   return { nodes, nodeColors, edges };
 }
 
+function applyEndpointBehaviorFromNormalized(topology: Topology, data: NormalizedEndpointFile): void {
+  const endpointSet = new Set(data.endpoints.map((e) => e.address));
+  const byAddress = new Map(data.endpoints.map((row) => [row.address, row]));
+
+  for (const device of Object.values(topology.devices)) {
+    if (device.type !== "endpoint") {
+      continue;
+    }
+    const row = byAddress.get(device.address);
+    if (!row) {
+      continue;
+    }
+
+    const destinations = new Set<string>();
+    for (const target of row.sends_to ?? []) {
+      for (const expanded of expandAddressOrMask(target, endpointSet)) {
+        if (expanded !== device.address) {
+          destinations.add(expanded);
+        }
+      }
+    }
+
+    const replyToSources = new Set<string>();
+    for (const source of row.replies_to ?? []) {
+      for (const expanded of expandAddressOrMask(source, endpointSet)) {
+        if (expanded !== device.address) {
+          replyToSources.add(expanded);
+        }
+      }
+    }
+
+    if (destinations.size === 0 && replyToSources.size === 0) {
+      delete device.generator;
+      continue;
+    }
+
+    device.generator = {
+      destinations: [...destinations].sort(),
+      replyToSources: [...replyToSources].sort(),
+      minIntervalTicks: device.generator?.minIntervalTicks ?? 3,
+      maxIntervalTicks: device.generator?.maxIntervalTicks ?? 7,
+      sensitiveChance: device.generator?.sensitiveChance ?? 0.1,
+      ttl: device.generator?.ttl,
+      subjectPrefix: device.generator?.subjectPrefix,
+    };
+  }
+}
+
 function buildViewerPayload(boundaryOrder: number): ViewerPayload {
-  const sourceEndpoints = loadEndpointAddressSet("data.normalized.json");
-  const flowFromData = buildFlowGraphFromNormalized("data.normalized.json");
+  const normalized = loadNormalizedEndpointFile("data.normalized.json");
+  const sourceEndpoints = new Set(normalized.endpoints.map((e) => e.address));
+  const flowFromData = buildFlowGraphFromNormalized(normalized);
   const filteredFlow = filterFlowGraphToEndpoints(flowFromData, sourceEndpoints);
   const phase5 = synthesizePhase5HierarchicalRingsWithOrder(filteredFlow, boundaryOrder);
+  applyEndpointBehaviorFromNormalized(phase5.topology, normalized);
 
   const nodes = Object.values(phase5.topology.devices).map((device) => ({
     id: device.id,

@@ -22,6 +22,7 @@ type NormalizedEndpoint = {
   type: string;
   hackable: boolean | null;
   sends_to: string[];
+  replies_to: string[];
   receives_from: string[];
   packets_per_tick: ParsedPacketRate;
   raw: {
@@ -55,6 +56,24 @@ function extractAddresses(value: string): string[] {
   return [...new Set(matches)];
 }
 
+function parseSendAndReplyTargets(rawSends: string): { sendsTo: string[]; repliesTo: string[] } {
+  const lower = rawSends.toLowerCase();
+  const marker = "replies to";
+  const markerIndex = lower.indexOf(marker);
+  if (markerIndex < 0) {
+    return {
+      sendsTo: extractAddresses(rawSends),
+      repliesTo: [],
+    };
+  }
+
+  const beforeReplies = rawSends.slice(0, markerIndex).replace(/sends to\s*/i, "").replace(/\band\s*$/i, "");
+  return {
+    sendsTo: extractAddresses(beforeReplies),
+    repliesTo: extractAddresses(rawSends.slice(markerIndex + marker.length).trim()),
+  };
+}
+
 function parsePacketsPerTick(value: string | number): ParsedPacketRate {
   const raw = toRawString(value);
   if (raw === "0") {
@@ -81,12 +100,14 @@ function parsePacketsPerTick(value: string | number): ParsedPacketRate {
 function normalizeEndpoint(row: RawEndpoint): NormalizedEndpoint {
   const sendsRaw = toRawString(row["sends-to"]);
   const receivesRaw = toRawString(row["receives-from"]);
+  const parsedTargets = parseSendAndReplyTargets(sendsRaw);
 
   return {
     address: row.address,
     type: row.type,
     hackable: parseHackable(row.hackable),
-    sends_to: extractAddresses(sendsRaw),
+    sends_to: parsedTargets.sendsTo,
+    replies_to: parsedTargets.repliesTo,
     receives_from: extractAddresses(receivesRaw),
     packets_per_tick: parsePacketsPerTick(row["packets-per-tick"]),
     raw: {
