@@ -843,7 +843,7 @@ function render(payload: ViewerPayload): void {
     stats = snapshot.stats;
     currentOccupancy = simulator.getPortOccupancy();
     updateSimMeta();
-    const durationMs = Math.max(120, 1000 / Math.max(speed, 0.1));
+    const durationMs = Math.max(1, 1000 / Math.max(speed, 0.1));
     const start = performance.now();
     const animate = (now: number): void => {
       const t = Math.min(1, (now - start) / durationMs);
@@ -916,6 +916,12 @@ function render(payload: ViewerPayload): void {
     }
     speed = speedMultiplierFromExponent(speedExponent);
     emaAchievedSpeed = null;
+    if (playing && animationHandle !== null) {
+      cancelAnimationFrame(animationHandle);
+      animationHandle = null;
+      animating = false;
+      runOneTick();
+    }
     syncSpeedDisplay();
     updateSimMeta();
   };
