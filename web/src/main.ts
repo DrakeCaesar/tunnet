@@ -716,6 +716,13 @@ function render(payload: ViewerPayload): void {
     ttlExpired: 0,
     collisions: 0,
   };
+  let previousStatsTotals = { ...stats };
+  let deliveredPerTick: number | null = null;
+  let deliveredPerTickAvg100: number | null = null;
+  const deliveredHistory: number[] = [];
+  const DELIVERED_AVG_WINDOW = 100;
+  let dropPctTick: number | null = null;
+  let dropPctCumulative: number | null = null;
 
   /** Smoothed sim ticks per wall second; null until first completed tick. */
   let emaAchievedSpeed: number | null = null;
@@ -796,33 +803,31 @@ function render(payload: ViewerPayload): void {
   };
 
   const updateSimMeta = (): void => {
-    const achievedLine =
+    const achievedValue =
       emaAchievedSpeed === null
-        ? `achieved: — (no tick finished yet)`
-        : `achieved ~${emaAchievedSpeed.toFixed(2)}× (${Math.min(999, Math.round((emaAchievedSpeed / Math.max(speed, 1e-9)) * 100))}% of ${speed.toFixed(2)}× target)`;
-    const stepComputeLine =
+        ? `— (no tick finished yet)`
+        : `${emaAchievedSpeed.toFixed(2)}× (${Math.min(999, Math.round((emaAchievedSpeed / Math.max(speed, 1e-9)) * 100))}% of ${speed.toFixed(2)}× target)`;
+    const stepComputeValue =
       lastStepComputeMs === null
-        ? `step compute: —`
-        : `step compute: ${lastStepComputeMs.toFixed(2)}ms (ema ${(
-            emaStepComputeMs ?? lastStepComputeMs
-          ).toFixed(2)}ms)`;
-    const fpsLine = emaFps === null ? `fps: —` : `fps: ${emaFps.toFixed(1)}`;
-    const renderLine =
-      lastRenderTotalMs === null
-        ? `render: —`
-        : `render total ${lastRenderTotalMs.toFixed(2)} (ema ${(emaRenderTotalMs ?? lastRenderTotalMs).toFixed(2)}) · build ${lastRenderBuildMs?.toFixed(2)} · apply ${lastRenderApplyMs?.toFixed(2)} · guide ${lastRenderGuideMs?.toFixed(2)} · overhead ${lastRenderOverheadMs?.toFixed(2)}`;
+        ? `—`
+        : `${lastStepComputeMs.toFixed(2)}ms (ema ${(emaStepComputeMs ?? lastStepComputeMs).toFixed(2)}ms)`;
+    const fpsValue = emaFps === null ? "—" : emaFps.toFixed(1);
     simEl.innerHTML = `
-      <div class="status-row">
-        <span class="status-chip">${playing ? "running" : "paused"}</span>
-        <span class="status-label">speed ${formatSpeedLabel(speedExponent)}</span>
-        <span class="status-label">${achievedLine}</span>
-        <span class="status-label">${fpsLine}</span>
+      <div class="stats-subtitle">Render & Runtime</div>
+      <div class="stats-row">
+        <div class="stat-pill"><span>State</span><strong>${playing ? "running" : "paused"}</strong></div>
+        <div class="stat-pill"><span>Speed</span><strong>${formatSpeedLabel(speedExponent)}</strong></div>
+        <div class="stat-pill"><span>Achieved</span><strong>${achievedValue}</strong></div>
+        <div class="stat-pill"><span>FPS</span><strong>${fpsValue}</strong></div>
+        <div class="stat-pill"><span>Send rate</span><strong>${formatSendRateLabel(sendRateExponent)}</strong></div>
+        <div class="stat-pill"><span>Step compute</span><strong>${stepComputeValue}</strong></div>
+        <div class="stat-pill"><span>Render total</span><strong>${lastRenderTotalMs === null ? "—" : `${lastRenderTotalMs.toFixed(2)} (ema ${(emaRenderTotalMs ?? lastRenderTotalMs).toFixed(2)})`}</strong></div>
+        <div class="stat-pill"><span>Render build</span><strong>${lastRenderBuildMs === null ? "—" : lastRenderBuildMs.toFixed(2)}</strong></div>
+        <div class="stat-pill"><span>Render apply</span><strong>${lastRenderApplyMs === null ? "—" : lastRenderApplyMs.toFixed(2)}</strong></div>
+        <div class="stat-pill"><span>Render guide</span><strong>${lastRenderGuideMs === null ? "—" : lastRenderGuideMs.toFixed(2)}</strong></div>
+        <div class="stat-pill"><span>Render overhead</span><strong>${lastRenderOverheadMs === null ? "—" : lastRenderOverheadMs.toFixed(2)}</strong></div>
       </div>
-      <div class="status-row">
-        <span class="status-label">send rate ${formatSendRateLabel(sendRateExponent)}</span>
-        <span class="status-label">${stepComputeLine}</span>
-        <span class="status-label">${renderLine}</span>
-      </div>
+      <div class="stats-subtitle stats-subtitle-gap">Simulation Counters</div>
       <div class="stats-row">
         <div class="stat-pill"><span>Tick</span><strong>${stats.tick}</strong></div>
         <div class="stat-pill"><span>In-flight</span><strong>${currentOccupancy.length}</strong></div>
@@ -832,6 +837,10 @@ function render(payload: ViewerPayload): void {
         <div class="stat-pill"><span>Bounced</span><strong>${stats.bounced}</strong></div>
         <div class="stat-pill"><span>TTL expired</span><strong>${stats.ttlExpired}</strong></div>
         <div class="stat-pill"><span>Collisions</span><strong>${stats.collisions}</strong></div>
+        <div class="stat-pill"><span>Delivered/tick</span><strong>${deliveredPerTick === null ? "—" : deliveredPerTick.toFixed(2)}</strong></div>
+        <div class="stat-pill"><span>Delivered avg100</span><strong>${deliveredPerTickAvg100 === null ? "—" : deliveredPerTickAvg100.toFixed(2)}</strong></div>
+        <div class="stat-pill"><span>Drop % tick</span><strong>${dropPctTick === null ? "—" : `${dropPctTick.toFixed(1)}%`}</strong></div>
+        <div class="stat-pill"><span>Drop % cumulative</span><strong>${dropPctCumulative === null ? "—" : `${dropPctCumulative.toFixed(1)}%`}</strong></div>
       </div>
     `;
   };
@@ -1029,6 +1038,22 @@ function render(payload: ViewerPayload): void {
     previousOccupancy = currentOccupancy;
     const stepStartMs = performance.now();
     const snapshot = simulator.step();
+    const emittedTick = snapshot.stats.emitted - previousStatsTotals.emitted;
+    const deliveredTickCount = snapshot.stats.delivered - previousStatsTotals.delivered;
+    const droppedTickCount = snapshot.stats.dropped - previousStatsTotals.dropped;
+    deliveredPerTick = deliveredTickCount;
+    deliveredHistory.push(deliveredTickCount);
+    if (deliveredHistory.length > DELIVERED_AVG_WINDOW) {
+      deliveredHistory.shift();
+    }
+    deliveredPerTickAvg100 =
+      deliveredHistory.length > 0
+        ? deliveredHistory.reduce((sum, v) => sum + v, 0) / deliveredHistory.length
+        : null;
+    dropPctTick = emittedTick > 0 ? (droppedTickCount / emittedTick) * 100 : null;
+    dropPctCumulative =
+      snapshot.stats.emitted > 0 ? (snapshot.stats.dropped / snapshot.stats.emitted) * 100 : null;
+    previousStatsTotals = { ...snapshot.stats };
     const stepMs = performance.now() - stepStartMs;
     lastStepComputeMs = stepMs;
     emaStepComputeMs =

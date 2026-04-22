@@ -167,6 +167,21 @@ body {
   gap: 6px;
 }
 
+.stats-subtitle {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #9aa6bf;
+  text-transform: uppercase;
+}
+
+.stats-subtitle-gap {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #273043;
+}
+
 .stat-pill {
   background: #0f131b;
   border: 1px solid #2a3242;
@@ -180,11 +195,14 @@ body {
 .stat-pill span {
   color: var(--meta-text);
   font-size: 11px;
+  flex-shrink: 0;
 }
 
 .stat-pill strong {
   color: #d9e1f3;
   font-size: 12px;
+  margin-left: auto;
+  text-align: right;
 }
 
 .timings-card {
