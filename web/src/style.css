@@ -401,15 +401,15 @@ textarea {
 }
 
 .builder-layer-outer64 {
-  grid-template-columns: repeat(64, minmax(160px, 1fr));
+  grid-template-columns: repeat(64, minmax(320px, 1fr));
 }
 
 .builder-layer-middle16 {
-  grid-template-columns: repeat(16, minmax(640px, 1fr));
+  grid-template-columns: repeat(16, minmax(1280px, 1fr));
 }
 
 .builder-layer-inner4 {
-  grid-template-columns: repeat(4, minmax(2560px, 1fr));
+  grid-template-columns: repeat(4, minmax(5120px, 1fr));
 }
 
 .builder-segment {
@@ -449,6 +449,120 @@ textarea {
   max-width: 520px;
   transform: translate(-6px, -6px);
   cursor: grab;
+}
+
+.builder-entity--filter {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  min-width: 180px;
+  max-width: 560px;
+}
+
+.builder-entity--hub {
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.builder-entity--hub .builder-hub {
+  margin: 0;
+}
+
+.builder-entity.selected.builder-entity--hub {
+  border: none;
+  box-shadow: none;
+}
+
+.builder-entity.selected.builder-entity--hub .builder-hub {
+  filter: drop-shadow(0 0 4px rgba(249, 226, 175, 0.85));
+}
+
+.builder-entity.link-source.builder-entity--hub {
+  border: none;
+}
+
+.builder-entity.link-source.builder-entity--hub .builder-hub {
+  filter: drop-shadow(0 0 4px rgba(137, 220, 235, 0.9));
+}
+
+.builder-ports--filter-top,
+.builder-ports--filter-bottom {
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.builder-hub {
+  position: relative;
+  width: 108px;
+  height: 96px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.builder-hub-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.builder-hub-triangle {
+  fill: #0f131b;
+  stroke: rgba(210, 218, 235, 0.55);
+  stroke-width: 1.15;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.builder-hub-arrow {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.32);
+  stroke-width: 1.05;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.builder-hub .builder-port.builder-hub-port {
+  position: absolute;
+  z-index: 2;
+}
+
+.builder-hub-reverse {
+  position: absolute;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 19, 27, 0.92);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.builder-hub-reverse-icon {
+  font-size: 13px;
+  line-height: 1;
+  display: block;
+}
+
+.builder-hub-reverse:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+  background: rgba(20, 26, 40, 0.95);
 }
 
 .builder-entity.shadow {

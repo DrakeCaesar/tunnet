@@ -25,6 +25,161 @@ const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
 
+function hubMarkerId(instanceId: string): string {
+  return `hubmk-${instanceId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+/** SVG / hit box for hub (matches `.builder-hub` in CSS). */
+const HUB_VIEW = { w: 108, h: 96 } as const;
+
+type HubVec = { x: number; y: number };
+
+type HubLayout = { T: HubVec; L: HubVec; R: HubVec; r: number; G: HubVec };
+
+/** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (16px). */
+function hubEquilateralLayout(): HubLayout {
+  const r = 8;
+  const s = 70;
+  const h = (s * Math.sqrt(3)) / 2;
+  const cx = HUB_VIEW.w / 2;
+  const ty = 18;
+  const by = ty + h;
+  const T: HubVec = { x: cx, y: ty };
+  const L: HubVec = { x: cx - s / 2, y: by };
+  const R: HubVec = { x: cx + s / 2, y: by };
+  const G: HubVec = { x: (T.x + L.x + R.x) / 3, y: (T.y + L.y + R.y) / 3 };
+  return { T, L, R, r, G };
+}
+
+const HUB_LAYOUT = hubEquilateralLayout();
+
+function hubPortPinStyle(c: HubVec): string {
+  return `left:${(c.x / HUB_VIEW.w) * 100}%;top:${(c.y / HUB_VIEW.h) * 100}%;transform:translate(-50%,-50%)`;
+}
+
+function hvDist(a: HubVec, b: HubVec): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function hvUnit(v: HubVec): HubVec {
+  const d = Math.hypot(v.x, v.y);
+  return { x: v.x / d, y: v.y / d };
+}
+
+function hvAdd(a: HubVec, b: HubVec): HubVec {
+  return { x: a.x + b.x, y: a.y + b.y };
+}
+
+function hvSub(a: HubVec, b: HubVec): HubVec {
+  return { x: a.x - b.x, y: a.y - b.y };
+}
+
+function hvScale(v: HubVec, s: number): HubVec {
+  return { x: v.x * s, y: v.y * s };
+}
+
+function hvPerpL(v: HubVec): HubVec {
+  return { x: -v.y, y: v.x };
+}
+
+/** Same-radius outer tangent segment [on a, on b] whose midpoint is farther from ref (outside the cluster). */
+function hubOuterTangent(a: HubVec, b: HubVec, r: number, ref: HubVec): [HubVec, HubVec] {
+  const u = hvUnit(hvSub(b, a));
+  const n = hvPerpL(u);
+  const p0 = hvAdd(a, hvScale(n, r));
+  const p1 = hvAdd(b, hvScale(n, r));
+  const m0 = hvAdd(a, hvScale(n, -r));
+  const m1 = hvAdd(b, hvScale(n, -r));
+  const midP = hvScale(hvAdd(p0, p1), 0.5);
+  const midM = hvScale(hvAdd(m0, m1), 0.5);
+  return hvDist(midP, ref) > hvDist(midM, ref) ? [p0, p1] : [m0, m1];
+}
+
+function hubAngle(c: HubVec, p: HubVec): number {
+  return Math.atan2(p.y - c.y, p.x - c.x);
+}
+
+function hubPolylineArc(c: HubVec, r: number, p0: HubVec, p1: HubVec, ref: HubVec, steps: number): string {
+  const a0 = hubAngle(c, p0);
+  const a1 = hubAngle(c, p1);
+  let delta = a1 - a0;
+  const normalize = (): void => {
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta <= -Math.PI) delta += 2 * Math.PI;
+  };
+  normalize();
+  let alt = delta > 0 ? delta - 2 * Math.PI : delta + 2 * Math.PI;
+  const mid0 = a0 + delta * 0.5;
+  const mid1 = a0 + alt * 0.5;
+  const pt0 = { x: c.x + r * Math.cos(mid0), y: c.y + r * Math.sin(mid0) };
+  const pt1 = { x: c.x + r * Math.cos(mid1), y: c.y + r * Math.sin(mid1) };
+  if (hvDist(pt1, ref) > hvDist(pt0, ref)) delta = alt;
+  let s = "";
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps;
+    const ang = a0 + delta * t;
+    s += ` L ${c.x + r * Math.cos(ang)} ${c.y + r * Math.sin(ang)}`;
+  }
+  return s;
+}
+
+function hubArrowBetween(a: HubVec, b: HubVec, r: number, pad: number): string {
+  const u = hvUnit(hvSub(b, a));
+  const start = hvAdd(a, hvScale(u, r + pad));
+  const end = hvSub(b, hvScale(u, r + pad));
+  return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+}
+
+/** Pool-rack outline + arrows between port circles. ViewBox matches `HUB_VIEW` / `.builder-hub`. */
+function hubTriangleSvg(instanceId: string, rotation: string | undefined): string {
+  const mid = hubMarkerId(instanceId);
+  const cw = (rotation ?? "clockwise") !== "counterclockwise";
+  const { T, L, R, r, G } = HUB_LAYOUT;
+
+  const [tTL, lTL] = hubOuterTangent(T, L, r, G);
+  const [lLR, rLR] = hubOuterTangent(L, R, r, G);
+  const [rRT, tRT] = hubOuterTangent(R, T, r, G);
+
+  const arcSteps = 16;
+  const d = [
+    `M ${tRT.x} ${tRT.y}`,
+    hubPolylineArc(T, r, tRT, tTL, G, arcSteps),
+    ` L ${lTL.x} ${lTL.y}`,
+    hubPolylineArc(L, r, lTL, lLR, G, arcSteps),
+    ` L ${rLR.x} ${rLR.y}`,
+    hubPolylineArc(R, r, rLR, rRT, G, arcSteps),
+    " Z",
+  ].join("");
+
+  const pad = 3.5;
+  /* Clockwise sim 0→1→2→0 matches screen-clockwise around triangle: top → bottom-right → bottom-left. */
+  const arrows = cw
+    ? [
+        hubArrowBetween(T, R, r, pad),
+        hubArrowBetween(R, L, r, pad),
+        hubArrowBetween(L, T, r, pad),
+      ]
+        .map((p) => `<path class="builder-hub-arrow" marker-end="url(#${mid}-tip)" d="${p}" />`)
+        .join("")
+    : [
+        hubArrowBetween(T, L, r, pad),
+        hubArrowBetween(L, R, r, pad),
+        hubArrowBetween(R, T, r, pad),
+      ]
+        .map((p) => `<path class="builder-hub-arrow" marker-end="url(#${mid}-tip)" d="${p}" />`)
+        .join("");
+
+  return `<svg class="builder-hub-svg" viewBox="0 0 ${HUB_VIEW.w} ${HUB_VIEW.h}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <defs>
+      <marker id="${mid}-tip" viewBox="0 0 4 4" refX="3.1" refY="2" markerWidth="3" markerHeight="3" orient="auto">
+        <path d="M0,0 L4,2 L0,4 Z" fill="rgba(255,255,255,0.4)" />
+      </marker>
+    </defs>
+    <path class="builder-hub-triangle" d="${d}" pointer-events="visiblePainted" />
+    <g pointer-events="none">${arrows}</g>
+  </svg>`;
+}
+
 interface BuilderMountOptions {
   root: HTMLDivElement;
   onPreviewReady?: () => void;
@@ -347,24 +502,52 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                   </div>
                                 `
                                 : "";
+                            const hubCw = (entity.settings.rotation ?? "clockwise") !== "counterclockwise";
+                            const hubBlock =
+                              entity.templateType === "hub"
+                                ? `<div class="builder-hub">
+        ${hubTriangleSvg(entity.instanceId, entity.settings.rotation)}
+        <button type="button" class="builder-port builder-hub-port" style="${hubPortPinStyle(HUB_LAYOUT.T)}" data-instance-id="${entity.instanceId}" data-root-id="${entity.rootId}" data-port="0">0</button>
+        <button type="button" class="builder-port builder-hub-port" style="${hubPortPinStyle(HUB_LAYOUT.R)}" data-instance-id="${entity.instanceId}" data-root-id="${entity.rootId}" data-port="1">1</button>
+        <button type="button" class="builder-port builder-hub-port" style="${hubPortPinStyle(HUB_LAYOUT.L)}" data-instance-id="${entity.instanceId}" data-root-id="${entity.rootId}" data-port="2">2</button>
+        <button type="button" class="builder-hub-reverse" style="left:50%;top:${(HUB_LAYOUT.G.y / HUB_VIEW.h) * 100}%;transform:translate(-50%,-50%)" data-hub-toggle-rotation data-root-id="${entity.rootId}" title="Reverse forwarding direction"><span class="builder-hub-reverse-icon" aria-hidden="true">${hubCw ? "↻" : "↺"}</span></button>
+      </div>`
+                                : "";
+                            const entityShapeClass =
+                              entity.templateType === "filter"
+                                ? " builder-entity--filter"
+                                : entity.templateType === "hub"
+                                  ? " builder-entity--hub"
+                                  : "";
+                            const settingsBlock =
+                              entity.templateType === "filter" || entity.templateType === "hub"
+                                ? ""
+                                : `<div class="builder-entity-settings">${settingsText}</div>`;
+                            const portBtn = (port: number): string =>
+                              `<button class="builder-port" data-instance-id="${entity.instanceId}" data-root-id="${entity.rootId}" data-port="${port}" type="button">${port}</button>`;
+                            const portsRow =
+                              entity.templateType === "filter"
+                                ? `<div class="builder-ports builder-ports--filter-bottom">${portBtn(1)}</div>`
+                                : entity.templateType === "hub"
+                                  ? ""
+                                  : `<div class="builder-ports">${entity.ports.map((p) => portBtn(p)).join("")}</div>`;
                             return `
                               <div
-                                class="builder-entity ${selected} ${shadow} ${linkSource}"
+                                class="builder-entity ${selected} ${shadow} ${linkSource}${entityShapeClass}"
                                 data-instance-id="${entity.instanceId}"
                                 data-root-id="${entity.rootId}"
                                 style="left:${entity.x * 100}%;top:${entity.y * 100}%"
                               >
-                                <div class="builder-entity-title">${entity.templateType}</div>
-                                ${entity.templateType === "filter" ? "" : `<div class="builder-entity-settings">${settingsText}</div>`}
+                                ${
+                                  entity.templateType === "filter"
+                                    ? `<div class="builder-ports builder-ports--filter-top">${portBtn(0)}</div>`
+                                    : ""
+                                }
+                                ${entity.templateType === "hub" ? "" : `<div class="builder-entity-title">${entity.templateType}</div>`}
+                                ${settingsBlock}
                                 ${filterControls}
-                                <div class="builder-ports">
-                                  ${entity.ports
-                                    .map(
-                                      (port) =>
-                                        `<button class="builder-port" data-instance-id="${entity.instanceId}" data-root-id="${entity.rootId}" data-port="${port}" type="button">${port}</button>`,
-                                    )
-                                    .join("")}
-                                </div>
+                                ${hubBlock}
+                                ${portsRow}
                               </div>
                             `;
                           })
@@ -543,6 +726,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const dir = btn.dataset.maskDir === "down" ? "down" : "up";
         if (!rootId || rawIdx === undefined) return;
         updateMaskAt(rootId, Number(rawIdx), dir);
+      });
+    });
+
+    canvasEl.querySelectorAll<HTMLButtonElement>("[data-hub-toggle-rotation]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const rootId = btn.dataset.rootId;
+        if (!rootId) return;
+        const root = state.entities.find((e) => e.id === rootId);
+        if (!root || root.templateType !== "hub") return;
+        const next =
+          (root.settings.rotation ?? "clockwise") === "counterclockwise" ? "clockwise" : "counterclockwise";
+        state = updateEntitySettings(state, root.id, { ...root.settings, rotation: next });
+        persist();
+        renderCanvas();
+        renderInspector();
       });
     });
 
