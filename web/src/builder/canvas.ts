@@ -22,6 +22,9 @@ import { compileBuilderToViewerPayload } from "./compile";
 
 const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 
+/** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
+const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
+
 interface BuilderMountOptions {
   root: HTMLDivElement;
   onPreviewReady?: () => void;
@@ -45,6 +48,34 @@ function templateLabel(type: BuilderTemplateType): string {
   if (type === "relay") return "Relay";
   if (type === "hub") return "Hub";
   return "Filter";
+}
+
+function buildFilterDescription(settings: Record<string, string>): string {
+  const operatingPort = settings.operatingPort === "1" ? 1 : 0;
+  const nonOperatingPort = operatingPort === 0 ? 1 : 0;
+  const addressField = settings.addressField === "source" ? "source" : "destination";
+  const operation = settings.operation === "match" ? "match" : "differ";
+  const action = settings.action === "drop" ? "drop" : "send_back";
+  const collisionHandling =
+    settings.collisionHandling === "drop_inbound" || settings.collisionHandling === "drop_outbound"
+      ? settings.collisionHandling
+      : "send_back_outbound";
+  const mask = settings.mask ?? "*.*.*.*";
+
+  const fieldText = addressField === "destination" ? `addressed to ${mask}` : `emitted by ${mask}`;
+  const qualifier = operation === "match" ? `which are ${fieldText}` : `which are not ${fieldText}`;
+  const actionText = action === "drop" ? "Drops" : "Sends back";
+  const firstLine = `${actionText} packets received on port ${operatingPort} ${qualifier}.`;
+  if (action === "drop") {
+    return firstLine;
+  }
+  if (collisionHandling === "drop_inbound") {
+    return `${firstLine}\nIn case of collision, the packet received on port ${operatingPort} is dropped.`;
+  }
+  if (collisionHandling === "drop_outbound") {
+    return `${firstLine}\nIn case of collision, the packet received on port ${nonOperatingPort} is dropped.`;
+  }
+  return `${firstLine}\nIn case of collision, the packet received on port ${nonOperatingPort} is sent back.`;
 }
 
 export function mountBuilderView(options: BuilderMountOptions): void {
@@ -228,27 +259,90 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                               .slice(0, 3)
                               .map(([k, v]) => `${k}=${v}`)
                               .join("<br/>");
+                            const maskParts = (entity.settings.mask ?? "*.*.*.*").split(".");
+                            while (maskParts.length < 4) maskParts.push("*");
+                            const displayAddressField =
+                              (entity.settings.addressField ?? "destination") === "source"
+                                ? "Source"
+                                : "Destination";
+                            const displayOperation =
+                              (entity.settings.operation ?? "differ") === "match" ? "Match" : "Differ";
+                            const displayAction =
+                              (entity.settings.action ?? "send_back") === "drop" ? "Drop" : "Send back";
+                            const displayCollision =
+                              (() => {
+                                const value = entity.settings.collisionHandling ?? "send_back_outbound";
+                                if (value === "drop_inbound") return "Drop<br/>Inbound";
+                                if (value === "drop_outbound") return "Drop<br/>Outbound";
+                                return "Send back<br/>Outbound";
+                              })();
                             const filterControls =
                               entity.templateType === "filter"
                                 ? `
-                                  <div class="builder-inline-controls" data-root-id="${entity.rootId}">
-                                    <button class="builder-inline-btn" data-setting-toggle="operatingPort" data-root-id="${entity.rootId}" type="button">opPort:${entity.settings.operatingPort ?? "0"}</button>
-                                    <button class="builder-inline-btn" data-setting-toggle="addressField" data-root-id="${entity.rootId}" type="button">field:${entity.settings.addressField ?? "destination"}</button>
-                                    <button class="builder-inline-btn" data-setting-toggle="operation" data-root-id="${entity.rootId}" type="button">op:${entity.settings.operation ?? "differ"}</button>
-                                    <button class="builder-inline-btn" data-setting-toggle="action" data-root-id="${entity.rootId}" type="button">action:${entity.settings.action ?? "send_back"}</button>
-                                    <button class="builder-inline-btn" data-setting-toggle="collisionHandling" data-root-id="${entity.rootId}" type="button">collision:${entity.settings.collisionHandling ?? "send_back_outbound"}</button>
-                                    <div class="builder-mask-row">
-                                      ${[0, 1, 2, 3]
-                                        .map(
-                                          (idx) => `
-                                            <div class="builder-mask-cell">
-                                              <button class="builder-mask-arrow" data-mask-dir="up" data-mask-idx="${idx}" data-root-id="${entity.rootId}" type="button">▲</button>
-                                              <span>${(entity.settings.mask ?? "*.*.*.*").split(".")[idx] ?? "*"}</span>
-                                              <button class="builder-mask-arrow" data-mask-dir="down" data-mask-idx="${idx}" data-root-id="${entity.rootId}" type="button">▼</button>
-                                            </div>
-                                          `,
-                                        )
-                                        .join("")}
+                                  <div class="builder-filter-ui" data-root-id="${entity.rootId}">
+                                    <div class="builder-filter-left">
+                                      <div class="builder-row">
+                                        <span class="builder-row-label">Port:</span>
+                                        <div class="builder-cycle">
+                                          <button class="builder-cycle-btn" data-setting-cycle="operatingPort" data-dir="prev" data-root-id="${entity.rootId}" type="button">&lt;</button>
+                                          <span class="builder-cycle-value">${entity.settings.operatingPort ?? "0"}</span>
+                                          <button class="builder-cycle-btn" data-setting-cycle="operatingPort" data-dir="next" data-root-id="${entity.rootId}" type="button">&gt;</button>
+                                        </div>
+                                      </div>
+                                      <div class="builder-row">
+                                        <span class="builder-row-label">Address:</span>
+                                        <div class="builder-cycle">
+                                          <button class="builder-cycle-btn" data-setting-cycle="addressField" data-dir="prev" data-root-id="${entity.rootId}" type="button">&lt;</button>
+                                          <span class="builder-cycle-value">${displayAddressField}</span>
+                                          <button class="builder-cycle-btn" data-setting-cycle="addressField" data-dir="next" data-root-id="${entity.rootId}" type="button">&gt;</button>
+                                        </div>
+                                      </div>
+                                      <div class="builder-row">
+                                        <span class="builder-row-label">Operation:</span>
+                                        <div class="builder-cycle">
+                                          <button class="builder-cycle-btn" data-setting-cycle="operation" data-dir="prev" data-root-id="${entity.rootId}" type="button">&lt;</button>
+                                          <span class="builder-cycle-value">${displayOperation}</span>
+                                          <button class="builder-cycle-btn" data-setting-cycle="operation" data-dir="next" data-root-id="${entity.rootId}" type="button">&gt;</button>
+                                        </div>
+                                      </div>
+                                      <div class="builder-row builder-row-mask">
+                                        <span class="builder-row-label">Mask:</span>
+                                        <div class="builder-mask-row">
+                                          ${[0, 1, 2, 3]
+                                            .map(
+                                              (idx) => `
+                                                <div class="builder-mask-cell">
+                                                  <button class="builder-mask-arrow" data-mask-dir="up" data-mask-idx="${idx}" data-root-id="${entity.rootId}" type="button">+</button>
+                                                  <span>${maskParts[idx] ?? "*"}</span>
+                                                  <button class="builder-mask-arrow" data-mask-dir="down" data-mask-idx="${idx}" data-root-id="${entity.rootId}" type="button">-</button>
+                                                </div>
+                                              `,
+                                            )
+                                            .join(`<span class="builder-mask-dot" aria-hidden="true">.</span>`)}
+                                        </div>
+                                      </div>
+                                      <div class="builder-row">
+                                        <span class="builder-row-label">Action:</span>
+                                        <div class="builder-cycle">
+                                          <button class="builder-cycle-btn" data-setting-cycle="action" data-dir="prev" data-root-id="${entity.rootId}" type="button">&lt;</button>
+                                          <span class="builder-cycle-value">${displayAction}</span>
+                                          <button class="builder-cycle-btn" data-setting-cycle="action" data-dir="next" data-root-id="${entity.rootId}" type="button">&gt;</button>
+                                        </div>
+                                      </div>
+                                      ${
+                                        (entity.settings.action ?? "send_back") === "send_back"
+                                          ? `
+                                        <div class="builder-row builder-row-collision">
+                                          <span class="builder-row-label">Collision<br/>handling:</span>
+                                          <div class="builder-cycle builder-cycle--tall">
+                                            <button class="builder-cycle-btn" data-setting-cycle="collisionHandling" data-dir="prev" data-root-id="${entity.rootId}" type="button">&lt;</button>
+                                            <span class="builder-cycle-value">${displayCollision}</span>
+                                            <button class="builder-cycle-btn" data-setting-cycle="collisionHandling" data-dir="next" data-root-id="${entity.rootId}" type="button">&gt;</button>
+                                          </div>
+                                        </div>
+                                      `
+                                          : ""
+                                      }
                                     </div>
                                   </div>
                                 `
@@ -261,7 +355,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                 style="left:${entity.x * 100}%;top:${entity.y * 100}%"
                               >
                                 <div class="builder-entity-title">${entity.templateType}</div>
-                                <div class="builder-entity-settings">${settingsText}</div>
+                                ${entity.templateType === "filter" ? "" : `<div class="builder-entity-settings">${settingsText}</div>`}
                                 ${filterControls}
                                 <div class="builder-ports">
                                   ${entity.ports
@@ -382,25 +476,27 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       });
     });
 
-    const cycleValue = (value: string, options: string[]): string => {
+    const cycleValue = (value: string, options: string[], direction: "next" | "prev"): string => {
       const idx = options.indexOf(value);
-      return options[(idx + 1 + options.length) % options.length];
+      const safeIdx = idx >= 0 ? idx : 0;
+      const delta = direction === "next" ? 1 : -1;
+      return options[(safeIdx + delta + options.length) % options.length];
     };
-    const setFilterSetting = (rootId: string, key: string): void => {
+    const setFilterSetting = (rootId: string, key: string, direction: "next" | "prev"): void => {
       const root = state.entities.find((e) => e.id === rootId);
       if (!root) return;
       const current = root.settings[key] ?? "";
       let next = current;
-      if (key === "operatingPort") next = current === "1" ? "0" : "1";
-      if (key === "addressField") next = current === "source" ? "destination" : "source";
-      if (key === "operation") next = current === "match" ? "differ" : "match";
-      if (key === "action") next = current === "drop" ? "send_back" : "drop";
+      if (key === "operatingPort") next = cycleValue(current || "0", ["0", "1"], direction);
+      if (key === "addressField") next = cycleValue(current || "destination", ["destination", "source"], direction);
+      if (key === "operation") next = cycleValue(current || "differ", ["differ", "match"], direction);
+      if (key === "action") next = cycleValue(current || "send_back", ["send_back", "drop"], direction);
       if (key === "collisionHandling") {
-        next = cycleValue(current || "send_back_outbound", [
-          "send_back_outbound",
-          "drop_inbound",
-          "drop_outbound",
-        ]);
+        next = cycleValue(
+          current || "send_back_outbound",
+          ["send_back_outbound", "drop_inbound", "drop_outbound"],
+          direction,
+        );
       }
       state = updateEntitySettings(state, root.id, { ...root.settings, [key]: next });
       persist();
@@ -412,24 +508,31 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (!root) return;
       const parts = (root.settings.mask ?? "*.*.*.*").split(".");
       while (parts.length < 4) parts.push("*");
-      let value = Number(parts[maskIdx]);
-      if (!Number.isFinite(value)) value = 0;
-      value = dir === "up" ? (value + 1) % 4 : (value + 3) % 4;
-      const nextParts = ["*", "*", "*", "*"];
-      nextParts[maskIdx] = String(value);
+      for (let i = 0; i < 4; i++) parts[i] = parts[i] ?? "*";
+
+      const raw = parts[maskIdx] ?? "*";
+      let poolIdx = MASK_VALUE_CYCLE.indexOf(raw as (typeof MASK_VALUE_CYCLE)[number]);
+      if (poolIdx < 0) poolIdx = 0;
+
+      const n = MASK_VALUE_CYCLE.length;
+      poolIdx = dir === "up" ? (poolIdx + 1) % n : (poolIdx + n - 1) % n;
+
+      const nextParts: string[] = ["*", "*", "*", "*"];
+      nextParts[maskIdx] = MASK_VALUE_CYCLE[poolIdx];
       state = updateEntitySettings(state, root.id, { ...root.settings, mask: nextParts.join(".") });
       persist();
       renderCanvas();
       renderInspector();
     };
 
-    canvasEl.querySelectorAll<HTMLButtonElement>(".builder-inline-btn[data-setting-toggle]").forEach((btn) => {
+    canvasEl.querySelectorAll<HTMLButtonElement>(".builder-cycle-btn[data-setting-cycle]").forEach((btn) => {
       btn.addEventListener("click", (ev) => {
         ev.stopPropagation();
         const rootId = btn.dataset.rootId;
-        const key = btn.dataset.settingToggle;
+        const key = btn.dataset.settingCycle;
+        const direction = btn.dataset.dir === "prev" ? "prev" : "next";
         if (!rootId || !key) return;
-        setFilterSetting(rootId, key);
+        setFilterSetting(rootId, key, direction);
       });
     });
     canvasEl.querySelectorAll<HTMLButtonElement>(".builder-mask-arrow").forEach((btn) => {
@@ -505,6 +608,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       <div class="kv"><span>Type</span><strong>${entity.templateType}</strong></div>
       <div class="kv"><span>Layer</span><strong>${entity.layer}</strong></div>
       <div class="kv"><span>Segment</span><strong>${entity.segmentIndex}</strong></div>
+      ${
+        entity.templateType === "filter"
+          ? `<div class="builder-inspector-description">${buildFilterDescription(entity.settings)}</div>`
+          : ""
+      }
       <div class="builder-settings">
         ${entries
           .map(

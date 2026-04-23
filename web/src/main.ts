@@ -769,7 +769,8 @@ function render(payload: ViewerPayload, boundaryOrder: number, initialTab: "view
           color: n.type === "endpoint" ? theme.endpointTextColor : theme.deviceTextColor,
           size: 12,
           align: n.type === "filter" ? ("left" as const) : ("center" as const),
-          face: n.type === "filter" ? "Consolas, Menlo, monospace" : "Inter, Segoe UI, Arial, sans-serif",
+          face:
+            "\"FiraCode Nerd Font\", \"Fira Code Nerd Font\", \"Fira Code\", ui-monospace, SFMono-Regular, Menlo, monospace",
         },
         ...(seedPos.get(n.id) ?? {}),
         raw: n,
