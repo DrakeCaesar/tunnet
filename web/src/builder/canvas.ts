@@ -335,6 +335,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let dragRenderRaf: number | null = null;
   let wireDragRaf: number | null = null;
   let wireOverlayRaf: number | null = null;
+  let portElByInstancePort = new Map<string, HTMLButtonElement>();
 
   root.innerHTML = `
     <div class="builder-layout">
@@ -378,11 +379,24 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     saveBuilderState(state);
   }
 
+  function applySelectionToCanvas(): void {
+    canvasEl.querySelectorAll<HTMLElement>(".builder-entity.selected").forEach((el) => {
+      el.classList.remove("selected");
+    });
+    if (selection?.kind !== "entity") return;
+    canvasEl
+      .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${selection.rootId}"]`)
+      .forEach((el) => {
+        el.classList.add("selected");
+      });
+  }
+
   function setSelection(next: Selection): void {
     selection = next;
     linkDrag = null;
     renderInspector();
-    renderCanvas();
+    applySelectionToCanvas();
+    renderWireOverlay();
   }
 
   function renderTemplates(): void {
@@ -436,10 +450,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     );
   }
 
+  function portCacheKey(instanceId: string, port: number): string {
+    return `${instanceId}#${port}`;
+  }
+
+  function rebuildPortElementCache(): void {
+    const next = new Map<string, HTMLButtonElement>();
+    canvasEl.querySelectorAll<HTMLButtonElement>(".builder-port[data-instance-id][data-port]").forEach((portEl) => {
+      const instanceId = portEl.dataset.instanceId ?? "";
+      const p = Number(portEl.dataset.port);
+      if (!instanceId || Number.isNaN(p)) return;
+      next.set(portCacheKey(instanceId, p), portEl);
+    });
+    portElByInstancePort = next;
+  }
+
   function resolveBuilderPortForWireOverlay(instanceId: string, port: number): HTMLButtonElement | null {
-    const byInstance = canvasEl.querySelector<HTMLButtonElement>(
-      `.builder-port[data-instance-id="${instanceId}"][data-port="${port}"]`,
-    );
+    const byInstance = portElByInstancePort.get(portCacheKey(instanceId, port)) ?? null;
     if (byInstance) return byInstance;
     const m = instanceId.match(/^(.+)@(\d+)$/);
     if (!m) return null;
@@ -1070,6 +1097,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         `;
       })
       .join("");
+    rebuildPortElementCache();
 
     const setHoverFromEvent = (ev: DragEvent): void => {
       const target = ev.target as HTMLElement | null;
