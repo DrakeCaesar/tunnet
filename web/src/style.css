@@ -947,6 +947,18 @@ textarea {
   border-color: #f9e2af;
 }
 
+.builder-entity.box-preview {
+  border-color: #89b4fa;
+}
+
+.builder-entity--hub.box-preview .builder-hub-triangle {
+  stroke: #89b4fa;
+}
+
+.builder-entity--relay.box-preview .builder-relay-core {
+  border-color: #89b4fa;
+}
+
 .builder-entity.link-source {
   border-color: #89dceb;
 }

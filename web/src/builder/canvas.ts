@@ -1008,6 +1008,50 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
   }
 
+  function boxIntersectsHubTriangle(
+    boxL: number,
+    boxT: number,
+    boxR: number,
+    boxB: number,
+    hubEl: HTMLElement,
+    faceDeg: number,
+    wrapRect: DOMRect,
+    wrapScrollLeft: number,
+    wrapScrollTop: number,
+  ): boolean {
+    const hubRect = hubEl.getBoundingClientRect();
+    const hx1 = hubRect.left - wrapRect.left + wrapScrollLeft;
+    const hy1 = hubRect.top - wrapRect.top + wrapScrollTop;
+    const hx2 = hx1 + hubRect.width;
+    const hy2 = hy1 + hubRect.height;
+    const ix1 = Math.max(boxL, hx1);
+    const iy1 = Math.max(boxT, hy1);
+    const ix2 = Math.min(boxR, hx2);
+    const iy2 = Math.min(boxB, hy2);
+    if (ix2 < ix1 || iy2 < iy1) return false;
+    const sampleXs = [ix1, (ix1 + ix2) / 2, ix2];
+    const sampleYs = [iy1, (iy1 + iy2) / 2, iy2];
+    for (const sx of sampleXs) {
+      for (const sy of sampleYs) {
+        const localX = sx - hx1;
+        const localY = sy - hy1;
+        const p = hubLocalToModel(localX, localY, faceDeg);
+        if (hubPointInOrOnTri(p, HUB_LAYOUT.T, HUB_LAYOUT.L, HUB_LAYOUT.R)) {
+          return true;
+        }
+        const d = Math.min(
+          hubDistToSeg(p, HUB_LAYOUT.T, HUB_LAYOUT.L),
+          hubDistToSeg(p, HUB_LAYOUT.L, HUB_LAYOUT.R),
+          hubDistToSeg(p, HUB_LAYOUT.R, HUB_LAYOUT.T),
+        );
+        if (d <= HUB_LAYOUT.r) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function renderWireOverlay(): void {
     const t0 = performance.now();
     const wrap = wireOverlayEl.parentElement;
@@ -1308,24 +1352,40 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (mode === "none") return;
       if (mode === "rotate") {
         ev.preventDefault();
+        const rotatingRootIds = selectedEntityIdsForAction(rootEnt.id).filter((id) => {
+          const e = state.entities.find((x) => x.id === id);
+          return e?.templateType === "relay";
+        });
+        const baseById = new Map<string, number>();
+        rotatingRootIds.forEach((id) => {
+          const ent = state.entities.find((x) => x.id === id);
+          const raw = Number.parseFloat(ent?.settings.angle ?? "0");
+          const base = ((Number.isFinite(raw) ? raw : 0) % 360 + 360) % 360;
+          baseById.set(id, base);
+        });
         const cx = relayRect.left + relayRect.width / 2;
         const cy = relayRect.top + relayRect.height / 2;
         const a0 = Math.atan2(ev.clientY - cy, ev.clientX - cx);
-        const baseRaw = Number.parseFloat(rootEnt.settings.angle ?? "0");
-        const base = ((Number.isFinite(baseRaw) ? baseRaw : 0) % 360 + 360) % 360;
         const onMove = (mv: MouseEvent): void => {
           const a1 = Math.atan2(mv.clientY - cy, mv.clientX - cx);
-          let newDeg = base + ((a1 - a0) * 180) / Math.PI;
-          newDeg = ((newDeg % 360) + 360) % 360;
-          newDeg = Math.round(newDeg / 90) * 90;
-          newDeg = ((newDeg % 360) + 360) % 360;
-          const cur = state.entities.find((e) => e.id === rootEnt.id);
-          if (!cur) return;
-          const curRaw = Number.parseFloat(cur.settings.angle ?? "0");
-          const curDeg = ((Number.isFinite(curRaw) ? curRaw : 0) % 360 + 360) % 360;
-          if (Math.abs(curDeg - newDeg) < 0.001) return;
-          state = updateEntitySettings(state, cur.id, { ...cur.settings, angle: String(newDeg) });
-          setRelayAngleDom(cur.id, newDeg);
+          const deltaDeg = ((a1 - a0) * 180) / Math.PI;
+          let changed = false;
+          rotatingRootIds.forEach((id) => {
+            const cur = state.entities.find((e) => e.id === id);
+            const base = baseById.get(id);
+            if (!cur || base === undefined) return;
+            let newDeg = base + deltaDeg;
+            newDeg = ((newDeg % 360) + 360) % 360;
+            newDeg = Math.round(newDeg / 90) * 90;
+            newDeg = ((newDeg % 360) + 360) % 360;
+            const curRaw = Number.parseFloat(cur.settings.angle ?? "0");
+            const curDeg = ((Number.isFinite(curRaw) ? curRaw : 0) % 360 + 360) % 360;
+            if (Math.abs(curDeg - newDeg) < 0.001) return;
+            state = updateEntitySettings(state, cur.id, { ...cur.settings, angle: String(newDeg) });
+            setRelayAngleDom(cur.id, newDeg);
+            changed = true;
+          });
+          if (!changed) return;
           scheduleWireOverlayRender();
         };
         const onUp = (): void => {
@@ -1355,7 +1415,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const faceDeg = ((Number.parseFloat(rootEnt.settings.faceAngle ?? "0") % 360) + 360) % 360;
       const hubMode = hubPointerMode(localX, localY, faceDeg);
       if (hubMode === "none") return;
-      setSelection({ kind: "entity", rootId: rootEnt.id });
+      if (!selectedEntityRootIds.has(rootEnt.id)) {
+        setSelection({ kind: "entity", rootId: rootEnt.id });
+      }
       ev.preventDefault();
       if (hubMode === "move") {
         const entitiesHost =
@@ -1420,23 +1482,38 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const px = r0.left + (HUB_LAYOUT.G.x / HUB_VIEW.w) * r0.width;
       const py = r0.top + (HUB_LAYOUT.G.y / HUB_VIEW.h) * r0.height;
       const a0 = Math.atan2(ev.clientY - py, ev.clientX - px);
-      const base = faceDeg;
+      const rotatingRootIds = selectedEntityIdsForAction(rootEnt.id).filter((id) => {
+        const e = state.entities.find((x) => x.id === id);
+        return e?.templateType === "hub";
+      });
+      const baseById = new Map<string, number>();
+      rotatingRootIds.forEach((id) => {
+        const ent = state.entities.find((x) => x.id === id);
+        const raw = Number.parseFloat(ent?.settings.faceAngle ?? "0");
+        const base = ((Number.isFinite(raw) ? raw : 0) % 360 + 360) % 360;
+        baseById.set(id, base);
+      });
       const onMove = (mv: MouseEvent): void => {
         const a1 = Math.atan2(mv.clientY - py, mv.clientX - px);
-        let newDeg = base + ((a1 - a0) * 180) / Math.PI;
-        newDeg = ((newDeg % 360) + 360) % 360;
+        const deltaDeg = ((a1 - a0) * 180) / Math.PI;
         const SNAP_DEG = 30;
-        newDeg = Math.round(newDeg / SNAP_DEG) * SNAP_DEG;
-        newDeg = ((newDeg % 360) + 360) % 360;
-        const cur = state.entities.find((e) => e.id === rootEnt.id);
-        if (!cur) return;
-        const curDegRaw = Number.parseFloat(cur.settings.faceAngle ?? "0");
-        const curDeg = ((Number.isFinite(curDegRaw) ? curDegRaw : 0) % 360 + 360) % 360;
-        if (Math.abs(curDeg - newDeg) < 0.001) {
-          return;
-        }
-        state = updateEntitySettings(state, cur.id, { ...cur.settings, faceAngle: String(newDeg) });
-        setHubFaceAngleDom(cur.id, newDeg);
+        let changed = false;
+        rotatingRootIds.forEach((id) => {
+          const cur = state.entities.find((e) => e.id === id);
+          const base = baseById.get(id);
+          if (!cur || base === undefined) return;
+          let newDeg = base + deltaDeg;
+          newDeg = ((newDeg % 360) + 360) % 360;
+          newDeg = Math.round(newDeg / SNAP_DEG) * SNAP_DEG;
+          newDeg = ((newDeg % 360) + 360) % 360;
+          const curDegRaw = Number.parseFloat(cur.settings.faceAngle ?? "0");
+          const curDeg = ((Number.isFinite(curDegRaw) ? curDegRaw : 0) % 360 + 360) % 360;
+          if (Math.abs(curDeg - newDeg) < 0.001) return;
+          state = updateEntitySettings(state, cur.id, { ...cur.settings, faceAngle: String(newDeg) });
+          setHubFaceAngleDom(cur.id, newDeg);
+          changed = true;
+        });
+        if (!changed) return;
         scheduleWireOverlayRender();
       };
       const onUp = (): void => {
@@ -2283,11 +2360,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (!entityEl) return;
     const rootId = entityEl.dataset.rootId;
     const rootEnt = rootId ? state.entities.find((e) => e.id === rootId) : null;
+    const preserveMulti = !!rootId && selectedEntityRootIds.has(rootId);
     if (rootEnt?.templateType === "hub") {
       startEntityDragFromElement(entityEl, ev);
       return;
     }
-    if (rootId) {
+    if (rootId && !preserveMulti) {
       setSelection({ kind: "entity", rootId });
     }
     startEntityDragFromElement(entityEl, ev);
@@ -2298,13 +2376,80 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (!target) return;
     if (ev.button !== 0) return;
     if (target.closest("button")) return;
-    if (target.closest(".builder-entity")) return;
+    const entityUnder = target.closest<HTMLElement>(".builder-entity");
+    if (entityUnder) {
+      const rootId = entityUnder.dataset.rootId;
+      const rootEnt = rootId ? state.entities.find((e) => e.id === rootId) : null;
+      if (rootEnt?.templateType !== "hub") return;
+      const hubEl = entityUnder.querySelector<HTMLElement>(".builder-hub");
+      if (!hubEl) return;
+      const hubRect = hubEl.getBoundingClientRect();
+      const localX = ev.clientX - hubRect.left;
+      const localY = ev.clientY - hubRect.top;
+      const faceRaw = Number.parseFloat(hubEl.dataset.faceAngle ?? rootEnt.settings.faceAngle ?? "0");
+      const faceDeg = ((Number.isFinite(faceRaw) ? faceRaw : 0) % 360 + 360) % 360;
+      const mode = hubPointerMode(localX, localY, faceDeg);
+      if (mode !== "none") return;
+    }
     if (!canvasWrapEl) return;
     const wrapRect = canvasWrapEl.getBoundingClientRect();
     const startX = ev.clientX - wrapRect.left + canvasWrapEl.scrollLeft;
     const startY = ev.clientY - wrapRect.top + canvasWrapEl.scrollTop;
     boxSelection = { startX, startY, currentX: startX, currentY: startY };
     boxEl.style.display = "block";
+    const clearBoxPreview = (): void => {
+      canvasEl.querySelectorAll<HTMLElement>(".builder-entity.box-preview").forEach((el) => {
+        el.classList.remove("box-preview");
+      });
+    };
+    const collectBoxSelectionIds = (l: number, t: number, r: number, b: number): Set<string> => {
+      const ids = new Set<string>();
+      canvasEl.querySelectorAll<HTMLElement>(".builder-entity[data-root-id]").forEach((el) => {
+        const id = el.dataset.rootId;
+        if (!id) return;
+        const ent = state.entities.find((e) => e.id === id);
+        if (!ent || isStaticOuterLeafEndpoint(ent)) return;
+        if (ent.templateType === "hub") {
+          const hubEl = el.querySelector<HTMLElement>(".builder-hub");
+          if (!hubEl) return;
+          const faceRaw = Number.parseFloat(hubEl.dataset.faceAngle ?? ent.settings.faceAngle ?? "0");
+          const faceDeg = ((Number.isFinite(faceRaw) ? faceRaw : 0) % 360 + 360) % 360;
+          const hubHit = boxIntersectsHubTriangle(
+            l,
+            t,
+            r,
+            b,
+            hubEl,
+            faceDeg,
+            wrapRect,
+            canvasWrapEl.scrollLeft,
+            canvasWrapEl.scrollTop,
+          );
+          if (hubHit) ids.add(id);
+          return;
+        }
+        const relayCore =
+          ent.templateType === "relay"
+            ? el.querySelector<HTMLElement>(".builder-relay-core")
+            : null;
+        const rect = (relayCore ?? el).getBoundingClientRect();
+        const ex1 = rect.left - wrapRect.left + canvasWrapEl.scrollLeft;
+        const ey1 = rect.top - wrapRect.top + canvasWrapEl.scrollTop;
+        const ex2 = ex1 + rect.width;
+        const ey2 = ey1 + rect.height;
+        const hit = ex1 <= r && ex2 >= l && ey1 <= b && ey2 >= t;
+        if (hit) ids.add(id);
+      });
+      return ids;
+    };
+    const applyBoxPreview = (ids: Set<string>): void => {
+      clearBoxPreview();
+      ids.forEach((id) => {
+        canvasEl
+          .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${id}"]`)
+          .forEach((el) => el.classList.add("box-preview"));
+      });
+    };
     const updateBox = (): void => {
       if (!boxSelection) return;
       const left = Math.min(boxSelection.startX, boxSelection.currentX);
@@ -2315,6 +2460,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       boxEl.style.top = `${top}px`;
       boxEl.style.width = `${width}px`;
       boxEl.style.height = `${height}px`;
+      applyBoxPreview(collectBoxSelectionIds(left, top, left + width, top + height));
     };
     updateBox();
     const onMove = (mv: MouseEvent): void => {
@@ -2331,21 +2477,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const t = Math.min(boxSelection.startY, boxSelection.currentY);
       const r = Math.max(boxSelection.startX, boxSelection.currentX);
       const b = Math.max(boxSelection.startY, boxSelection.currentY);
-      const ids = new Set<string>();
-      canvasEl.querySelectorAll<HTMLElement>(".builder-entity[data-root-id]").forEach((el) => {
-        const id = el.dataset.rootId;
-        if (!id) return;
-        const ent = state.entities.find((e) => e.id === id);
-        if (!ent || isStaticOuterLeafEndpoint(ent)) return;
-        const rect = el.getBoundingClientRect();
-        const ex1 = rect.left - wrapRect.left + canvasWrapEl.scrollLeft;
-        const ey1 = rect.top - wrapRect.top + canvasWrapEl.scrollTop;
-        const ex2 = ex1 + rect.width;
-        const ey2 = ey1 + rect.height;
-        const hit = ex1 <= r && ex2 >= l && ey1 <= b && ey2 >= t;
-        if (hit) ids.add(id);
-      });
+      const ids = collectBoxSelectionIds(l, t, r, b);
       setEntitySelectionSet(ids);
+      clearBoxPreview();
       boxSelection = null;
       boxEl.style.display = "none";
       boxEl.style.width = "0px";
