@@ -603,8 +603,6 @@ textarea {
 .builder-entity--outer-endpoint {
   left: 50% !important;
   top: 0.35rem !important;
-  min-width: 160px;
-  max-width: 220px;
   transform: translate(calc(-50% - 6px), 0) !important;
   z-index: 2;
 }
@@ -657,8 +655,16 @@ textarea {
   flex-direction: column;
   align-items: stretch;
   gap: 3px;
-  min-width: 180px;
-  max-width: 560px;
+}
+
+.builder-entity--filter .builder-entity-title {
+  position: absolute;
+  top: 10px;
+  left: px;
+  transform: translateY(-50%);
+  margin: 0;
+  line-height: 1;
+  z-index: 1;
 }
 
 .builder-entity--hub {
@@ -841,6 +847,8 @@ textarea {
 }
 
 .builder-filter-ui {
+  --builder-prop-label-col: 60px;
+  --builder-prop-value-col: 120px;
   display: block;
   margin-bottom: 4px;
 }
@@ -852,14 +860,22 @@ textarea {
 
 .builder-row {
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: var(--builder-prop-label-col) var(--builder-prop-value-col);
   gap: 4px;
   align-items: center;
+}
+
+.builder-hide-property-labels .builder-row {
+  grid-template-columns: var(--builder-prop-value-col);
 }
 
 .builder-row-label {
   font-size: 10px;
   color: #c7d0e3;
+}
+
+.builder-hide-property-labels .builder-row-label {
+  display: none;
 }
 
 .builder-cycle {
@@ -996,6 +1012,10 @@ textarea {
 
 .builder-row-mask .builder-mask-row {
   grid-column: 2 / 3;
+}
+
+.builder-hide-property-labels .builder-row-mask .builder-mask-row {
+  grid-column: 1 / 2;
 }
 
 .builder-inspector-description {

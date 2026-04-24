@@ -521,6 +521,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         <div class="builder-actions">
           <button id="builder-delete" type="button">Delete selected</button>
           <button id="builder-delete-all" type="button">Delete all</button>
+          <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
           <button id="builder-export" type="button">Export Text</button>
           <button id="builder-import" type="button">Import Text</button>
           <button id="builder-preview" type="button">Preview In Viewer</button>
@@ -563,12 +564,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const scaleYValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-value")!;
   const deleteBtn = root.querySelector<HTMLButtonElement>("#builder-delete")!;
   const deleteAllBtn = root.querySelector<HTMLButtonElement>("#builder-delete-all")!;
+  const togglePropLabelsBtn = root.querySelector<HTMLButtonElement>("#builder-toggle-prop-labels")!;
   const exportBtn = root.querySelector<HTMLButtonElement>("#builder-export")!;
   const importBtn = root.querySelector<HTMLButtonElement>("#builder-import")!;
   const previewBtn = root.querySelector<HTMLButtonElement>("#builder-preview")!;
   const perfStats = new Map<BuilderPerfKey, BuilderPerfStat>();
   const PERF_EMA_ALPHA = 0.18;
   let perfCounts = { expandedEntities: 0, stateLinks: 0, expandedLinks: 0 };
+  let hideEntityPropertyLabels = false;
 
   function persistCanvasScale(): void {
     window.localStorage.setItem(BUILDER_CANVAS_SCALE_KEY, JSON.stringify(canvasScale));
@@ -662,6 +665,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function persist(): void {
     saveBuilderState(state);
+  }
+
+  function applyPropertyLabelVisibility(): void {
+    root.classList.toggle("builder-hide-property-labels", hideEntityPropertyLabels);
+    togglePropLabelsBtn.textContent = hideEntityPropertyLabels
+      ? "Show property labels"
+      : "Hide property labels";
   }
 
   function applySelectionToCanvas(): void {
@@ -1738,6 +1748,52 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     renderCanvas();
   });
 
+  togglePropLabelsBtn.addEventListener("click", () => {
+    const filterRoots = new Set(
+      state.entities
+        .filter((e) => e.templateType === "filter")
+        .map((e) => e.id),
+    );
+    const centerByRoot = new Map<string, number>();
+    filterRoots.forEach((rootId) => {
+      const entityEl = canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`);
+      const hostEl = entityEl?.closest<HTMLElement>(".builder-segment-entities");
+      if (!entityEl || !hostEl) return;
+      const er = entityEl.getBoundingClientRect();
+      const hr = hostEl.getBoundingClientRect();
+      const centerPx = er.left + er.width / 2 - hr.left;
+      centerByRoot.set(rootId, centerPx / Math.max(1, hr.width));
+    });
+    hideEntityPropertyLabels = !hideEntityPropertyLabels;
+    applyPropertyLabelVisibility();
+    window.requestAnimationFrame(() => {
+      let changed = false;
+      const nextEntities = state.entities.map((entity) => {
+        if (entity.templateType !== "filter") return entity;
+        const centerNorm = centerByRoot.get(entity.id);
+        if (centerNorm === undefined) return entity;
+        const entityEl = canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${entity.id}"]`);
+        const hostEl = entityEl?.closest<HTMLElement>(".builder-segment-entities");
+        if (!entityEl || !hostEl) return entity;
+        const er = entityEl.getBoundingClientRect();
+        const hr = hostEl.getBoundingClientRect();
+        const w = Math.max(1, hr.width);
+        const targetCenterPx = centerNorm * w;
+        // Entity uses left:% plus transform: translate(-6px, -6px).
+        const nextX = (targetCenterPx + 6 - er.width / 2) / w;
+        const clampedX = Math.max(0, Math.min(1, nextX));
+        if (Math.abs(clampedX - entity.x) < 1e-6) return entity;
+        changed = true;
+        return { ...entity, x: clampedX };
+      });
+      if (!changed) return;
+      state = { ...state, entities: nextEntities };
+      persist();
+      renderCanvas();
+      renderInspector();
+    });
+  });
+
   exportBtn.addEventListener("click", async () => {
     const text = exportBuilderStateText(state);
     await navigator.clipboard.writeText(text);
@@ -1881,6 +1937,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   renderInspector();
   renderCanvas();
   applyCanvasScale();
+  applyPropertyLabelVisibility();
   requestAnimationFrame(() => {
     applyCanvasScale();
   });
