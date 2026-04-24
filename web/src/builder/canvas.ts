@@ -1,4 +1,5 @@
 import {
+  BuilderState,
   BuilderEntityRoot,
   BuilderLayer,
   BuilderTemplateType,
@@ -327,6 +328,37 @@ type BoxSelectionState = {
   mode: "replace" | "add" | "remove";
 } | null;
 
+function sanitizeDuplicateTypePlacements(input: BuilderState): { state: BuilderState; changed: boolean } {
+  const seen = new Set<string>();
+  const entities: BuilderEntityRoot[] = [];
+  let changed = false;
+  input.entities.forEach((ent) => {
+    const key = `${ent.templateType}:${ent.layer}:${ent.segmentIndex}:${ent.x}:${ent.y}`;
+    if (seen.has(key)) {
+      changed = true;
+      return;
+    }
+    seen.add(key);
+    entities.push(ent);
+  });
+  const validIds = new Set(entities.map((e) => e.id));
+  const links = input.links.filter((l) => validIds.has(l.fromEntityId) && validIds.has(l.toEntityId));
+  if (links.length !== input.links.length) {
+    changed = true;
+  }
+  if (!changed) {
+    return { state: input, changed: false };
+  }
+  return {
+    state: {
+      ...input,
+      entities,
+      links,
+    },
+    changed: true,
+  };
+}
+
 interface LinkSourceSelection {
   rootId: string;
   port: number;
@@ -519,7 +551,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   if (!raw || raw.version !== 1) {
     raw = createEmptyBuilderState();
   }
-  let state = rebuildStateWithOuterLeafEndpoints(raw);
+  const rebuiltInitialState = rebuildStateWithOuterLeafEndpoints(raw);
+  const sanitizedInitial = sanitizeDuplicateTypePlacements(rebuiltInitialState);
+  let state = sanitizedInitial.state;
+  if (sanitizedInitial.changed) {
+    saveBuilderState(state);
+  }
 
   let draggingTemplate: BuilderTemplateType | null = null;
   let dragLayer: BuilderLayer | null = null;
@@ -960,6 +997,56 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   type DragPlacement = { layer: BuilderLayer; segment: number; x: number; y: number };
 
+  function hasSameTypePlacementConflict(
+    templateType: BuilderTemplateType,
+    layer: BuilderLayer,
+    segment: number,
+    x: number,
+    y: number,
+    ignoreIds?: Set<string>,
+  ): boolean {
+    return state.entities.some((e) => {
+      if (ignoreIds?.has(e.id)) return false;
+      return (
+        e.templateType === templateType &&
+        e.layer === layer &&
+        e.segmentIndex === segment &&
+        e.x === x &&
+        e.y === y
+      );
+    });
+  }
+
+  function hasPlacementMapConflicts(placements: Map<string, DragPlacement>): boolean {
+    const movingIds = new Set(placements.keys());
+    const seen = new Set<string>();
+    let conflict = false;
+    placements.forEach((placement, id) => {
+      if (conflict) return;
+      const ent = state.entities.find((e) => e.id === id);
+      if (!ent) return;
+      const key = `${ent.templateType}:${placement.layer}:${placement.segment}:${placement.x}:${placement.y}`;
+      if (seen.has(key)) {
+        conflict = true;
+        return;
+      }
+      seen.add(key);
+      if (
+        hasSameTypePlacementConflict(
+          ent.templateType,
+          placement.layer,
+          placement.segment,
+          placement.x,
+          placement.y,
+          movingIds,
+        )
+      ) {
+        conflict = true;
+      }
+    });
+    return conflict;
+  }
+
   function segmentEntitiesHost(layer: BuilderLayer, segment: number): HTMLElement | null {
     if (layer === "outer64" && isOuterLeafVoidSegment(segment)) {
       const outerVoidCell = canvasEl.querySelector<HTMLElement>('.builder-segment[data-layer="outer64"][data-void-outer="1"]');
@@ -1031,6 +1118,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const src = state.entities.find((e) => e.id === srcId);
       const targetPos = targetPosBySourceId.get(srcId);
       if (!src || !targetPos || isStaticOuterLeafEndpoint(src)) return;
+      if (
+        hasSameTypePlacementConflict(
+          src.templateType,
+          targetPos.layer,
+          targetPos.segment,
+          targetPos.x,
+          targetPos.y,
+        )
+      ) {
+        return;
+      }
       const created = createEntityRoot(
         nextState,
         src.templateType,
@@ -1077,6 +1175,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     sourceRootIds.forEach((srcId) => {
       const src = state.entities.find((e) => e.id === srcId);
       if (!src || isStaticOuterLeafEndpoint(src)) return;
+      if (
+        hasSameTypePlacementConflict(
+          src.templateType,
+          src.layer,
+          src.segmentIndex,
+          src.x,
+          src.y,
+          sourceSet,
+        )
+      ) {
+        return;
+      }
       const created = createEntityRoot(
         nextState,
         src.templateType,
@@ -1876,6 +1986,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           const placements = buildGroupPlacements(section, x, y);
           const rootPlacement = placements.get(rootDragEnt.id);
           if (!rootPlacement) return;
+          if (hasPlacementMapConflicts(placements)) return;
           if (
             rootPlacement.x === lastX &&
             rootPlacement.y === lastY &&
@@ -2141,6 +2252,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const placements = buildGroupPlacements(section, x, y);
       const rootPlacement = placements.get(rootDragEnt.id);
       if (!rootPlacement) return;
+      if (hasPlacementMapConflicts(placements)) return;
       if (
         rootPlacement.x === lastX &&
         rootPlacement.y === lastY &&
@@ -2668,6 +2780,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         return 12 + slot;
       })();
       if (segment === null) return;
+      if (hasSameTypePlacementConflict(droppedTemplate, layer, segment, px, py)) {
+        return;
+      }
       const rootEntity = createEntityRoot(state, droppedTemplate, layer, segment, px, py);
       state = { ...state, entities: [...state.entities, rootEntity] };
       persist();
@@ -2870,7 +2985,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       alert("Invalid builder JSON.");
       return;
     }
-    state = rebuildStateWithOuterLeafEndpoints(parsed);
+    const rebuiltImportedState = rebuildStateWithOuterLeafEndpoints(parsed);
+    state = sanitizeDuplicateTypePlacements(rebuiltImportedState).state;
     persist();
     selection = null;
     renderInspector();
