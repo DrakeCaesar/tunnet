@@ -334,6 +334,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let linkDrag: { from: LinkSourceSelection; endClient: { x: number; y: number } } | null = null;
   let dragRenderRaf: number | null = null;
   let wireDragRaf: number | null = null;
+  let wireOverlayRaf: number | null = null;
 
   root.innerHTML = `
     <div class="builder-layout">
@@ -467,6 +468,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const overlayWidth = Math.max(wrap.clientWidth, wrap.scrollWidth);
     wireOverlayEl.setAttribute("width", String(Math.ceil(overlayWidth)));
     wireOverlayEl.setAttribute("height", String(Math.ceil(wrapRect.height)));
+    wireOverlayEl.style.width = `${Math.ceil(overlayWidth)}px`;
     wireOverlayEl.innerHTML = "";
     for (const link of viewLinks) {
       const from = resolveBuilderPortForWireOverlay(String(link.fromInstanceId), link.fromPort);
@@ -512,6 +514,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         wireOverlayEl.appendChild(line);
       }
     }
+  }
+
+  function scheduleWireOverlayRender(): void {
+    if (wireOverlayRaf !== null) return;
+    wireOverlayRaf = window.requestAnimationFrame(() => {
+      wireOverlayRaf = null;
+      renderWireOverlay();
+    });
   }
 
   function scheduleDragRender(): void {
@@ -1332,6 +1342,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     window.sessionStorage.setItem(VIEWER_PREVIEW_KEY, JSON.stringify(payload));
     onPreviewReady?.();
   });
+
+  const wrap = wireOverlayEl.parentElement;
+  if (wrap) {
+    wrap.addEventListener("scroll", scheduleWireOverlayRender, { passive: true });
+  }
+  window.addEventListener("resize", scheduleWireOverlayRender);
 
   renderTemplates();
   renderInspector();
