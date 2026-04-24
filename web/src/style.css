@@ -544,6 +544,13 @@ textarea {
   );
 }
 
+.builder-layer-section-core1 {
+  height: calc(
+    (var(--builder-layer-base-height-px, 220px) * var(--builder-scale-y-core1, 1))
+      + ((var(--builder-scale-y-core1, 1) - 1) * var(--builder-layer-gap))
+  );
+}
+
 .builder-layer + .builder-layer {
   margin-top: var(--builder-layer-gap);
 }
@@ -583,6 +590,16 @@ textarea {
     4,
     minmax(
       calc((var(--builder-middle-col-width-px, var(--builder-middle-col-base-px, 1280px)) * 4) + (3 * var(--builder-layer-gap))),
+      1fr
+    )
+  );
+}
+
+.builder-layer-core1 {
+  grid-template-columns: repeat(
+    1,
+    minmax(
+      calc((var(--builder-middle-col-width-px, var(--builder-middle-col-base-px, 1280px)) * 16) + (15 * var(--builder-layer-gap))),
       1fr
     )
   );

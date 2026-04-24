@@ -1,4 +1,4 @@
-export type BuilderLayer = "outer64" | "middle16" | "inner4";
+export type BuilderLayer = "outer64" | "middle16" | "inner4" | "core1";
 export type BuilderTemplateType = "endpoint" | "relay" | "hub" | "filter";
 
 export interface BuilderEntityRoot {
@@ -65,9 +65,10 @@ export const LAYER_COUNTS: Record<BuilderLayer, number> = {
   outer64: 64,
   middle16: 16,
   inner4: 4,
+  core1: 1,
 };
 
-export const LAYER_ORDER: BuilderLayer[] = ["outer64", "middle16", "inner4"];
+export const LAYER_ORDER: BuilderLayer[] = ["outer64", "middle16", "inner4", "core1"];
 
 /** 0.0.3.0 – 0.0.3.3 have no devices; outer column indices 12–15 = one void band (1 middle width). */
 export const OUTER_LEAF_VOID_START = 12;

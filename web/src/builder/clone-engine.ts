@@ -46,6 +46,9 @@ function wrappedAdd(value: number, add: number): number {
 }
 
 function strideForMask(layer: BuilderLayer, fixedIndex: number): number | null {
+  if (layer === "core1") {
+    return null;
+  }
   if (layer === "inner4") {
     return fixedIndex === 1 ? 1 : null;
   }
@@ -97,6 +100,11 @@ function instanceId(rootId: string, segment: number): string {
   return `${rootId}@${segment}`;
 }
 
+/** Middle segment that maps to outer 12–15 (0.0.3.* no-endpoint band). */
+function isMiddleVoidSegment(segmentIndex: number): boolean {
+  return segmentIndex === 3;
+}
+
 /** Parse `rootId@segment` from port / entity `data-instance-id` (last `@` is the split). */
 export function parseBuilderInstanceId(id: string): { rootId: string; segmentIndex: number } | null {
   const at = id.lastIndexOf("@");
@@ -137,13 +145,22 @@ function expandEntities(roots: BuilderEntityRoot[], opts?: { builderView?: boole
     for (let segment = 0; segment < count; segment += 1) {
       if (
         view &&
-        root.layer === "outer64" &&
         (
-          // For roots placed in the merged 0.0.3.* area, keep only their primary instance.
-          isOuterLeafVoidSegment(root.segmentIndex)
-            ? segment !== root.segmentIndex
-            : // For non-void outer roots, never mirror into 0.0.3.* segments.
-              isOuterLeafVoidSegment(segment) && segment !== root.segmentIndex
+          (root.layer === "outer64" &&
+            (
+              // For roots placed in the merged 0.0.3.* area, keep only their primary instance.
+              isOuterLeafVoidSegment(root.segmentIndex)
+                ? segment !== root.segmentIndex
+                : // For non-void outer roots, never mirror into 0.0.3.* segments.
+                  isOuterLeafVoidSegment(segment) && segment !== root.segmentIndex
+            )) ||
+          (root.layer === "middle16" &&
+            (
+              // Mirror policy aligned with outer 0.0.3.* void band: middle segment 3 is not mirrored.
+              isMiddleVoidSegment(root.segmentIndex)
+                ? segment !== root.segmentIndex
+                : isMiddleVoidSegment(segment) && segment !== root.segmentIndex
+            ))
         )
       ) {
         continue;
@@ -340,7 +357,8 @@ export function expandBuilderState(
 export function layerTitle(layer: BuilderLayer): string {
   if (layer === "outer64") return "Outer (64)";
   if (layer === "middle16") return "Middle (16)";
-  return "Inner (4)";
+  if (layer === "inner4") return "Inner (4)";
+  return "Core (1)";
 }
 
 export function layerColumns(layer: BuilderLayer): number[] {
@@ -365,7 +383,8 @@ export function outerLayerBuilderColumnSlots(): OuterBuilderColumnSlot[] {
 export function segmentLabel(layer: BuilderLayer, segment: number): string {
   if (layer === "outer64") return `${segment}`;
   if (layer === "middle16") return `${segment * 4}-${segment * 4 + 3}`;
-  return `${segment * 16}-${segment * 16 + 15}`;
+  if (layer === "inner4") return `${segment * 16}-${segment * 16 + 15}`;
+  return "0-63";
 }
 
 export function orderedLayersTopDown(): BuilderLayer[] {

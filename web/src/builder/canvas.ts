@@ -537,7 +537,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const loadCanvasScale = (): CanvasScale => {
     try {
       const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
-      if (!rawScale) return { x: 1, yByLayer: { outer64: 1, middle16: 1, inner4: 1 } };
+      if (!rawScale) return { x: 1, yByLayer: { outer64: 1, middle16: 1, inner4: 1, core1: 1 } };
       const parsed = JSON.parse(rawScale) as Partial<CanvasScale> & {
         y?: number;
         yByLayer?: Partial<Record<BuilderLayer, number>>;
@@ -547,16 +547,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const yOuter = clampCanvasScaleY(Number(parsed.yByLayer?.outer64));
       const yMiddle = clampCanvasScaleY(Number(parsed.yByLayer?.middle16));
       const yInner = clampCanvasScaleY(Number(parsed.yByLayer?.inner4));
+      const yCore = clampCanvasScaleY(Number(parsed.yByLayer?.core1));
       return {
         x: Number.isFinite(x) ? x : 1,
         yByLayer: {
           outer64: Number.isFinite(yOuter) ? yOuter : Number.isFinite(legacyY) ? legacyY : 1,
           middle16: Number.isFinite(yMiddle) ? yMiddle : Number.isFinite(legacyY) ? legacyY : 1,
           inner4: Number.isFinite(yInner) ? yInner : Number.isFinite(legacyY) ? legacyY : 1,
+          core1: Number.isFinite(yCore) ? yCore : Number.isFinite(legacyY) ? legacyY : 1,
         },
       };
     } catch {
-      return { x: 1, yByLayer: { outer64: 1, middle16: 1, inner4: 1 } };
+      return { x: 1, yByLayer: { outer64: 1, middle16: 1, inner4: 1, core1: 1 } };
     }
   };
   let canvasScale = loadCanvasScale();
@@ -606,6 +608,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             <input id="builder-scale-y-inner4" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
             <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
           </label>
+          <label class="builder-scale-row" for="builder-scale-y-core1">
+            <span>Vertical Core</span>
+            <input id="builder-scale-y-core1" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
+            <span id="builder-scale-y-core1-value">${canvasScale.yByLayer.core1.toFixed(2)}x</span>
+          </label>
         </div>
         <div class="section-title builder-spacer">Inspector</div>
         <div id="builder-inspector">No selection.</div>
@@ -628,10 +635,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const scaleYOuterEl = root.querySelector<HTMLInputElement>("#builder-scale-y-outer64")!;
   const scaleYMiddleEl = root.querySelector<HTMLInputElement>("#builder-scale-y-middle16")!;
   const scaleYInnerEl = root.querySelector<HTMLInputElement>("#builder-scale-y-inner4")!;
+  const scaleYCoreEl = root.querySelector<HTMLInputElement>("#builder-scale-y-core1")!;
   const scaleXValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-x-value")!;
   const scaleYOuterValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-outer64-value")!;
   const scaleYMiddleValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-middle16-value")!;
   const scaleYInnerValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-inner4-value")!;
+  const scaleYCoreValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-core1-value")!;
   const deleteBtn = root.querySelector<HTMLButtonElement>("#builder-delete")!;
   const deleteAllBtn = root.querySelector<HTMLButtonElement>("#builder-delete-all")!;
   const togglePropLabelsBtn = root.querySelector<HTMLButtonElement>("#builder-toggle-prop-labels")!;
@@ -661,8 +670,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const wrap = wireOverlayEl.parentElement;
     if (wrap) {
       const middleBasePx = Math.max(320, wrap.clientWidth);
-      const usableHeight = Math.max(120, wrap.clientHeight - 2 * BUILDER_LAYER_GAP_PX);
-      const layerBasePx = Math.max(120, usableHeight / 3);
+      const layerCount = orderedLayersTopDown().length;
+      const totalGapPx = Math.max(0, layerCount - 1) * BUILDER_LAYER_GAP_PX;
+      const usableHeight = Math.max(120, wrap.clientHeight - totalGapPx);
+      const layerBasePx = Math.max(120, usableHeight / Math.max(1, layerCount));
       const middleColWidthPx = (middleBasePx + BUILDER_LAYER_GAP_PX) * canvasScale.x - BUILDER_LAYER_GAP_PX;
       root.style.setProperty("--builder-middle-col-base-px", `${middleBasePx.toFixed(2)}px`);
       root.style.setProperty("--builder-middle-col-width-px", `${middleColWidthPx.toFixed(2)}px`);
@@ -672,12 +683,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     root.style.setProperty("--builder-scale-y-outer64", canvasScale.yByLayer.outer64.toFixed(3));
     root.style.setProperty("--builder-scale-y-middle16", canvasScale.yByLayer.middle16.toFixed(3));
     root.style.setProperty("--builder-scale-y-inner4", canvasScale.yByLayer.inner4.toFixed(3));
+    root.style.setProperty("--builder-scale-y-core1", canvasScale.yByLayer.core1.toFixed(3));
     root.style.setProperty("--builder-grid-step-x", `${BUILDER_GRID_TILE_SIZE_X_PX}px`);
     root.style.setProperty("--builder-grid-step-y", `${BUILDER_GRID_TILE_SIZE_Y_PX}px`);
     scaleXValueEl.textContent = `${canvasScale.x.toFixed(2)}x`;
     scaleYOuterValueEl.textContent = `${canvasScale.yByLayer.outer64.toFixed(2)}x`;
     scaleYMiddleValueEl.textContent = `${canvasScale.yByLayer.middle16.toFixed(2)}x`;
     scaleYInnerValueEl.textContent = `${canvasScale.yByLayer.inner4.toFixed(2)}x`;
+    scaleYCoreValueEl.textContent = `${canvasScale.yByLayer.core1.toFixed(2)}x`;
     scheduleWireOverlayRender();
   }
 
@@ -696,6 +709,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       outer64: readLayer("outer64"),
       middle16: readLayer("middle16"),
       inner4: readLayer("inner4"),
+      core1: readLayer("core1"),
     };
   }
 
@@ -2620,6 +2634,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     canvasScale.yByLayer.inner4 = clampCanvasScaleY(Number.isFinite(parsed) ? parsed : 1);
     applyCanvasScale();
   });
+  scaleYCoreEl.addEventListener("input", () => {
+    const parsed = Number(scaleYCoreEl.value);
+    canvasScale.yByLayer.core1 = clampCanvasScaleY(Number.isFinite(parsed) ? parsed : 1);
+    applyCanvasScale();
+  });
   const onChangeY = (): void => {
     persistCanvasScale();
     persist();
@@ -2627,6 +2646,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   scaleYOuterEl.addEventListener("change", onChangeY);
   scaleYMiddleEl.addEventListener("change", onChangeY);
   scaleYInnerEl.addEventListener("change", onChangeY);
+  scaleYCoreEl.addEventListener("change", onChangeY);
 
   renderTemplates();
   renderInspector();
