@@ -493,14 +493,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let wireDragRaf: number | null = null;
   let wireOverlayRaf: number | null = null;
   let portElByInstancePort = new Map<string, HTMLButtonElement>();
-  const clampCanvasScale = (v: number): number => Math.max(0.5, Math.min(2, v));
+  const clampCanvasScaleX = (v: number): number => Math.max(0.25, Math.min(4, v));
+  const clampCanvasScaleY = (v: number): number => Math.max(1, Math.min(3, v));
   const loadCanvasScale = (): CanvasScale => {
     try {
       const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
       if (!rawScale) return { x: 1, y: 1 };
       const parsed = JSON.parse(rawScale) as Partial<CanvasScale>;
-      const x = clampCanvasScale(Number(parsed.x));
-      const y = clampCanvasScale(Number(parsed.y));
+      const x = clampCanvasScaleX(Number(parsed.x));
+      const y = clampCanvasScaleY(Number(parsed.y));
       return {
         x: Number.isFinite(x) ? x : 1,
         y: Number.isFinite(y) ? y : 1,
@@ -530,12 +531,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         <div class="builder-scale-controls">
           <label class="builder-scale-row" for="builder-scale-x">
             <span>Horizontal</span>
-            <input id="builder-scale-x" type="range" min="0.5" max="2" step="0.05" value="${canvasScale.x.toFixed(2)}" />
+            <input id="builder-scale-x" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.x.toFixed(2)}" />
             <span id="builder-scale-x-value">${canvasScale.x.toFixed(2)}x</span>
           </label>
           <label class="builder-scale-row" for="builder-scale-y">
             <span>Vertical</span>
-            <input id="builder-scale-y" type="range" min="0.5" max="2" step="0.05" value="${canvasScale.y.toFixed(2)}" />
+            <input id="builder-scale-y" type="range" min="1" max="3" step="0.25" value="${canvasScale.y.toFixed(2)}" />
             <span id="builder-scale-y-value">${canvasScale.y.toFixed(2)}x</span>
           </label>
         </div>
@@ -1861,7 +1862,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   scaleXEl.addEventListener("input", () => {
     const parsed = Number(scaleXEl.value);
-    canvasScale.x = clampCanvasScale(Number.isFinite(parsed) ? parsed : 1);
+    canvasScale.x = clampCanvasScaleX(Number.isFinite(parsed) ? parsed : 1);
     applyCanvasScale();
   });
   scaleXEl.addEventListener("change", () => {
@@ -1869,7 +1870,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   });
   scaleYEl.addEventListener("input", () => {
     const parsed = Number(scaleYEl.value);
-    canvasScale.y = clampCanvasScale(Number.isFinite(parsed) ? parsed : 1);
+    canvasScale.y = clampCanvasScaleY(Number.isFinite(parsed) ? parsed : 1);
     applyCanvasScale();
   });
   scaleYEl.addEventListener("change", () => {

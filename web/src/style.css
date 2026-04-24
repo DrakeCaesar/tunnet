@@ -506,7 +506,10 @@ textarea {
   border-radius: 0;
   padding: 0;
   flex: 0 0 auto;
-  height: calc(var(--builder-layer-base-height-px, 220px) * var(--builder-scale-y, 1));
+  height: calc(
+    (var(--builder-layer-base-height-px, 220px) * var(--builder-scale-y, 1))
+      + ((var(--builder-scale-y, 1) - 1) * var(--builder-layer-gap))
+  );
 }
 
 .builder-layer + .builder-layer {
