@@ -7,6 +7,7 @@ import {
   isStaticOuterLeafEndpoint,
   LAYER_COUNTS,
   LAYER_ORDER,
+  mirroredEndpointAddress,
   segmentStride,
   templatePortCount,
 } from "./state";
@@ -86,12 +87,15 @@ function transformSettingsForSegment(
   segmentIndex: number,
 ): Record<string, string> {
   const settings = { ...root.settings };
-  if (root.templateType !== "filter") {
+  if (root.templateType === "filter") {
+    const delta = (segmentIndex - root.segmentIndex + LAYER_COUNTS[root.layer]) % LAYER_COUNTS[root.layer];
+    if (typeof settings.mask === "string") {
+      settings.mask = mapMaskForSegment(settings.mask, root.layer, delta);
+    }
     return settings;
   }
-  const delta = (segmentIndex - root.segmentIndex + LAYER_COUNTS[root.layer]) % LAYER_COUNTS[root.layer];
-  if (typeof settings.mask === "string") {
-    settings.mask = mapMaskForSegment(settings.mask, root.layer, delta);
+  if (root.templateType === "endpoint") {
+    settings.address = mirroredEndpointAddress(root, segmentIndex);
   }
   return settings;
 }

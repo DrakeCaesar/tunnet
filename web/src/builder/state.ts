@@ -124,6 +124,62 @@ export function isStaticOuterLeafEndpoint(e: BuilderEntityRoot): boolean {
   return e.templateType === "endpoint" && e.layer === "outer64" && (e.isStatic || e.id.startsWith(OUTER_LEAF_ENDPOINT_PREFIX));
 }
 
+function hashString32(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+function isDottedQuadsIPv4(s: string): boolean {
+  const parts = s.split(".");
+  if (parts.length !== 4) return false;
+  for (const p of parts) {
+    if (p.length === 0) return false;
+    const n = Number(p);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return false;
+  }
+  return true;
+}
+
+function uniquifyCustomAddress(base: string, instanceSegment: number): string {
+  const parts = base.split(".");
+  if (parts.length !== 4) return base;
+  const last0 = Number(parts[3] ?? "");
+  if (!Number.isInteger(last0)) return base;
+  const last1 = (last0 + (instanceSegment + 1) * 17) % 256;
+  return `${parts[0]}.${parts[1]}.${parts[2]}.${last1}`;
+}
+
+/**
+ * Full topology expansion (simulation) duplicates each endpoint root once per column segment. Without
+ * per-segment addresses, every mirror would share the root’s address (e.g. all 0.0.0.0) and the
+ * generator would be wrong. Map each (root, instanceSegment) to a distinct `w.x.y.z` suitable for
+ * the simulator. Builder UI still edits the single root; mirrored instances are synthetic.
+ */
+export function mirroredEndpointAddress(root: BuilderEntityRoot, instanceSegment: number): string {
+  if (root.templateType !== "endpoint") {
+    return root.settings.address ?? "0.0.0.0";
+  }
+  if (isStaticOuterLeafEndpoint(root)) {
+    if (isOuterLeafVoidSegment(instanceSegment)) {
+      return `0.0.3.${instanceSegment - OUTER_LEAF_VOID_START}`;
+    }
+    return outerLeafAddressForNonVoidSegment(instanceSegment);
+  }
+  const raw = (root.settings.address ?? "0.0.0.0").trim() || "0.0.0.0";
+  if (raw !== "0.0.0.0" && isDottedQuadsIPv4(raw)) {
+    return uniquifyCustomAddress(raw, instanceSegment);
+  }
+  const h = (hashString32(root.id) + (instanceSegment + 1) * 7919) >>> 0;
+  const a = 10;
+  const b = (h >>> 16) & 0xff;
+  const c = (h >>> 8) & 0xff;
+  const d = h & 0xff;
+  return `${a}.${b}.${c}.${d}`;
+}
+
 /**
  * Strips and re-adds 64 static outer leaf endpoints, remaps links from any prior outer
  * endpoint id by segment, and prunes dead links. Call after load/import.
