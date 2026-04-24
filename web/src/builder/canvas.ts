@@ -59,7 +59,7 @@ const HUB_SCALE = HUB_TRIANGLE_SIDE / HUB_BASE_TRIANGLE_SIDE;
 const HUB_VIEW = { w: 108 * HUB_SCALE, h: 96 * HUB_SCALE } as const;
 const HUB_PORT_RADIUS = 8 * HUB_SCALE;
 const HUB_TOP_PADDING = 18 * HUB_SCALE;
-const HUB_RING_PX = 30 * HUB_SCALE;
+const HUB_ROTATE_OUTER_BAND_PX = 8 * HUB_SCALE;
 const HUB_REVERSE_BUTTON_SIZE = 16 * HUB_SCALE;
 const HUB_REVERSE_ICON_SIZE = 13 * HUB_SCALE;
 
@@ -154,7 +154,7 @@ function hubPointerMode(
   // The visible hub body is a rounded triangle built around the core equilateral by radius `HUB_LAYOUT.r`.
   // Treat that rounded band as "move" so pointer behavior matches the rendered shape.
   if (d <= HUB_LAYOUT.r) return "move";
-  if (d <= HUB_RING_PX) return "rotate";
+  if (d <= HUB_LAYOUT.r + HUB_ROTATE_OUTER_BAND_PX) return "rotate";
   return "none";
 }
 
@@ -298,7 +298,7 @@ function hubTriangleSvg(instanceId: string, rotation: string | undefined): strin
       </marker>
     </defs>
     <path class="builder-hub-rotate-hint" d="${d}" />
-    <path class="builder-hub-triangle" d="${d}" pointer-events="visiblePainted" />
+    <path class="builder-hub-triangle" d="${d}" />
     <g pointer-events="none">${arrows}</g>
   </svg>`;
 }
@@ -1135,12 +1135,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const clearHubHover = (hub: HTMLElement | null): void => {
     if (!hub) return;
     hub.classList.remove("builder-hub--hover-move", "builder-hub--hover-rotate");
+    hub.closest<HTMLElement>(".builder-entity--hub")?.classList.remove(
+      "builder-hub--hover-move",
+      "builder-hub--hover-rotate",
+    );
   };
 
   const updateHubHoverFromPointer = (ev: MouseEvent): void => {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
-    const hub = target.closest<HTMLElement>(".builder-hub");
+    const hub =
+      target.closest<HTMLElement>(".builder-hub") ??
+      target.closest<HTMLElement>(".builder-entity--hub")?.querySelector<HTMLElement>(".builder-hub") ??
+      null;
     if (!hub || target.closest("button")) {
       clearHubHover(hoveredHubEl);
       hoveredHubEl = null;
@@ -1158,6 +1165,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const mode = hubPointerMode(localX, localY, face);
     hub.classList.toggle("builder-hub--hover-move", mode === "move");
     hub.classList.toggle("builder-hub--hover-rotate", mode === "rotate");
+    const hubEntity = hub.closest<HTMLElement>(".builder-entity--hub");
+    if (hubEntity) {
+      hubEntity.classList.toggle("builder-hub--hover-move", mode === "move");
+      hubEntity.classList.toggle("builder-hub--hover-rotate", mode === "rotate");
+    }
   };
 
   const clearRelayHover = (relay: HTMLElement | null): void => {
@@ -1280,6 +1292,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const faceDeg = ((Number.parseFloat(rootEnt.settings.faceAngle ?? "0") % 360) + 360) % 360;
       const hubMode = hubPointerMode(localX, localY, faceDeg);
       if (hubMode === "none") return;
+      setSelection({ kind: "entity", rootId: rootEnt.id });
       ev.preventDefault();
       if (hubMode === "move") {
         const entitiesHost =
@@ -2134,6 +2147,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const entityEl = target.closest<HTMLElement>(".builder-entity");
     if (entityEl) {
       const rootId = entityEl.dataset.rootId!;
+      const rootEnt = state.entities.find((e) => e.id === rootId);
+      if (rootEnt?.templateType === "hub") {
+        return;
+      }
       setSelection({ kind: "entity", rootId });
     }
   });
@@ -2153,6 +2170,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const entityEl = target.closest<HTMLElement>(".builder-entity");
     if (!entityEl) return;
     const rootId = entityEl.dataset.rootId;
+    const rootEnt = rootId ? state.entities.find((e) => e.id === rootId) : null;
+    if (rootEnt?.templateType === "hub") {
+      startEntityDragFromElement(entityEl, ev);
+      return;
+    }
     if (rootId) {
       setSelection({ kind: "entity", rootId });
     }

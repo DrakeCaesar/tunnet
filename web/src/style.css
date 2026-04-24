@@ -696,6 +696,7 @@ textarea {
   background: transparent;
   box-shadow: none;
   overflow: visible;
+  cursor: default;
 }
 
 .builder-entity--relay {
@@ -816,6 +817,8 @@ textarea {
   margin: 0;
   flex-shrink: 0;
   overflow: visible;
+  pointer-events: none;
+  cursor: default;
 }
 
 .builder-hub-rot {
@@ -823,6 +826,8 @@ textarea {
   inset: 0;
   z-index: 1;
   overflow: visible;
+  pointer-events: none;
+  cursor: inherit;
 }
 
 .builder-hub-svg {
@@ -832,6 +837,8 @@ textarea {
   height: 100%;
   display: block;
   overflow: visible;
+  pointer-events: none;
+  cursor: inherit;
 }
 
 .builder-hub-rotate-hint {
@@ -850,6 +857,13 @@ textarea {
   opacity: 0.45;
 }
 
+.builder-hub--hover-move,
+.builder-hub--hover-rotate,
+.builder-entity--hub.builder-hub--hover-move,
+.builder-entity--hub.builder-hub--hover-rotate {
+  cursor: grab;
+}
+
 .builder-hub-triangle {
   fill: #1a2130;
   stroke: #2a3242;
@@ -857,6 +871,7 @@ textarea {
   stroke-linejoin: round;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
   transition:
     fill 0.1s ease,
     stroke 0.1s ease;
@@ -873,6 +888,7 @@ textarea {
 .builder-hub .builder-port.builder-hub-port {
   position: absolute;
   z-index: 2;
+  pointer-events: auto;
 }
 
 .builder-hub-reverse {
