@@ -419,6 +419,18 @@ textarea {
   cursor: grab;
 }
 
+.builder-drag-image {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.builder-drag-image .builder-entity {
+  cursor: grabbing;
+}
+
 .builder-canvas {
   display: flex;
   flex-direction: column;
