@@ -151,8 +151,8 @@ export function rebuildStateWithOuterLeafEndpoints(s: BuilderState): BuilderStat
       templateType: "endpoint" as const,
       layer: "outer64" as const,
       segmentIndex: seg,
-      x: 0.5,
-      y: 0.04,
+      x: 0,
+      y: 0,
       settings: { address: outerLeafAddressForNonVoidSegment(seg) },
       isStatic: true,
     });

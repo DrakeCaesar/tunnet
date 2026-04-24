@@ -17,6 +17,8 @@
   --scrollbar-thumb-hover: #4a5670;
   --builder-sidebar-width: 320px;
   --builder-layer-gap: 5px;
+  --builder-grid-step-x: 6.25%;
+  --builder-grid-step-y: 5%;
 }
 
 body {
@@ -583,6 +585,33 @@ textarea {
 .builder-segment-entities {
   position: relative;
   height: calc(100% - 14px);
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      rgba(137, 180, 250, 0.09) 0,
+      rgba(137, 180, 250, 0.09) 1px,
+      transparent 1px,
+      transparent var(--builder-grid-step-x)
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(137, 180, 250, 0.09) 0,
+      rgba(137, 180, 250, 0.09) 1px,
+      transparent 1px,
+      transparent var(--builder-grid-step-y)
+    );
+}
+
+.builder-segment[data-layer="outer64"] .builder-segment-entities {
+  --builder-grid-step-x: 6.25%;
+}
+
+.builder-segment[data-layer="middle16"] .builder-segment-entities {
+  --builder-grid-step-x: 1.5625%;
+}
+
+.builder-segment[data-layer="inner4"] .builder-segment-entities {
+  --builder-grid-step-x: 0.390625%;
 }
 
 .builder-entity {
@@ -596,14 +625,14 @@ textarea {
   z-index: 2;
   min-width: 45px;
   max-width: 520px;
-  transform: translate(-6px, -6px);
+  transform: none;
   cursor: grab;
 }
 
 .builder-entity--outer-endpoint {
-  left: 50% !important;
-  top: 0.35rem !important;
-  transform: translate(calc(-50% - 6px), 0) !important;
+  left: 0 !important;
+  top: 0 !important;
+  transform: none !important;
   z-index: 2;
 }
 

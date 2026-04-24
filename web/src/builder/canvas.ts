@@ -37,6 +37,12 @@ import { compileBuilderToViewerPayload } from "./compile";
 const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_LAYER_GAP_PX = 5;
+const BUILDER_GRID_SNAP_STEP_Y = 0.05;
+const BUILDER_GRID_COLUMNS_BY_LAYER: Record<BuilderLayer, number> = {
+  outer64: 16,
+  middle16: 64,
+  inner4: 256,
+};
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -710,8 +716,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           if (isBuilderTemplateType(draggingTemplate)) {
             const dragImage = buildTemplateDragImage(draggingTemplate);
             document.body.appendChild(dragImage);
-            // Match placement anchor: placed entities are rendered with transform: translate(-6px, -6px).
-            ev.dataTransfer.setDragImage(dragImage, 6, 6);
+            // Top-left placement anchor matches snapped entity coordinates.
+            ev.dataTransfer.setDragImage(dragImage, 0, 0);
             window.setTimeout(() => {
               dragImage.remove();
             }, 0);
@@ -840,6 +846,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function snapNormalizedToPixels(value: number, sizePx: number): number {
     const safeSize = Math.max(1, sizePx);
     return Math.round(value * safeSize) / safeSize;
+  }
+
+  function snapNormalizedToGridX(value: number, layer: BuilderLayer): number {
+    const step = 1 / BUILDER_GRID_COLUMNS_BY_LAYER[layer];
+    return Math.round(value / step) * step;
+  }
+
+  function snapNormalizedToGridY(value: number): number {
+    return Math.round(value / BUILDER_GRID_SNAP_STEP_Y) * BUILDER_GRID_SNAP_STEP_Y;
   }
 
   function renderWireOverlay(): void {
@@ -1057,8 +1072,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const onMove = (mv: MouseEvent): void => {
           const rawX = (mv.clientX - segRect.left) / Math.max(1, segRect.width) - dx;
           const rawY = (mv.clientY - segRect.top) / Math.max(1, segRect.height) - dy;
-          const x = snapNormalizedToPixels(rawX, segRect.width);
-          const y = snapNormalizedToPixels(rawY, segRect.height);
+          const x = snapNormalizedToPixels(snapNormalizedToGridX(rawX, rootEnt.layer), segRect.width);
+          const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY), segRect.height);
           state = updateEntityPosition(state, rootEnt.id, x, y);
           setEntityDomPosition(rootEnt.id, x, y);
           scheduleWireOverlayRender();
@@ -1127,8 +1142,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const onMove = (mv: MouseEvent): void => {
       const rawX = (mv.clientX - segRect.left) / Math.max(1, segRect.width) - dx;
       const rawY = (mv.clientY - segRect.top) / Math.max(1, segRect.height) - dy;
-      const x = snapNormalizedToPixels(rawX, segRect.width);
-      const y = snapNormalizedToPixels(rawY, segRect.height);
+      const x = snapNormalizedToPixels(snapNormalizedToGridX(rawX, rootEnt.layer), segRect.width);
+      const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY), segRect.height);
       state = updateEntityPosition(state, rootEnt.id, x, y);
       setEntityDomPosition(rootEnt.id, x, y);
       scheduleWireOverlayRender();
@@ -1560,8 +1575,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const entitiesHost =
         cell.querySelector<HTMLElement>(".builder-segment-entities") ?? cell;
       const entitiesRect = entitiesHost.getBoundingClientRect();
-      const px = (ev.clientX - entitiesRect.left) / Math.max(1, entitiesRect.width);
-      const py = (ev.clientY - entitiesRect.top) / Math.max(1, entitiesRect.height);
+      const px = snapNormalizedToGridX(
+        (ev.clientX - entitiesRect.left) / Math.max(1, entitiesRect.width),
+        layer,
+      );
+      const py = snapNormalizedToGridY(
+        (ev.clientY - entitiesRect.top) / Math.max(1, entitiesRect.height),
+      );
       const segment = (() => {
         if (cell.dataset.voidOuter !== "1") {
           const n = Number(cell.dataset.segment);
@@ -1749,49 +1769,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   });
 
   togglePropLabelsBtn.addEventListener("click", () => {
-    const filterRoots = new Set(
-      state.entities
-        .filter((e) => e.templateType === "filter")
-        .map((e) => e.id),
-    );
-    const centerByRoot = new Map<string, number>();
-    filterRoots.forEach((rootId) => {
-      const entityEl = canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`);
-      const hostEl = entityEl?.closest<HTMLElement>(".builder-segment-entities");
-      if (!entityEl || !hostEl) return;
-      const er = entityEl.getBoundingClientRect();
-      const hr = hostEl.getBoundingClientRect();
-      const centerPx = er.left + er.width / 2 - hr.left;
-      centerByRoot.set(rootId, centerPx / Math.max(1, hr.width));
-    });
     hideEntityPropertyLabels = !hideEntityPropertyLabels;
     applyPropertyLabelVisibility();
-    window.requestAnimationFrame(() => {
-      let changed = false;
-      const nextEntities = state.entities.map((entity) => {
-        if (entity.templateType !== "filter") return entity;
-        const centerNorm = centerByRoot.get(entity.id);
-        if (centerNorm === undefined) return entity;
-        const entityEl = canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${entity.id}"]`);
-        const hostEl = entityEl?.closest<HTMLElement>(".builder-segment-entities");
-        if (!entityEl || !hostEl) return entity;
-        const er = entityEl.getBoundingClientRect();
-        const hr = hostEl.getBoundingClientRect();
-        const w = Math.max(1, hr.width);
-        const targetCenterPx = centerNorm * w;
-        // Entity uses left:% plus transform: translate(-6px, -6px).
-        const nextX = (targetCenterPx + 6 - er.width / 2) / w;
-        const clampedX = Math.max(0, Math.min(1, nextX));
-        if (Math.abs(clampedX - entity.x) < 1e-6) return entity;
-        changed = true;
-        return { ...entity, x: clampedX };
-      });
-      if (!changed) return;
-      state = { ...state, entities: nextEntities };
-      persist();
-      renderCanvas();
-      renderInspector();
-    });
   });
 
   exportBtn.addEventListener("click", async () => {
