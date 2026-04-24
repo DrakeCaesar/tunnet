@@ -417,7 +417,7 @@ export function addLinkRootOneWirePerPort(
     if (fromEntityId !== toEntityId) {
       return { state, link: null };
     }
-    if (pin.fromSegmentIndex === pin.toSegmentIndex && fromPort === toPort) {
+    if (pin.fromSegmentIndex === pin.toSegmentIndex) {
       return { state, link: null };
     }
     const { fromSegmentIndex, toSegmentIndex } = pin;

@@ -272,8 +272,8 @@ function hubTriangleSvg(instanceId: string, rotation: string | undefined): strin
 
   return `<svg class="builder-hub-svg" viewBox="0 0 ${HUB_VIEW.w} ${HUB_VIEW.h}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
     <defs>
-      <marker id="${mid}-tip" viewBox="0 0 6 6" refX="4.8" refY="3" markerWidth="4.5" markerHeight="4.5" orient="auto">
-        <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,0.48)" />
+      <marker id="${mid}-tip" viewBox="0 0 6 6" refX="5.1" refY="3" markerWidth="4.5" markerHeight="4.5" orient="auto">
+        <path d="M1,0.8 L5,3 L1,5.2" fill="none" stroke="#d9e1f3" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" />
       </marker>
     </defs>
     <path class="builder-hub-rotate-hint" d="${d}" />
@@ -774,9 +774,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           ev.dataTransfer.effectAllowed = "copy";
           if (isBuilderTemplateType(draggingTemplate)) {
             const dragImage = buildTemplateDragImage(draggingTemplate);
+            dragImage.classList.toggle("builder-hide-property-labels", hideEntityPropertyLabels);
             document.body.appendChild(dragImage);
-            // Top-left placement anchor matches snapped entity coordinates.
-            ev.dataTransfer.setDragImage(dragImage, 0, 0);
+            const dragAnchorX = draggingTemplate === "hub"
+              ? Math.round(HUB_LAYOUT.G.x)
+              : Math.round(BUILDER_GRID_TILE_SIZE_X_PX / 2);
+            const dragAnchorY = draggingTemplate === "hub"
+              ? Math.round(HUB_LAYOUT.G.y)
+              : Math.round(BUILDER_GRID_TILE_SIZE_Y_PX / 2);
+            ev.dataTransfer.setDragImage(dragImage, dragAnchorX, dragAnchorY);
             window.setTimeout(() => {
               dragImage.remove();
             }, 0);
@@ -869,8 +875,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function setEntityDomPosition(rootId: string, x: number, y: number): void {
-    const left = `calc(${x} * var(--builder-grid-step-x))`;
-    const top = `calc(${y} * var(--builder-grid-step-y))`;
+    const rootEnt = state.entities.find((e) => e.id === rootId);
+    const isHub = rootEnt?.templateType === "hub";
+    const left = isHub
+      ? `calc((${x} + 0.5) * var(--builder-grid-step-x) - ${HUB_LAYOUT.G.x.toFixed(3)}px)`
+      : `calc(${x} * var(--builder-grid-step-x))`;
+    const top = isHub
+      ? `calc((${y} + 0.5) * var(--builder-grid-step-y) - ${HUB_LAYOUT.G.y.toFixed(3)}px)`
+      : `calc(${y} * var(--builder-grid-step-y))`;
     canvasEl
       .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`)
       .forEach((entityEl) => {
@@ -962,9 +974,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const fromRect = from.getBoundingClientRect();
       const toRect = to.getBoundingClientRect();
       const x1 = fromRect.left + fromRect.width / 2 - wrapRect.left + wrap.scrollLeft;
-      const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top;
+      const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top + wrap.scrollTop;
       const x2 = toRect.left + toRect.width / 2 - wrapRect.left + wrap.scrollLeft;
-      const y2 = toRect.top + toRect.height / 2 - wrapRect.top;
+      const y2 = toRect.top + toRect.height / 2 - wrapRect.top + wrap.scrollTop;
       const e = lineEndpointsAtPortEdges(x1, y1, fromRect.width / 2, x2, y2, toRect.width / 2);
       lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="#f9e2af" stroke-opacity="0.9" stroke-width="1.5"></line>`;
     }
@@ -981,9 +993,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (fromPort) {
         const fromRect = fromPort.getBoundingClientRect();
         const x1 = fromRect.left + fromRect.width / 2 - wrapRect.left + wrap.scrollLeft;
-        const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top;
+        const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top + wrap.scrollTop;
         const x2 = linkDrag.endClient.x - wrapRect.left + wrap.scrollLeft;
-        const y2 = linkDrag.endClient.y - wrapRect.top;
+        const y2 = linkDrag.endClient.y - wrapRect.top + wrap.scrollTop;
         const e = lineEndpointsAtPortEdges(x1, y1, fromRect.width / 2, x2, y2, 0);
         lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" class="builder-wire-drag" pointer-events="none"></line>`;
       }
@@ -1118,17 +1130,24 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const entitiesHost =
           seg.querySelector<HTMLElement>(".builder-segment-entities") ?? seg;
         const segRect = entitiesHost.getBoundingClientRect();
-        const anchorX = (ev.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX;
-        const anchorY = (ev.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX;
+        const anchorX = (ev.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX - 0.5;
+        const anchorY = (ev.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX - 0.5;
         const rx = rootEnt.x;
         const ry = rootEnt.y;
         const dx = anchorX - rx;
         const dy = anchorY - ry;
+        let lastX = rx;
+        let lastY = ry;
         const onMove = (mv: MouseEvent): void => {
-          const rawX = (mv.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX - dx;
-          const rawY = (mv.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX - dy;
+          const rawX = (mv.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX - 0.5 - dx;
+          const rawY = (mv.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX - 0.5 - dy;
           const x = Math.round(rawX);
           const y = Math.round(rawY);
+          if (x === lastX && y === lastY) {
+            return;
+          }
+          lastX = x;
+          lastY = y;
           state = updateEntityPosition(state, rootEnt.id, x, y);
           setEntityDomPosition(rootEnt.id, x, y);
           scheduleWireOverlayRender();
@@ -1196,11 +1215,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const anchorY = (ev.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX;
     const dx = anchorX - rootEnt.x;
     const dy = anchorY - rootEnt.y;
+    let lastX = rootEnt.x;
+    let lastY = rootEnt.y;
     const onMove = (mv: MouseEvent): void => {
       const rawX = (mv.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX - dx;
       const rawY = (mv.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX - dy;
       const x = Math.round(rawX);
       const y = Math.round(rawY);
+      if (x === lastX && y === lastY) {
+        return;
+      }
+      lastX = x;
+      lastY = y;
       state = updateEntityPosition(state, rootEnt.id, x, y);
       setEntityDomPosition(rootEnt.id, x, y);
       scheduleWireOverlayRender();
@@ -1256,7 +1282,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const toP = Number(toPort.dataset.port);
       const toInstanceRaw = toPort.dataset.instanceId ?? "";
       if (!toRootId) return;
-      if (toInstanceRaw && toInstanceRaw === from.instanceId && toP === from.port) return;
+      if (toInstanceRaw && toInstanceRaw === from.instanceId) return;
       const fromInst = parseBuilderInstanceId(from.instanceId);
       const toInstParsed = parseBuilderInstanceId(toInstanceRaw);
       if (!fromInst || !toInstParsed) return;
@@ -1548,7 +1574,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                 data-instance-id="${entity.instanceId}"
                                 data-root-id="${entity.rootId}"
                                 data-static-endpoint="${isOuterStatic ? "1" : "0"}"
-                                style="left:calc(${entity.x} * var(--builder-grid-step-x));top:calc(${entity.y} * var(--builder-grid-step-y))"
+                                style="left:${
+                                  entity.templateType === "hub"
+                                    ? `calc((${entity.x} + 0.5) * var(--builder-grid-step-x) - ${HUB_LAYOUT.G.x.toFixed(3)}px)`
+                                    : `calc(${entity.x} * var(--builder-grid-step-x))`
+                                };top:${
+                                  entity.templateType === "hub"
+                                    ? `calc((${entity.y} + 0.5) * var(--builder-grid-step-y) - ${HUB_LAYOUT.G.y.toFixed(3)}px)`
+                                    : `calc(${entity.y} * var(--builder-grid-step-y))`
+                                }"
                               >
                                 ${
                                   entity.templateType === "filter" || entity.templateType === "relay"
@@ -1632,8 +1666,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const entitiesHost =
         cell.querySelector<HTMLElement>(".builder-segment-entities") ?? cell;
       const entitiesRect = entitiesHost.getBoundingClientRect();
-      const px = snapPixelToGridX(ev.clientX - entitiesRect.left);
-      const py = snapPixelToGridY(ev.clientY - entitiesRect.top);
+      const pxRaw = (ev.clientX - entitiesRect.left) / BUILDER_GRID_TILE_SIZE_X_PX;
+      const pyRaw = (ev.clientY - entitiesRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX;
+      const px = Math.floor(pxRaw);
+      const py = Math.floor(pyRaw);
       const segment = (() => {
         if (cell.dataset.voidOuter !== "1") {
           const n = Number(cell.dataset.segment);

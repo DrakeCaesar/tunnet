@@ -711,16 +711,16 @@ textarea {
   box-shadow: none;
 }
 
-.builder-entity.selected.builder-entity--hub .builder-hub {
-  filter: drop-shadow(0 0 4px rgba(249, 226, 175, 0.85));
+.builder-entity.selected.builder-entity--hub .builder-hub-triangle {
+  stroke: #f9e2af;
 }
 
 .builder-entity.link-source.builder-entity--hub {
   border: none;
 }
 
-.builder-entity.link-source.builder-entity--hub .builder-hub {
-  filter: drop-shadow(0 0 4px rgba(137, 220, 235, 0.9));
+.builder-entity.link-source.builder-entity--hub .builder-hub-triangle {
+  stroke: #89dceb;
 }
 
 .builder-ports--filter-top,
@@ -758,8 +758,8 @@ textarea {
 .builder-hub-rotate-hint {
   fill: none;
   pointer-events: none;
-  stroke: rgba(249, 226, 175, 0.5);
-  stroke-width: 28;
+  stroke: rgba(249, 226, 175, 0.18);
+  stroke-width: 18;
   stroke-linejoin: round;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
@@ -768,13 +768,13 @@ textarea {
 }
 
 .builder-hub--hover-rotate .builder-hub-rotate-hint {
-  opacity: 0.95;
+  opacity: 0.45;
 }
 
 .builder-hub-triangle {
-  fill: #0f131b;
-  stroke: rgba(210, 218, 235, 0.55);
-  stroke-width: 1.15;
+  fill: #1a2130;
+  stroke: #2a3242;
+  stroke-width: 1;
   stroke-linejoin: round;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
@@ -783,14 +783,9 @@ textarea {
     stroke 0.1s ease;
 }
 
-.builder-hub--hover-move .builder-hub-triangle {
-  fill: rgba(64, 120, 200, 0.22);
-  stroke: rgba(150, 200, 255, 0.75);
-}
-
 .builder-hub-arrow {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.32);
+  stroke: #d9e1f3;
   stroke-width: 1.05;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
