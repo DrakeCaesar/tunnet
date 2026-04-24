@@ -16,6 +16,7 @@
   --scrollbar-thumb: #3a445a;
   --scrollbar-thumb-hover: #4a5670;
   --builder-sidebar-width: 320px;
+  --builder-layer-gap: 5px;
 }
 
 body {
@@ -500,17 +501,19 @@ textarea {
 }
 
 .builder-layer {
-  background: #10141c;
-  border: 1px solid #2a3242;
+  background: transparent;
+  border: 0;
   border-radius: 0;
-  padding: 4px;
+  padding: 0;
   flex: 0 0 auto;
   height: calc(var(--builder-layer-base-height-px, 220px) * var(--builder-scale-y, 1));
 }
 
 .builder-layer + .builder-layer {
-  border-top: 0;
+  margin-top: var(--builder-layer-gap);
 }
+
+
 
 .builder-layer-title {
   font-size: 11px;
@@ -520,14 +523,20 @@ textarea {
 
 .builder-layer-grid {
   display: grid;
-  gap: 2px;
-  height: calc(100% - 18px);
+  gap: var(--builder-layer-gap);
+  height: 100%;
 }
 
 .builder-layer-outer64 {
   grid-template-columns: repeat(
     64,
-    minmax(calc((var(--builder-middle-col-base-px, 1280px) / 4) * var(--builder-scale-x, 1)), 1fr)
+    minmax(
+      calc(
+        ((var(--builder-middle-col-base-px, 1280px) - (3 * var(--builder-layer-gap))) / 4)
+          * var(--builder-scale-x, 1)
+      ),
+      1fr
+    )
   );
 }
 

@@ -36,6 +36,7 @@ import { compileBuilderToViewerPayload } from "./compile";
 
 const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
+const BUILDER_LAYER_GAP_PX = 5;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -575,7 +576,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const wrap = wireOverlayEl.parentElement;
     if (wrap) {
       const middleBasePx = Math.max(320, wrap.clientWidth);
-      const layerBasePx = Math.max(120, wrap.clientHeight / 3);
+      const usableHeight = Math.max(120, wrap.clientHeight - 2 * BUILDER_LAYER_GAP_PX);
+      const layerBasePx = Math.max(120, usableHeight / 3);
       root.style.setProperty("--builder-middle-col-base-px", `${middleBasePx.toFixed(2)}px`);
       root.style.setProperty("--builder-layer-base-height-px", `${layerBasePx.toFixed(2)}px`);
     }
@@ -1255,7 +1257,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const columns = layer === "outer64" ? outerLayerBuilderColumnSlots() : layerColumns(layer);
         return `
           <section class="builder-layer">
-            <div class="builder-layer-title">${layerTitle(layer)}</div>
             <div class="builder-layer-grid builder-layer-${layer}" data-layer="${layer}">
               ${columns
                 .map((segment) => {
@@ -1824,6 +1825,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const wrap = wireOverlayEl.parentElement;
   if (wrap) {
     wrap.addEventListener("scroll", scheduleWireOverlayRender, { passive: true });
+    const wrapResizeObserver = new ResizeObserver(() => {
+      applyCanvasScale();
+    });
+    wrapResizeObserver.observe(wrap);
   }
   window.addEventListener("resize", scheduleWireOverlayRender);
   window.addEventListener("resize", applyCanvasScale);
@@ -1845,11 +1850,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     persistCanvasScale();
   });
 
-  applyCanvasScale();
-
   renderTemplates();
   renderInspector();
   renderCanvas();
+  applyCanvasScale();
+  requestAnimationFrame(() => {
+    applyCanvasScale();
+  });
 }
 
 export { VIEWER_PREVIEW_KEY };
