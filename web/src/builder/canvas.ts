@@ -5,6 +5,7 @@ import {
   createEntityRoot,
   addLinkRootOneWirePerPort,
   createEmptyBuilderState,
+  crossLayerBlockSlotFromSegments,
   defaultSettings,
   isStaticOuterLeafEndpoint,
   isOuterLeafVoidSegment,
@@ -20,6 +21,7 @@ import {
   expandLinks,
   layerColumns,
   layerTitle,
+  parseBuilderInstanceId,
   outerLayerBuilderColumnSlots,
   orderedLayersTopDown,
   segmentLabel,
@@ -275,6 +277,8 @@ type Selection = EntitySelection | LinkSelection | null;
 interface LinkSourceSelection {
   rootId: string;
   port: number;
+  /** Port DOM identity for this clone (mirrors share rootId). */
+  instanceId: string;
 }
 
 function templateList(): BuilderTemplateType[] {
@@ -479,15 +483,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       line.setAttribute("y1", String(y1));
       line.setAttribute("x2", String(x2));
       line.setAttribute("y2", String(y2));
-      line.setAttribute("stroke", link.isShadow ? "#6c768a" : "#f9e2af");
-      line.setAttribute("stroke-opacity", link.isShadow ? "0.35" : "0.9");
-      line.setAttribute("stroke-width", link.isShadow ? "1" : "1.5");
+      line.setAttribute("stroke", "#f9e2af");
+      line.setAttribute("stroke-opacity", "0.9");
+      line.setAttribute("stroke-width", "1.5");
       wireOverlayEl.appendChild(line);
     }
     if (linkDrag) {
-      const fromPort = canvasEl.querySelector<HTMLButtonElement>(
-        `.builder-port[data-root-id="${linkDrag.from.rootId}"][data-port="${linkDrag.from.port}"]`,
-      );
+      const fromPort =
+        resolveBuilderPortForWireOverlay(String(linkDrag.from.instanceId), linkDrag.from.port) ??
+        (linkDrag.from.instanceId
+          ? null
+          : canvasEl.querySelector<HTMLButtonElement>(
+              `.builder-port[data-root-id="${linkDrag.from.rootId}"][data-port="${linkDrag.from.port}"]`,
+            ));
       if (fromPort) {
         const fromRect = fromPort.getBoundingClientRect();
         const x1 = fromRect.left + fromRect.width / 2 - wrapRect.left + wrap.scrollLeft;
@@ -577,7 +585,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                           .map((entity) => {
                             const selected =
                               selection?.kind === "entity" && selection.rootId === entity.rootId ? "selected" : "";
-                            const shadow = entity.isShadow ? "shadow" : "";
                             const settingsText = Object.entries(entity.settings)
                               .slice(0, 3)
                               .map(([k, v]) => `${k}=${v}`)
@@ -736,7 +743,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                   : `<div class="builder-ports">${entity.ports.map((p) => portBtn(p)).join("")}</div>`;
                             return `
                               <div
-                                class="builder-entity ${selected} ${shadow} ${entityShapeClass}"
+                                class="builder-entity ${selected}${entityShapeClass}"
                                 data-instance-id="${entity.instanceId}"
                                 data-root-id="${entity.rootId}"
                                 data-static-endpoint="${isOuterStatic ? "1" : "0"}"
@@ -864,7 +871,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         ev.preventDefault();
         const rootId = portEl.dataset.rootId!;
         const port = Number(portEl.dataset.port);
-        const from: LinkSourceSelection = { rootId, port };
+        const instanceId = portEl.dataset.instanceId ?? "";
+        const from: LinkSourceSelection = { rootId, port, instanceId };
         const wrap = wireOverlayEl.parentElement;
         if (!wrap) return;
         const onMove = (e: PointerEvent): void => {
@@ -891,12 +899,56 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           if (!toPort) return;
           const toRootId = toPort.dataset.rootId;
           const toP = Number(toPort.dataset.port);
+          const toInstanceRaw = toPort.dataset.instanceId ?? "";
           if (!toRootId) return;
-          if (toRootId === from.rootId) return;
-          const fromRoot = state.entities.find((ent) => ent.id === from.rootId);
-          const toRoot = state.entities.find((ent) => ent.id === toRootId);
+          if (toInstanceRaw && toInstanceRaw === from.instanceId && toP === from.port) return;
+          const fromInst = parseBuilderInstanceId(from.instanceId);
+          const toInstParsed = parseBuilderInstanceId(toInstanceRaw);
+          if (!fromInst || !toInstParsed) return;
+          if (fromInst.rootId !== from.rootId || toInstParsed.rootId !== toRootId) return;
+          const fromRoot = state.entities.find((ent) => ent.id === fromInst.rootId);
+          const toRoot = state.entities.find((ent) => ent.id === toInstParsed.rootId);
           if (!fromRoot || !toRoot) return;
-          const added = addLinkRootOneWirePerPort(state, fromRoot.id, from.port, toRoot.id, toP);
+          const linkOpts =
+            fromRoot.id === toRoot.id
+              ? {
+                  sameEntityPin: {
+                    fromSegmentIndex: fromInst.segmentIndex,
+                    toSegmentIndex: toInstParsed.segmentIndex,
+                  },
+                }
+              : fromRoot.layer === toRoot.layer
+                ? {
+                    sameLayerSegmentDelta:
+                      toInstParsed.segmentIndex - fromInst.segmentIndex,
+                  }
+                : (() => {
+                    const slot = crossLayerBlockSlotFromSegments(
+                      fromRoot.layer,
+                      fromInst.segmentIndex,
+                      toRoot.layer,
+                      toInstParsed.segmentIndex,
+                    );
+                    if (slot === undefined) {
+                      return undefined;
+                    }
+                    return { crossLayerBlockSlot: slot };
+                  })();
+          if (
+            fromRoot.id !== toRoot.id &&
+            fromRoot.layer !== toRoot.layer &&
+            linkOpts === undefined
+          ) {
+            return;
+          }
+          const added = addLinkRootOneWirePerPort(
+            state,
+            fromRoot.id,
+            from.port,
+            toRoot.id,
+            toP,
+            linkOpts,
+          );
           if (!added.link) return;
           state = added.state;
           persist();
@@ -1142,10 +1194,39 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         inspectorEl.textContent = "Link missing.";
         return;
       }
+      const isSameRootPin =
+        link.fromEntityId === link.toEntityId &&
+        link.fromSegmentIndex !== undefined &&
+        link.toSegmentIndex !== undefined;
+      const isSameLayerTwoRoots =
+        link.fromEntityId !== link.toEntityId && link.sameLayerSegmentDelta !== undefined;
+      const isCrossLayerSlot =
+        link.fromEntityId !== link.toEntityId &&
+        link.crossLayerBlockSlot !== undefined &&
+        link.sameLayerSegmentDelta === undefined &&
+        !isSameRootPin;
+      const sameRootDelta =
+        isSameRootPin && link.fromSegmentIndex !== undefined && link.toSegmentIndex !== undefined
+          ? link.toSegmentIndex - link.fromSegmentIndex
+          : 0;
+      const fromText = isSameRootPin
+        ? `${link.fromEntityId}@${link.fromSegmentIndex}`
+        : link.fromEntityId;
+      const toText = isSameRootPin
+        ? `${link.toEntityId}@${link.toSegmentIndex}`
+        : link.toEntityId;
+      const scopeNote = isSameRootPin
+        ? `<div class="kv"><span>Scope</span><strong>Same device: mirrors port ${link.fromPort} → port ${link.toPort} with toSeg = fromSeg + ${sameRootDelta}</strong></div>`
+        : isSameLayerTwoRoots
+          ? `<div class="kv"><span>Scope</span><strong>Same layer: each mirror uses toSeg = fromSeg + ${link.sameLayerSegmentDelta}</strong></div>`
+          : isCrossLayerSlot
+            ? `<div class="kv"><span>Scope</span><strong>Cross-layer: one fine column per coarse segment (lane ${link.crossLayerBlockSlot} in each block)</strong></div>`
+            : `<div class="kv"><span>Scope</span><strong>Cross-layer (legacy): one wire per base column (64)</strong></div>`;
       inspectorEl.innerHTML = `
         <div class="kv"><span>Type</span><strong>Link</strong></div>
-        <div class="kv"><span>From</span><strong>${link.fromEntityId}:${link.fromPort}</strong></div>
-        <div class="kv"><span>To</span><strong>${link.toEntityId}:${link.toPort}</strong></div>
+        <div class="kv"><span>From</span><strong>${fromText} port ${link.fromPort}</strong></div>
+        <div class="kv"><span>To</span><strong>${toText} port ${link.toPort}</strong></div>
+        ${scopeNote}
       `;
       return;
     }

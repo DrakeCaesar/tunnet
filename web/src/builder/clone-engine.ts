@@ -96,6 +96,16 @@ function instanceId(rootId: string, segment: number): string {
   return `${rootId}@${segment}`;
 }
 
+/** Parse `rootId@segment` from port / entity `data-instance-id` (last `@` is the split). */
+export function parseBuilderInstanceId(id: string): { rootId: string; segmentIndex: number } | null {
+  const at = id.lastIndexOf("@");
+  if (at < 0) return null;
+  const rootId = id.slice(0, at);
+  const seg = Number(id.slice(at + 1));
+  if (rootId.length === 0 || !Number.isInteger(seg) || seg < 0) return null;
+  return { rootId, segmentIndex: seg };
+}
+
 /**
  * In builder UI we only need one (non-shadow) view per fixed outer endpoint; a full
  * expansion would be 64 roots × 64 columns = 4096 entities and is unusable.
@@ -156,71 +166,149 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
     if (!from || !to) continue;
     const fromCount = LAYER_COUNTS[from.layer];
     const toCount = LAYER_COUNTS[to.layer];
-    const seenPairs = new Set<string>();
-
-    for (let base = 0; base < 64; base += 1) {
-      const fromSeg = segmentByBaseColumn(from.layer, base);
-      const toSeg = segmentByBaseColumn(to.layer, base);
-      if (fromCount > toCount) {
-        // Finer → coarser: each segment on the coarser (upper) side corresponds to a block of
-        // fromCount / toCount columns on the finer (lower) side. One link per (toSeg), not one per
-        // base column in that block.
-        const r = fromCount / toCount;
-        if (!Number.isInteger(r) || r < 1) continue;
-        const f2cKey = `f2c-${toSeg}`;
-        if (seenPairs.has(f2cKey)) continue;
-        seenPairs.add(f2cKey);
-        const repFromSeg = toSeg * r;
-        if (repFromSeg > fromCount - 1) continue;
-        out.push({
-          instanceId: `${root.id}@f2c${toSeg}`,
-          rootId: root.id,
-          groupId: root.groupId,
-          fromInstanceId: instanceId(from.id, repFromSeg),
-          fromPort: root.fromPort,
-          toInstanceId: instanceId(to.id, toSeg),
-          toPort: root.toPort,
-          isShadow: repFromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
-        });
+    const pFrom = root.fromSegmentIndex;
+    const pTo = root.toSegmentIndex;
+    if (pFrom != null && pTo != null && from.id === to.id) {
+      if (pFrom < 0 || pFrom >= fromCount || pTo < 0 || pTo >= toCount) {
         continue;
       }
-      if (toCount > fromCount) {
-        // Coarser → finer: one segment on the coarser (e.g. middle) maps to a block of toCount
-        // / fromCount fine segments (e.g. 4 outers). One link per (fromSeg); use the first column in
-        // the block. To get 4 distinct connections, the user places 4 devices on the coarse row.
-        const r = toCount / fromCount;
-        if (!Number.isInteger(r) || r < 1) continue;
-        const c2fKey = `c2f-${fromSeg}`;
-        if (seenPairs.has(c2fKey)) continue;
-        seenPairs.add(c2fKey);
-        const repToSeg = fromSeg * r;
-        if (repToSeg > toCount - 1) continue;
+      const d = pTo - pFrom;
+      for (let fromSeg = 0; fromSeg < fromCount; fromSeg += 1) {
+        const toSeg = fromSeg + d;
+        if (toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
         out.push({
-          instanceId: `${root.id}@c2f${fromSeg}`,
+          instanceId: `${root.id}@se-${fromSeg}-${toSeg}`,
           rootId: root.id,
           groupId: root.groupId,
           fromInstanceId: instanceId(from.id, fromSeg),
           fromPort: root.fromPort,
-          toInstanceId: instanceId(to.id, repToSeg),
+          toInstanceId: instanceId(to.id, toSeg),
           toPort: root.toPort,
-          isShadow: fromSeg !== from.segmentIndex || repToSeg !== to.segmentIndex,
+          isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
         });
+      }
+      continue;
+    }
+    if ((pFrom == null) !== (pTo == null)) {
+      continue;
+    }
+    if (fromCount === toCount) {
+      const d = root.sameLayerSegmentDelta ?? 0;
+      for (let fromSeg = 0; fromSeg < fromCount; fromSeg += 1) {
+        const toSeg = fromSeg + d;
+        if (toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
+        out.push({
+          instanceId: `${root.id}@sl-${fromSeg}-${toSeg}`,
+          rootId: root.id,
+          groupId: root.groupId,
+          fromInstanceId: instanceId(from.id, fromSeg),
+          fromPort: root.fromPort,
+          toInstanceId: instanceId(to.id, toSeg),
+          toPort: root.toPort,
+          isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+        });
+      }
+      continue;
+    }
+
+    const slot = root.crossLayerBlockSlot;
+
+    if (fromCount > toCount) {
+      const r = fromCount / toCount;
+      if (!Number.isInteger(r) || r < 1) {
         continue;
       }
-      // Same layer: one wire per (fromSeg, toSeg) along the 64 column grid.
-      const key = `${fromSeg}:${toSeg}`;
-      if (seenPairs.has(key)) continue;
-      seenPairs.add(key);
-      out.push({
-        instanceId: `${root.id}@${fromSeg}:${toSeg}`,
-        rootId: root.id,
-        groupId: root.groupId,
-        fromInstanceId: instanceId(from.id, fromSeg),
-        fromPort: root.fromPort,
-        toInstanceId: instanceId(to.id, toSeg),
-        toPort: root.toPort,
-        isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
-      });
+      if (slot != null) {
+        if (slot < 0 || slot >= r) {
+          continue;
+        }
+        for (let toSeg = 0; toSeg < toCount; toSeg += 1) {
+          const fromSeg = toSeg * r + slot;
+          if (fromSeg < 0 || fromSeg >= fromCount) {
+            continue;
+          }
+          out.push({
+            instanceId: `${root.id}@f2c-s${toSeg}-${fromSeg}`,
+            rootId: root.id,
+            groupId: root.groupId,
+            fromInstanceId: instanceId(from.id, fromSeg),
+            fromPort: root.fromPort,
+            toInstanceId: instanceId(to.id, toSeg),
+            toPort: root.toPort,
+            isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+          });
+        }
+        continue;
+      }
+      for (let base = 0; base < 64; base += 1) {
+        const fromSeg = segmentByBaseColumn(from.layer, base);
+        const toSeg = segmentByBaseColumn(to.layer, base);
+        if (fromSeg < 0 || fromSeg >= fromCount || toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
+        out.push({
+          instanceId: `${root.id}@f2c-b${base}`,
+          rootId: root.id,
+          groupId: root.groupId,
+          fromInstanceId: instanceId(from.id, fromSeg),
+          fromPort: root.fromPort,
+          toInstanceId: instanceId(to.id, toSeg),
+          toPort: root.toPort,
+          isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+        });
+      }
+      continue;
+    }
+
+    if (toCount > fromCount) {
+      const r = toCount / fromCount;
+      if (!Number.isInteger(r) || r < 1) {
+        continue;
+      }
+      if (slot != null) {
+        if (slot < 0 || slot >= r) {
+          continue;
+        }
+        for (let fromSeg = 0; fromSeg < fromCount; fromSeg += 1) {
+          const toSeg = fromSeg * r + slot;
+          if (toSeg < 0 || toSeg >= toCount) {
+            continue;
+          }
+          out.push({
+            instanceId: `${root.id}@c2f-s${fromSeg}-${toSeg}`,
+            rootId: root.id,
+            groupId: root.groupId,
+            fromInstanceId: instanceId(from.id, fromSeg),
+            fromPort: root.fromPort,
+            toInstanceId: instanceId(to.id, toSeg),
+            toPort: root.toPort,
+            isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+          });
+        }
+        continue;
+      }
+      for (let base = 0; base < 64; base += 1) {
+        const fromSeg = segmentByBaseColumn(from.layer, base);
+        const toSeg = segmentByBaseColumn(to.layer, base);
+        if (fromSeg < 0 || fromSeg >= fromCount || toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
+        out.push({
+          instanceId: `${root.id}@c2f-b${base}`,
+          rootId: root.id,
+          groupId: root.groupId,
+          fromInstanceId: instanceId(from.id, fromSeg),
+          fromPort: root.fromPort,
+          toInstanceId: instanceId(to.id, toSeg),
+          toPort: root.toPort,
+          isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+        });
+      }
+      continue;
     }
   }
   return out;

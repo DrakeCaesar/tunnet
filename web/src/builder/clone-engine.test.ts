@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mapMaskForSegment } from "./clone-engine";
+import { expandBuilderState, expandLinks, mapMaskForSegment, parseBuilderInstanceId } from "./clone-engine";
+import {
+  crossLayerBlockSlotFromSegments,
+  type BuilderEntityRoot,
+  type BuilderLinkRoot,
+  type BuilderState,
+} from "./state";
 
 assert.equal(mapMaskForSegment("*.*.1.*", "middle16", 0), "*.*.1.*");
 assert.equal(mapMaskForSegment("*.*.1.*", "middle16", 1), "*.*.2.*");
@@ -13,4 +19,119 @@ assert.equal(mapMaskForSegment("*.1.*.*", "outer64", 15), "*.1.*.*");
 assert.equal(mapMaskForSegment("*.1.*.*", "outer64", 16), "*.2.*.*");
 assert.equal(mapMaskForSegment("*.*.1.*", "outer64", 4), "*.*.2.*");
 
+assert.deepEqual(parseBuilderInstanceId("e1@3"), { rootId: "e1", segmentIndex: 3 });
+assert.deepEqual(parseBuilderInstanceId("ol-ep-12@12"), { rootId: "ol-ep-12", segmentIndex: 12 });
+assert.equal(parseBuilderInstanceId("nope"), null);
+
+assert.equal(crossLayerBlockSlotFromSegments("middle16", 1, "outer64", 6), 2);
+assert.equal(crossLayerBlockSlotFromSegments("middle16", 1, "outer64", 9), undefined);
+
+const a: BuilderEntityRoot = {
+  id: "a",
+  groupId: "a",
+  templateType: "filter",
+  layer: "middle16",
+  segmentIndex: 0,
+  x: 0.1,
+  y: 0.1,
+  settings: {},
+};
+const b: BuilderEntityRoot = { ...a, id: "b", groupId: "b" };
+const strays: BuilderLinkRoot = {
+  id: "l1",
+  groupId: "l1",
+  fromEntityId: "a",
+  fromPort: 0,
+  toEntityId: "b",
+  toPort: 1,
+  fromSegmentIndex: 3,
+  toSegmentIndex: 5,
+};
+const straysOut = expandLinks([strays], [a, b]);
+assert.equal(
+  straysOut.length,
+  16,
+  "two roots on same layer: pins ignored, one mirrored link per column segment (16)",
+);
+assert.equal(straysOut[0].fromInstanceId, "a@0");
+assert.equal(straysOut[0].toInstanceId, "b@0");
+
+const same: BuilderLinkRoot = {
+  id: "l2",
+  groupId: "l2",
+  fromEntityId: "a",
+  fromPort: 0,
+  toEntityId: "a",
+  toPort: 1,
+  fromSegmentIndex: 0,
+  toSegmentIndex: 2,
+};
+const selfOut = expandLinks([same], [a]);
+assert.equal(selfOut.length, 14, "same-root template delta +2 on middle16: fromSeg 0..13");
+assert.equal(selfOut[0].fromInstanceId, "a@0");
+assert.equal(selfOut[0].toInstanceId, "a@2");
+assert.equal(selfOut[0].fromPort, 0);
+assert.equal(selfOut[0].toPort, 1);
+assert.equal(selfOut[13].fromInstanceId, "a@13");
+assert.equal(selfOut[13].toInstanceId, "a@15");
+
+const m: BuilderEntityRoot = { ...a, id: "m1", groupId: "m1", layer: "middle16" };
+const o: BuilderEntityRoot = { ...a, id: "o1", groupId: "o1", layer: "outer64" };
+const cross: BuilderLinkRoot = {
+  id: "l3",
+  groupId: "l3",
+  fromEntityId: "m1",
+  fromPort: 0,
+  toEntityId: "o1",
+  toPort: 0,
+};
+const crossOut = expandLinks([cross], [m, o]);
+assert.equal(crossOut.length, 64, "legacy cross-layer: no block slot → one wire per base column");
+
+const crossSlotted: BuilderLinkRoot = { ...cross, crossLayerBlockSlot: 2 };
+const crossSlottedOut = expandLinks([crossSlotted], [m, o]);
+assert.equal(crossSlottedOut.length, 16, "middle→outer with lane 2: one outer per middle segment");
+assert.equal(crossSlottedOut[0].fromInstanceId, "m1@0");
+assert.equal(crossSlottedOut[0].toInstanceId, "o1@2");
+assert.equal(crossSlottedOut[1].fromInstanceId, "m1@1");
+assert.equal(crossSlottedOut[1].toInstanceId, "o1@6");
+
+const legacy: BuilderLinkRoot = { ...cross, fromSegmentIndex: 3, toSegmentIndex: 5 };
+const legacyOut = expandLinks([legacy], [m, o]);
+assert.equal(legacyOut.length, 64, "cross-entity with stray pins: still mirrored");
+
+const mini: BuilderState = {
+  version: 1,
+  entities: [m, o],
+  links: [cross],
+  nextId: 10,
+};
+const exp = expandBuilderState(mini, { builderView: false });
+assert.equal(exp.links.length, 64, "full expand matches");
+
+const h1: BuilderEntityRoot = {
+  ...a,
+  id: "h1",
+  groupId: "h1",
+  layer: "outer64",
+  templateType: "hub",
+};
+const h2: BuilderEntityRoot = { ...h1, id: "h2", groupId: "h2" };
+const slDelta: BuilderLinkRoot = {
+  id: "l4",
+  groupId: "l4",
+  fromEntityId: "h1",
+  fromPort: 0,
+  toEntityId: "h2",
+  toPort: 1,
+  sameLayerSegmentDelta: 2,
+};
+const slOut = expandLinks([slDelta], [h1, h2]);
+assert.equal(slOut.length, 62, "outer same-layer delta +2: fromSeg 0..61");
+assert.equal(slOut[0].fromInstanceId, "h1@0");
+assert.equal(slOut[0].toInstanceId, "h2@2");
+assert.equal(slOut[61].fromInstanceId, "h1@61");
+assert.equal(slOut[61].toInstanceId, "h2@63");
+
 console.log("clone-engine mask mapping checks passed");
+console.log("clone-engine pinned link checks passed");

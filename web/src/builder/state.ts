@@ -21,6 +21,22 @@ export interface BuilderLinkRoot {
   fromPort: number;
   toEntityId: string;
   toPort: number;
+  /**
+   * Same root only: template segments; expand mirrors every clone with toSeg = fromSeg + (to-from).
+   * fromPort / toPort may differ (e.g. hub port 0 → port 1 on offset mirrors).
+   */
+  fromSegmentIndex?: number;
+  toSegmentIndex?: number;
+  /**
+   * Same layer only (two different roots): each clone at segment s connects to segment s + delta.
+   * Omitted or 0: parallel mirrors (s → s). Example delta 2: hub A@0 → hub B@2, A@1 → B@3, …
+   */
+  sameLayerSegmentDelta?: number;
+  /**
+   * Coarse↔fine only (different segment counts): which of r fine cells in the coarse block (0..r-1).
+   * Set from the port you click so e.g. middle→outer uses one outer mirror per middle column, not all r.
+   */
+  crossLayerBlockSlot?: number;
 }
 
 export interface BuilderState {
@@ -156,6 +172,49 @@ export function segmentStride(layer: BuilderLayer): number {
   return 64 / LAYER_COUNTS[layer];
 }
 
+/**
+ * From the two endpoint segments of a cross-layer link, derive the fine-grid lane within the coarse
+ * block. Returns undefined if layers are the same or segments are not in the same alignment block.
+ */
+export function crossLayerBlockSlotFromSegments(
+  fromLayer: BuilderLayer,
+  fromSeg: number,
+  toLayer: BuilderLayer,
+  toSeg: number,
+): number | undefined {
+  const cf = LAYER_COUNTS[fromLayer];
+  const ct = LAYER_COUNTS[toLayer];
+  if (cf === ct) {
+    return undefined;
+  }
+  if (ct > cf) {
+    const r = ct / cf;
+    if (!Number.isInteger(r) || r < 1) {
+      return undefined;
+    }
+    if (Math.floor(toSeg / r) !== fromSeg) {
+      return undefined;
+    }
+    const slot = toSeg - fromSeg * r;
+    if (slot < 0 || slot >= r) {
+      return undefined;
+    }
+    return slot;
+  }
+  const r = cf / ct;
+  if (!Number.isInteger(r) || r < 1) {
+    return undefined;
+  }
+  if (Math.floor(fromSeg / r) !== toSeg) {
+    return undefined;
+  }
+  const slot = fromSeg - toSeg * r;
+  if (slot < 0 || slot >= r) {
+    return undefined;
+  }
+  return slot;
+}
+
 export function createEntityRoot(
   state: BuilderState,
   templateType: BuilderTemplateType,
@@ -183,6 +242,12 @@ export function createLinkRoot(
   fromPort: number,
   toEntityId: string,
   toPort: number,
+  extras?: {
+    fromSegmentIndex?: number;
+    toSegmentIndex?: number;
+    sameLayerSegmentDelta?: number;
+    crossLayerBlockSlot?: number;
+  },
 ): BuilderLinkRoot {
   const id = nextBuilderId(state, "l");
   return {
@@ -192,32 +257,122 @@ export function createLinkRoot(
     fromPort,
     toEntityId,
     toPort,
+    fromSegmentIndex: extras?.fromSegmentIndex,
+    toSegmentIndex: extras?.toSegmentIndex,
+    sameLayerSegmentDelta: extras?.sameLayerSegmentDelta,
+    crossLayerBlockSlot: extras?.crossLayerBlockSlot,
   };
 }
 
 function linkTouchesPort(l: BuilderLinkRoot, entityId: string, port: number): boolean {
+  return (l.fromEntityId === entityId && l.fromPort === port) || (l.toEntityId === entityId && l.toPort === port);
+}
+
+function sameDirectedEndpoints(
+  l: BuilderLinkRoot,
+  fromEntityId: string,
+  fromPort: number,
+  toEntityId: string,
+  toPort: number,
+): boolean {
   return (
-    (l.fromEntityId === entityId && l.fromPort === port) || (l.toEntityId === entityId && l.toPort === port)
+    l.fromEntityId === fromEntityId &&
+    l.fromPort === fromPort &&
+    l.toEntityId === toEntityId &&
+    l.toPort === toPort
   );
 }
 
-/** Replaces any existing link that uses either endpoint (entity+port) so each port has at most one wire. */
+export type AddLinkRootOpts = {
+  /** Same root: template segments; mirrors all clones with same port pair and segment offset. */
+  sameEntityPin?: { fromSegmentIndex: number; toSegmentIndex: number };
+  /** Same layer, two roots: mirrored offset toSegment = fromSegment + delta (0 = parallel). */
+  sameLayerSegmentDelta?: number;
+  /** Coarse↔fine cross-layer: lane 0..r-1 from the clicked fine segment. */
+  crossLayerBlockSlot?: number;
+};
+
+/**
+ * Default: unpinned cross-layer (or same-layer parallel when delta omitted).
+ * Same-entity pin / same-layer delta: segment template from the ports you connect.
+ */
 export function addLinkRootOneWirePerPort(
   state: BuilderState,
   fromEntityId: string,
   fromPort: number,
   toEntityId: string,
   toPort: number,
+  opts?: AddLinkRootOpts,
 ): { state: BuilderState; link: BuilderLinkRoot | null } {
+  const pin = opts?.sameEntityPin;
+  const delta = opts?.sameLayerSegmentDelta;
+  if (pin) {
+    if (fromEntityId !== toEntityId) {
+      return { state, link: null };
+    }
+    if (pin.fromSegmentIndex === pin.toSegmentIndex && fromPort === toPort) {
+      return { state, link: null };
+    }
+    const { fromSegmentIndex, toSegmentIndex } = pin;
+    const without = state.links.filter(
+      (l) =>
+        !linkTouchesPort(l, fromEntityId, fromPort) && !linkTouchesPort(l, toEntityId, toPort),
+    );
+    const next: BuilderState = { ...state, links: without };
+    const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort, {
+      fromSegmentIndex,
+      toSegmentIndex,
+    });
+    return { state: { ...next, links: [...without, link] }, link };
+  }
+  if (delta !== undefined) {
+    if (fromEntityId === toEntityId) {
+      return { state, link: null };
+    }
+    const fromEnt = state.entities.find((e) => e.id === fromEntityId);
+    const toEnt = state.entities.find((e) => e.id === toEntityId);
+    if (!fromEnt || !toEnt || fromEnt.layer !== toEnt.layer) {
+      return { state, link: null };
+    }
+    const without = state.links.filter(
+      (l) =>
+        !(
+          sameDirectedEndpoints(l, fromEntityId, fromPort, toEntityId, toPort) &&
+          (l.sameLayerSegmentDelta ?? 0) === delta
+        ),
+    );
+    const next: BuilderState = { ...state, links: without };
+    const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort, {
+      sameLayerSegmentDelta: delta,
+    });
+    return { state: { ...next, links: [...without, link] }, link };
+  }
   if (fromEntityId === toEntityId) {
     return { state, link: null };
   }
-  const without = state.links.filter(
-    (l) =>
-      !linkTouchesPort(l, fromEntityId, fromPort) && !linkTouchesPort(l, toEntityId, toPort),
-  );
+  const slot = opts?.crossLayerBlockSlot;
+  const without =
+    slot !== undefined
+      ? state.links.filter(
+          (l) =>
+            !(
+              sameDirectedEndpoints(l, fromEntityId, fromPort, toEntityId, toPort) &&
+              l.crossLayerBlockSlot === slot
+            ),
+        )
+      : state.links.filter(
+          (l) =>
+            !linkTouchesPort(l, fromEntityId, fromPort) && !linkTouchesPort(l, toEntityId, toPort),
+        );
   const next: BuilderState = { ...state, links: without };
-  const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort);
+  const link = createLinkRoot(
+    next,
+    fromEntityId,
+    fromPort,
+    toEntityId,
+    toPort,
+    slot !== undefined ? { crossLayerBlockSlot: slot } : undefined,
+  );
   return { state: { ...next, links: [...without, link] }, link };
 }
 
