@@ -540,6 +540,24 @@ export function removeLinkGroup(state: BuilderState, groupId: string): BuilderSt
   return { ...state, links: state.links.filter((l) => l.groupId !== groupId) };
 }
 
+export function removeLinksTouchingInstancePort(
+  state: BuilderState,
+  entityId: string,
+  segmentIndex: number,
+  port: number,
+): BuilderState {
+  const byId = new Map(state.entities.map((e) => [e.id, e]));
+  const key = instancePortKey(entityId, segmentIndex, port);
+  const links = state.links.filter((link) => {
+    const set = buildInstancePortSetForLink(link, byId);
+    return !set?.has(key);
+  });
+  if (links.length === state.links.length) {
+    return state;
+  }
+  return { ...state, links };
+}
+
 export function updateEntitySettings(
   state: BuilderState,
   entityId: string,

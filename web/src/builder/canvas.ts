@@ -13,6 +13,7 @@ import {
   rebuildStateWithOuterLeafEndpoints,
   removeEntityGroup,
   removeLinkGroup,
+  removeLinksTouchingInstancePort,
   updateEntityPosition,
   updateEntitySettings,
 } from "./state";
@@ -313,6 +314,12 @@ type CanvasScale = { x: number; y: number };
 type EntitySelection = { kind: "entity"; rootId: string };
 type LinkSelection = { kind: "link"; rootId: string };
 type Selection = EntitySelection | LinkSelection | null;
+type BoxSelectionState = {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+} | null;
 
 interface LinkSourceSelection {
   rootId: string;
@@ -518,6 +525,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let wireDragRaf: number | null = null;
   let wireOverlayRaf: number | null = null;
   let portElByInstancePort = new Map<string, HTMLButtonElement>();
+  let selectedEntityRootIds = new Set<string>();
+  let boxSelection: BoxSelectionState = null;
   const clampCanvasScaleX = (v: number): number => Math.max(0.25, Math.min(4, v));
   const clampCanvasScaleY = (v: number): number => Math.max(1, Math.min(3, v));
   const loadCanvasScale = (): CanvasScale => {
@@ -600,6 +609,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const exportBtn = root.querySelector<HTMLButtonElement>("#builder-export")!;
   const importBtn = root.querySelector<HTMLButtonElement>("#builder-import")!;
   const previewBtn = root.querySelector<HTMLButtonElement>("#builder-preview")!;
+  const canvasWrapEl = wireOverlayEl.parentElement as HTMLDivElement | null;
+  const boxEl = document.createElement("div");
+  boxEl.className = "builder-box-selection";
+  if (canvasWrapEl) {
+    canvasWrapEl.appendChild(boxEl);
+  }
   const perfStats = new Map<BuilderPerfKey, BuilderPerfStat>();
   const PERF_EMA_ALPHA = 0.18;
   let perfCounts = { expandedEntities: 0, stateLinks: 0, expandedLinks: 0 };
@@ -767,20 +782,44 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     canvasEl.querySelectorAll<HTMLElement>(".builder-entity.selected").forEach((el) => {
       el.classList.remove("selected");
     });
-    if (selection?.kind !== "entity") return;
-    canvasEl
-      .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${selection.rootId}"]`)
-      .forEach((el) => {
-        el.classList.add("selected");
-      });
+    const ids = selectedEntityRootIds.size
+      ? Array.from(selectedEntityRootIds)
+      : selection?.kind === "entity"
+        ? [selection.rootId]
+        : [];
+    ids.forEach((id) => {
+      canvasEl
+        .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${id}"]`)
+        .forEach((el) => {
+          el.classList.add("selected");
+        });
+    });
   }
 
   function setSelection(next: Selection): void {
     selection = next;
+    selectedEntityRootIds.clear();
     linkDrag = null;
     renderInspector();
     applySelectionToCanvas();
     renderWireOverlay();
+  }
+
+  function setEntitySelectionSet(ids: Set<string>): void {
+    selectedEntityRootIds = new Set(ids);
+    const firstId = selectedEntityRootIds.values().next().value as string | undefined;
+    selection = firstId ? { kind: "entity", rootId: firstId } : null;
+    linkDrag = null;
+    renderInspector();
+    applySelectionToCanvas();
+    renderWireOverlay();
+  }
+
+  function selectedEntityIdsForAction(primaryRootId: string): string[] {
+    if (selectedEntityRootIds.has(primaryRootId)) {
+      return Array.from(selectedEntityRootIds);
+    }
+    return [primaryRootId];
   }
 
   function renderTemplates(): void {
@@ -1225,6 +1264,30 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const seg = entityEl.closest<HTMLElement>(".builder-segment");
     if (!rootEnt || !seg) return;
     if (isStaticOuterLeafEndpoint(rootEnt)) return;
+    const movingRootIds = selectedEntityIdsForAction(rootEnt.id)
+      .filter((id) => {
+        const e = state.entities.find((x) => x.id === id);
+        return !!e && !isStaticOuterLeafEndpoint(e);
+      });
+    const initialPosById = new Map<string, { x: number; y: number }>();
+    movingRootIds.forEach((id) => {
+      const e = state.entities.find((x) => x.id === id);
+      if (e) initialPosById.set(id, { x: e.x, y: e.y });
+    });
+    const boundsById = new Map<string, { maxX: number; maxY: number }>();
+    movingRootIds.forEach((id) => {
+      const entityAny = canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${id}"]`);
+      const host =
+        entityAny?.closest<HTMLElement>(".builder-segment")?.querySelector<HTMLElement>(".builder-segment-entities") ??
+        seg.querySelector<HTMLElement>(".builder-segment-entities") ??
+        seg;
+      const w = Math.max(1, host.clientWidth);
+      const h = Math.max(1, host.clientHeight);
+      boundsById.set(id, {
+        maxX: Math.max(0, Math.floor(w / BUILDER_GRID_TILE_SIZE_X_PX) - 1),
+        maxY: Math.max(0, Math.floor(h / BUILDER_GRID_TILE_SIZE_Y_PX) - 1),
+      });
+    });
     if (rootEnt.templateType === "relay") {
       const relayRect = entityEl.getBoundingClientRect();
       const coreEl = entityEl.querySelector<HTMLElement>(".builder-relay-core");
@@ -1324,8 +1387,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           }
           lastX = x;
           lastY = y;
-          state = updateEntityPosition(state, rootEnt.id, x, y);
-          setEntityDomPosition(rootEnt.id, x, y);
+          const primaryInitial = initialPosById.get(rootEnt.id) ?? { x: rx, y: ry };
+          const dxGrid = x - primaryInitial.x;
+          const dyGrid = y - primaryInitial.y;
+          movingRootIds.forEach((id) => {
+            const p0 = initialPosById.get(id);
+            const b = boundsById.get(id);
+            if (!p0 || !b) return;
+            const nx = Math.max(0, Math.min(b.maxX, p0.x + dxGrid));
+            const ny = Math.max(0, Math.min(b.maxY, p0.y + dyGrid));
+            state = updateEntityPosition(state, id, nx, ny);
+            setEntityDomPosition(id, nx, ny);
+          });
           scheduleWireOverlayRender();
         };
         const onUp = (): void => {
@@ -1411,8 +1484,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
       lastX = x;
       lastY = y;
-      state = updateEntityPosition(state, rootEnt.id, x, y);
-      setEntityDomPosition(rootEnt.id, x, y);
+      const primaryInitial = initialPosById.get(rootEnt.id) ?? { x: rootEnt.x, y: rootEnt.y };
+      const dxGrid = x - primaryInitial.x;
+      const dyGrid = y - primaryInitial.y;
+      movingRootIds.forEach((id) => {
+        const p0 = initialPosById.get(id);
+        const b = boundsById.get(id);
+        if (!p0 || !b) return;
+        const nx = Math.max(0, Math.min(b.maxX, p0.x + dxGrid));
+        const ny = Math.max(0, Math.min(b.maxY, p0.y + dyGrid));
+        state = updateEntityPosition(state, id, nx, ny);
+        setEntityDomPosition(id, nx, ny);
+      });
       scheduleWireOverlayRender();
     };
     const onUp = (): void => {
@@ -1464,7 +1547,21 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           .find((port): port is HTMLButtonElement => port !== null) ?? null;
       linkDrag = null;
       renderWireOverlay();
-      if (!toPort) return;
+      if (!toPort) {
+        const fromInst = parseBuilderInstanceId(from.instanceId);
+        if (!fromInst || fromInst.rootId !== from.rootId) return;
+        const next = removeLinksTouchingInstancePort(state, fromInst.rootId, fromInst.segmentIndex, from.port);
+        if (next !== state) {
+          state = next;
+          persist();
+          if (selection?.kind === "link" && !state.links.some((l) => l.id === selection.rootId)) {
+            selection = null;
+            renderInspector();
+          }
+          renderCanvas();
+        }
+        return;
+      }
       const toRootId = toPort.dataset.rootId;
       const toP = Number(toPort.dataset.port);
       const toInstanceRaw = toPort.dataset.instanceId ?? "";
@@ -2039,12 +2136,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   deleteBtn.addEventListener("click", () => {
     if (!selection) return;
-    if (selection.kind === "entity") {
-      const ent = state.entities.find((e) => e.id === selection.rootId);
-      if (ent && isStaticOuterLeafEndpoint(ent)) {
-        return;
-      }
-      state = removeEntityGroup(state, selection.rootId);
+    if (selection.kind === "entity" || selectedEntityRootIds.size) {
+      const ids = selectedEntityRootIds.size
+        ? Array.from(selectedEntityRootIds)
+        : selection.kind === "entity"
+          ? [selection.rootId]
+          : [];
+      ids.forEach((id) => {
+        const ent = state.entities.find((e) => e.id === id);
+        if (ent && !isStaticOuterLeafEndpoint(ent)) {
+          state = removeEntityGroup(state, id);
+        }
+      });
     } else {
       state = removeLinkGroup(state, selection.rootId);
     }
@@ -2188,6 +2291,68 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       setSelection({ kind: "entity", rootId });
     }
     startEntityDragFromElement(entityEl, ev);
+  });
+
+  canvasEl.addEventListener("mousedown", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    if (!target) return;
+    if (ev.button !== 0) return;
+    if (target.closest("button")) return;
+    if (target.closest(".builder-entity")) return;
+    if (!canvasWrapEl) return;
+    const wrapRect = canvasWrapEl.getBoundingClientRect();
+    const startX = ev.clientX - wrapRect.left + canvasWrapEl.scrollLeft;
+    const startY = ev.clientY - wrapRect.top + canvasWrapEl.scrollTop;
+    boxSelection = { startX, startY, currentX: startX, currentY: startY };
+    boxEl.style.display = "block";
+    const updateBox = (): void => {
+      if (!boxSelection) return;
+      const left = Math.min(boxSelection.startX, boxSelection.currentX);
+      const top = Math.min(boxSelection.startY, boxSelection.currentY);
+      const width = Math.abs(boxSelection.currentX - boxSelection.startX);
+      const height = Math.abs(boxSelection.currentY - boxSelection.startY);
+      boxEl.style.left = `${left}px`;
+      boxEl.style.top = `${top}px`;
+      boxEl.style.width = `${width}px`;
+      boxEl.style.height = `${height}px`;
+    };
+    updateBox();
+    const onMove = (mv: MouseEvent): void => {
+      if (!boxSelection) return;
+      boxSelection.currentX = mv.clientX - wrapRect.left + canvasWrapEl.scrollLeft;
+      boxSelection.currentY = mv.clientY - wrapRect.top + canvasWrapEl.scrollTop;
+      updateBox();
+    };
+    const onUp = (): void => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (!boxSelection) return;
+      const l = Math.min(boxSelection.startX, boxSelection.currentX);
+      const t = Math.min(boxSelection.startY, boxSelection.currentY);
+      const r = Math.max(boxSelection.startX, boxSelection.currentX);
+      const b = Math.max(boxSelection.startY, boxSelection.currentY);
+      const ids = new Set<string>();
+      canvasEl.querySelectorAll<HTMLElement>(".builder-entity[data-root-id]").forEach((el) => {
+        const id = el.dataset.rootId;
+        if (!id) return;
+        const ent = state.entities.find((e) => e.id === id);
+        if (!ent || isStaticOuterLeafEndpoint(ent)) return;
+        const rect = el.getBoundingClientRect();
+        const ex1 = rect.left - wrapRect.left + canvasWrapEl.scrollLeft;
+        const ey1 = rect.top - wrapRect.top + canvasWrapEl.scrollTop;
+        const ex2 = ex1 + rect.width;
+        const ey2 = ey1 + rect.height;
+        const hit = ex1 <= r && ex2 >= l && ey1 <= b && ey2 >= t;
+        if (hit) ids.add(id);
+      });
+      setEntitySelectionSet(ids);
+      boxSelection = null;
+      boxEl.style.display = "none";
+      boxEl.style.width = "0px";
+      boxEl.style.height = "0px";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   });
 
   canvasEl.addEventListener("mousemove", (ev) => {

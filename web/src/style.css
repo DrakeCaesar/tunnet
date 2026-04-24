@@ -476,6 +476,8 @@ textarea {
   z-index: 0;
   height: 100%;
   min-width: max-content;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .builder-canvas-wrap {
@@ -484,6 +486,17 @@ textarea {
   min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.builder-box-selection {
+  position: absolute;
+  z-index: 4;
+  display: none;
+  border: 1px solid rgba(137, 180, 250, 0.85);
+  background: rgba(137, 180, 250, 0.16);
+  pointer-events: none;
 }
 
 .builder-wire-overlay {
