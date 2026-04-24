@@ -843,6 +843,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const a1 = Math.atan2(mv.clientY - py, mv.clientX - px);
         let newDeg = base + ((a1 - a0) * 180) / Math.PI;
         newDeg = ((newDeg % 360) + 360) % 360;
+        const SNAP_DEG = 30;
+        newDeg = Math.round(newDeg / SNAP_DEG) * SNAP_DEG;
+        newDeg = ((newDeg % 360) + 360) % 360;
         const cur = state.entities.find((e) => e.id === rootEnt.id);
         if (!cur) return;
         state = updateEntitySettings(state, cur.id, { ...cur.settings, faceAngle: String(newDeg) });
