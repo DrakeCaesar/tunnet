@@ -619,7 +619,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const middleBasePx = Math.max(320, wrap.clientWidth);
       const usableHeight = Math.max(120, wrap.clientHeight - 2 * BUILDER_LAYER_GAP_PX);
       const layerBasePx = Math.max(120, usableHeight / 3);
+      const middleColWidthPx = (middleBasePx + BUILDER_LAYER_GAP_PX) * canvasScale.x - BUILDER_LAYER_GAP_PX;
       root.style.setProperty("--builder-middle-col-base-px", `${middleBasePx.toFixed(2)}px`);
+      root.style.setProperty("--builder-middle-col-width-px", `${middleColWidthPx.toFixed(2)}px`);
       root.style.setProperty("--builder-layer-base-height-px", `${layerBasePx.toFixed(2)}px`);
     }
     root.style.setProperty("--builder-scale-x", canvasScale.x.toFixed(3));

@@ -537,8 +537,7 @@ textarea {
     64,
     minmax(
       calc(
-        ((var(--builder-middle-col-base-px, 1280px) - (3 * var(--builder-layer-gap))) / 4)
-          * var(--builder-scale-x, 1)
+        (var(--builder-middle-col-width-px, var(--builder-middle-col-base-px, 1280px)) - (3 * var(--builder-layer-gap))) / 4
       ),
       1fr
     )
@@ -546,11 +545,17 @@ textarea {
 }
 
 .builder-layer-middle16 {
-  grid-template-columns: repeat(16, minmax(calc(var(--builder-middle-col-base-px, 1280px) * var(--builder-scale-x, 1)), 1fr));
+  grid-template-columns: repeat(16, minmax(var(--builder-middle-col-width-px, var(--builder-middle-col-base-px, 1280px)), 1fr));
 }
 
 .builder-layer-inner4 {
-  grid-template-columns: repeat(4, minmax(calc((var(--builder-middle-col-base-px, 1280px) * 4) * var(--builder-scale-x, 1)), 1fr));
+  grid-template-columns: repeat(
+    4,
+    minmax(
+      calc((var(--builder-middle-col-width-px, var(--builder-middle-col-base-px, 1280px)) * 4) + (3 * var(--builder-layer-gap))),
+      1fr
+    )
+  );
 }
 
 .builder-segment {
