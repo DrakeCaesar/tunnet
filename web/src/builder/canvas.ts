@@ -281,6 +281,20 @@ interface LinkSourceSelection {
   instanceId: string;
 }
 
+type BuilderPerfKey =
+  | "canvas.total"
+  | "canvas.expand"
+  | "canvas.bucketSort"
+  | "canvas.htmlBuild"
+  | "canvas.domCommit"
+  | "canvas.portCache"
+  | "wire.total"
+  | "wire.expandLinks"
+  | "wire.portResolve"
+  | "wire.lineBuild";
+
+type BuilderPerfStat = { lastMs: number; emaMs: number; maxMs: number; samples: number };
+
 function templateList(): BuilderTemplateType[] {
   return ["relay", "hub", "filter"];
 }
@@ -350,6 +364,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           <button id="builder-import" type="button">Import Text</button>
           <button id="builder-preview" type="button">Preview In Viewer</button>
         </div>
+        <div class="section-title builder-spacer">Performance</div>
+        <pre id="builder-perf" class="builder-perf">Collecting samples...</pre>
       </aside>
       <main class="builder-main card">
         <div class="section-title">Canvas (64 -> 16 -> 4)</div>
@@ -369,11 +385,85 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const canvasEl = root.querySelector<HTMLDivElement>("#builder-canvas")!;
   const wireOverlayEl = root.querySelector<SVGSVGElement>("#builder-wire-overlay")!;
   const inspectorEl = root.querySelector<HTMLDivElement>("#builder-inspector")!;
+  const perfEl = root.querySelector<HTMLPreElement>("#builder-perf")!;
   const deleteBtn = root.querySelector<HTMLButtonElement>("#builder-delete")!;
   const deleteAllBtn = root.querySelector<HTMLButtonElement>("#builder-delete-all")!;
   const exportBtn = root.querySelector<HTMLButtonElement>("#builder-export")!;
   const importBtn = root.querySelector<HTMLButtonElement>("#builder-import")!;
   const previewBtn = root.querySelector<HTMLButtonElement>("#builder-preview")!;
+  const perfStats = new Map<BuilderPerfKey, BuilderPerfStat>();
+  const PERF_EMA_ALPHA = 0.18;
+  let perfCounts = { expandedEntities: 0, stateLinks: 0, expandedLinks: 0 };
+
+  function recordPerf(key: BuilderPerfKey, ms: number): void {
+    const prev = perfStats.get(key);
+    if (!prev) {
+      perfStats.set(key, { lastMs: ms, emaMs: ms, maxMs: ms, samples: 1 });
+      return;
+    }
+    prev.lastMs = ms;
+    prev.emaMs = PERF_EMA_ALPHA * ms + (1 - PERF_EMA_ALPHA) * prev.emaMs;
+    prev.maxMs = Math.max(prev.maxMs, ms);
+    prev.samples += 1;
+  }
+
+  function fmtPerf(ms: number): string {
+    return `${ms.toFixed(2).padStart(6)}ms`;
+  }
+
+  function renderPerfPanel(): void {
+    const get = (key: BuilderPerfKey): BuilderPerfStat =>
+      perfStats.get(key) ?? { lastMs: 0, emaMs: 0, maxMs: 0, samples: 0 };
+    const ordered: BuilderPerfKey[] = [
+      "canvas.total",
+      "canvas.expand",
+      "canvas.bucketSort",
+      "canvas.htmlBuild",
+      "canvas.domCommit",
+      "canvas.portCache",
+      "wire.total",
+      "wire.expandLinks",
+      "wire.portResolve",
+      "wire.lineBuild",
+    ];
+    const totalCanvas = Math.max(0.0001, get("canvas.total").lastMs);
+    const totalWire = Math.max(0.0001, get("wire.total").lastMs);
+    const topCanvas = ([
+      "canvas.expand",
+      "canvas.bucketSort",
+      "canvas.htmlBuild",
+      "canvas.domCommit",
+      "canvas.portCache",
+    ] as BuilderPerfKey[])
+      .map((k) => ({ k, v: get(k).lastMs }))
+      .sort((a, b) => b.v - a.v)
+      .slice(0, 3);
+    const topWire = ([
+      "wire.expandLinks",
+      "wire.portResolve",
+      "wire.lineBuild",
+    ] as BuilderPerfKey[])
+      .map((k) => ({ k, v: get(k).lastMs }))
+      .sort((a, b) => b.v - a.v)
+      .slice(0, 3);
+    const lines = [
+      `entities=${perfCounts.expandedEntities}  stateLinks=${perfCounts.stateLinks}  expandedLinks=${perfCounts.expandedLinks}`,
+      "",
+      "Metric                      last      ema      max   n",
+      ...ordered.map((k) => {
+        const s = get(k);
+        const label = k.padEnd(24, " ");
+        return `${label}${fmtPerf(s.lastMs)} ${fmtPerf(s.emaMs)} ${fmtPerf(s.maxMs)} ${String(s.samples).padStart(4)}`;
+      }),
+      "",
+      `Top canvas contributors (last=${totalCanvas.toFixed(2)}ms):`,
+      ...topCanvas.map((x) => `  ${x.k.padEnd(22, " ")} ${(x.v / totalCanvas * 100).toFixed(1).padStart(5)}% (${x.v.toFixed(2)}ms)`),
+      "",
+      `Top wire contributors (last=${totalWire.toFixed(2)}ms):`,
+      ...topWire.map((x) => `  ${x.k.padEnd(22, " ")} ${(x.v / totalWire * 100).toFixed(1).padStart(5)}% (${x.v.toFixed(2)}ms)`),
+    ];
+    perfEl.textContent = lines.join("\n");
+  }
 
   function persist(): void {
     saveBuilderState(state);
@@ -488,18 +578,28 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function renderWireOverlay(): void {
+    const t0 = performance.now();
     const wrap = wireOverlayEl.parentElement;
     if (!wrap) return;
+    const tExpand0 = performance.now();
     const viewLinks = expandLinks(state.links, state.entities);
+    const tExpand1 = performance.now();
+    recordPerf("wire.expandLinks", tExpand1 - tExpand0);
+    perfCounts.stateLinks = state.links.length;
+    perfCounts.expandedLinks = viewLinks.length;
     const wrapRect = wrap.getBoundingClientRect();
     const overlayWidth = Math.max(wrap.clientWidth, wrap.scrollWidth);
     wireOverlayEl.setAttribute("width", String(Math.ceil(overlayWidth)));
     wireOverlayEl.setAttribute("height", String(Math.ceil(wrapRect.height)));
     wireOverlayEl.style.width = `${Math.ceil(overlayWidth)}px`;
     wireOverlayEl.innerHTML = "";
+    let resolveCost = 0;
+    const tLine0 = performance.now();
     for (const link of viewLinks) {
+      const tr0 = performance.now();
       const from = resolveBuilderPortForWireOverlay(String(link.fromInstanceId), link.fromPort);
       const to = resolveBuilderPortForWireOverlay(String(link.toInstanceId), link.toPort);
+      resolveCost += performance.now() - tr0;
       if (!from || !to) continue;
       const fromRect = from.getBoundingClientRect();
       const toRect = to.getBoundingClientRect();
@@ -517,6 +617,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       line.setAttribute("stroke-width", "1.5");
       wireOverlayEl.appendChild(line);
     }
+    recordPerf("wire.portResolve", resolveCost);
+    recordPerf("wire.lineBuild", performance.now() - tLine0);
     if (linkDrag) {
       const fromPort =
         resolveBuilderPortForWireOverlay(String(linkDrag.from.instanceId), linkDrag.from.port) ??
@@ -541,6 +643,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         wireOverlayEl.appendChild(line);
       }
     }
+    recordPerf("wire.total", performance.now() - t0);
+    renderPerfPanel();
   }
 
   function scheduleWireOverlayRender(): void {
@@ -849,8 +953,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   };
 
   function renderCanvas(): void {
+    const t0 = performance.now();
+    const tExpand0 = performance.now();
     const expanded = expandBuilderState(state, { builderView: true });
+    const tExpand1 = performance.now();
+    recordPerf("canvas.expand", tExpand1 - tExpand0);
+    perfCounts.expandedEntities = expanded.entities.length;
     const previewKeys = previewInstances();
+    const tBucket0 = performance.now();
     const entitiesByLayerSegment = new Map<string, typeof expanded.entities>();
     expanded.entities.forEach((entity) => {
       const key =
@@ -870,7 +980,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         return aS - bS;
       });
     });
+    recordPerf("canvas.bucketSort", performance.now() - tBucket0);
 
+    const tHtml0 = performance.now();
     canvasEl.innerHTML = orderedLayersTopDown()
       .map((layer) => {
         const columns = layer === "outer64" ? outerLayerBuilderColumnSlots() : layerColumns(layer);
@@ -1097,7 +1209,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         `;
       })
       .join("");
+    const tHtml1 = performance.now();
+    recordPerf("canvas.htmlBuild", tHtml1 - tHtml0);
+    const tCache0 = performance.now();
     rebuildPortElementCache();
+    const tCache1 = performance.now();
+    recordPerf("canvas.portCache", tCache1 - tCache0);
+    recordPerf("canvas.domCommit", tCache1 - tHtml0);
+    recordPerf("canvas.total", performance.now() - t0);
+    renderPerfPanel();
 
     const setHoverFromEvent = (ev: DragEvent): void => {
       const target = ev.target as HTMLElement | null;

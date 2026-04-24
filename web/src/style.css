@@ -305,7 +305,7 @@ textarea {
 .builder-layout {
   height: 100%;
   display: grid;
-  grid-template-columns: 220px 1fr 280px;
+  grid-template-columns: 320px 1fr 280px;
   gap: 10px;
 }
 
@@ -336,6 +336,27 @@ textarea {
   border-radius: 6px;
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.builder-perf {
+  margin: 0;
+  white-space: pre;
+  overflow: auto;
+  font-size: 10px;
+  line-height: 1.25;
+  color: #b9c2d6;
+  background: #0f131b;
+  border: 1px solid #2a3242;
+  border-radius: 6px;
+  padding: 8px;
+  font-family:
+    "FiraCode Nerd Font",
+    "Fira Code Nerd Font",
+    "Fira Code",
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
 }
 
 .builder-template {
