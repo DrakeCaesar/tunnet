@@ -35,6 +35,7 @@ import {
 import { compileBuilderToViewerPayload } from "./compile";
 
 const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
+const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -282,6 +283,8 @@ interface BuilderMountOptions {
   onPreviewReady?: () => void;
 }
 
+type CanvasScale = { x: number; y: number };
+
 type EntitySelection = { kind: "entity"; rootId: string };
 type LinkSelection = { kind: "link"; rootId: string };
 type Selection = EntitySelection | LinkSelection | null;
@@ -488,6 +491,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let wireDragRaf: number | null = null;
   let wireOverlayRaf: number | null = null;
   let portElByInstancePort = new Map<string, HTMLButtonElement>();
+  const clampCanvasScale = (v: number): number => Math.max(0.5, Math.min(2, v));
+  const loadCanvasScale = (): CanvasScale => {
+    try {
+      const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
+      if (!rawScale) return { x: 1, y: 1 };
+      const parsed = JSON.parse(rawScale) as Partial<CanvasScale>;
+      const x = clampCanvasScale(Number(parsed.x));
+      const y = clampCanvasScale(Number(parsed.y));
+      return {
+        x: Number.isFinite(x) ? x : 1,
+        y: Number.isFinite(y) ? y : 1,
+      };
+    } catch {
+      return { x: 1, y: 1 };
+    }
+  };
+  let canvasScale = loadCanvasScale();
 
   root.innerHTML = `
     <div class="builder-layout">
@@ -504,11 +524,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         </div>
         <div class="section-title builder-spacer">Performance</div>
         <pre id="builder-perf" class="builder-perf">Collecting samples...</pre>
+        <div class="section-title builder-spacer">Canvas Scale</div>
+        <div class="builder-scale-controls">
+          <label class="builder-scale-row" for="builder-scale-x">
+            <span>Horizontal</span>
+            <input id="builder-scale-x" type="range" min="0.5" max="2" step="0.05" value="${canvasScale.x.toFixed(2)}" />
+            <span id="builder-scale-x-value">${canvasScale.x.toFixed(2)}x</span>
+          </label>
+          <label class="builder-scale-row" for="builder-scale-y">
+            <span>Vertical</span>
+            <input id="builder-scale-y" type="range" min="0.5" max="2" step="0.05" value="${canvasScale.y.toFixed(2)}" />
+            <span id="builder-scale-y-value">${canvasScale.y.toFixed(2)}x</span>
+          </label>
+        </div>
         <div class="section-title builder-spacer">Inspector</div>
         <div id="builder-inspector">No selection.</div>
       </aside>
       <main class="builder-main card">
-        <div class="section-title">Canvas (64 -> 16 -> 4)</div>
         <div class="builder-canvas-wrap">
           <svg id="builder-wire-overlay" class="builder-wire-overlay"></svg>
           <div id="builder-canvas" class="builder-canvas"></div>
@@ -522,6 +554,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const wireOverlayEl = root.querySelector<SVGSVGElement>("#builder-wire-overlay")!;
   const inspectorEl = root.querySelector<HTMLDivElement>("#builder-inspector")!;
   const perfEl = root.querySelector<HTMLPreElement>("#builder-perf")!;
+  const scaleXEl = root.querySelector<HTMLInputElement>("#builder-scale-x")!;
+  const scaleYEl = root.querySelector<HTMLInputElement>("#builder-scale-y")!;
+  const scaleXValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-x-value")!;
+  const scaleYValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-value")!;
   const deleteBtn = root.querySelector<HTMLButtonElement>("#builder-delete")!;
   const deleteAllBtn = root.querySelector<HTMLButtonElement>("#builder-delete-all")!;
   const exportBtn = root.querySelector<HTMLButtonElement>("#builder-export")!;
@@ -530,6 +566,25 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const perfStats = new Map<BuilderPerfKey, BuilderPerfStat>();
   const PERF_EMA_ALPHA = 0.18;
   let perfCounts = { expandedEntities: 0, stateLinks: 0, expandedLinks: 0 };
+
+  function persistCanvasScale(): void {
+    window.localStorage.setItem(BUILDER_CANVAS_SCALE_KEY, JSON.stringify(canvasScale));
+  }
+
+  function applyCanvasScale(): void {
+    const wrap = wireOverlayEl.parentElement;
+    if (wrap) {
+      const middleBasePx = Math.max(320, wrap.clientWidth);
+      const layerBasePx = Math.max(120, wrap.clientHeight / 3);
+      root.style.setProperty("--builder-middle-col-base-px", `${middleBasePx.toFixed(2)}px`);
+      root.style.setProperty("--builder-layer-base-height-px", `${layerBasePx.toFixed(2)}px`);
+    }
+    root.style.setProperty("--builder-scale-x", canvasScale.x.toFixed(3));
+    root.style.setProperty("--builder-scale-y", canvasScale.y.toFixed(3));
+    scaleXValueEl.textContent = `${canvasScale.x.toFixed(2)}x`;
+    scaleYValueEl.textContent = `${canvasScale.y.toFixed(2)}x`;
+    scheduleWireOverlayRender();
+  }
 
   function recordPerf(key: BuilderPerfKey, ms: number): void {
     const prev = perfStats.get(key);
@@ -1771,6 +1826,26 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     wrap.addEventListener("scroll", scheduleWireOverlayRender, { passive: true });
   }
   window.addEventListener("resize", scheduleWireOverlayRender);
+  window.addEventListener("resize", applyCanvasScale);
+
+  scaleXEl.addEventListener("input", () => {
+    const parsed = Number(scaleXEl.value);
+    canvasScale.x = clampCanvasScale(Number.isFinite(parsed) ? parsed : 1);
+    applyCanvasScale();
+  });
+  scaleXEl.addEventListener("change", () => {
+    persistCanvasScale();
+  });
+  scaleYEl.addEventListener("input", () => {
+    const parsed = Number(scaleYEl.value);
+    canvasScale.y = clampCanvasScale(Number.isFinite(parsed) ? parsed : 1);
+    applyCanvasScale();
+  });
+  scaleYEl.addEventListener("change", () => {
+    persistCanvasScale();
+  });
+
+  applyCanvasScale();
 
   renderTemplates();
   renderInspector();

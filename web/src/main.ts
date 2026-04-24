@@ -520,6 +520,8 @@ function formatSpeedLabel(exp: number): string {
 }
 
 function mountLayout(): {
+  appRootEl: HTMLDivElement;
+  appTabsEl: HTMLDivElement;
   tabViewerEl: HTMLButtonElement;
   tabBuilderEl: HTMLButtonElement;
   viewerViewEl: HTMLDivElement;
@@ -545,6 +547,7 @@ function mountLayout(): {
     throw new Error("Missing #app root");
   }
   app.innerHTML = `
+    <div class="app-root">
     <div class="app-tabs">
       <button id="tab-viewer" type="button" class="app-tab active">Viewer</button>
       <button id="tab-builder" type="button" class="app-tab">Builder</button>
@@ -623,9 +626,12 @@ function mountLayout(): {
       </div>
     </div>
     <div id="builder-view" class="builder-view hidden"></div>
+    </div>
   `;
 
   return {
+    appRootEl: app.querySelector<HTMLDivElement>(".app-root")!,
+    appTabsEl: app.querySelector<HTMLDivElement>(".app-tabs")!,
     tabViewerEl: app.querySelector<HTMLButtonElement>("#tab-viewer")!,
     tabBuilderEl: app.querySelector<HTMLButtonElement>("#tab-builder")!,
     viewerViewEl: app.querySelector<HTMLDivElement>("#viewer-view")!,
@@ -679,6 +685,8 @@ function formatFilterSpecLabel(node: ViewerNode): string {
 
 function render(payload: ViewerPayload, boundaryOrder: number, initialTab: "viewer" | "builder"): void {
   const {
+    appRootEl,
+    appTabsEl,
     tabViewerEl,
     tabBuilderEl,
     viewerViewEl,
@@ -723,6 +731,14 @@ function render(payload: ViewerPayload, boundaryOrder: number, initialTab: "view
         },
       });
       builderMounted = true;
+    }
+    if (!viewerActive) {
+      const sidebarEl = builderViewEl.querySelector<HTMLElement>(".builder-sidebar");
+      if (sidebarEl && appTabsEl.parentElement !== sidebarEl) {
+        sidebarEl.insertBefore(appTabsEl, sidebarEl.firstChild);
+      }
+    } else if (appTabsEl.parentElement !== appRootEl) {
+      appRootEl.insertBefore(appTabsEl, appRootEl.firstChild);
     }
     const url = new URL(window.location.href);
     url.searchParams.set("tab", tab);

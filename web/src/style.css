@@ -15,6 +15,7 @@
   --scrollbar-track: transparent;
   --scrollbar-thumb: #3a445a;
   --scrollbar-thumb-hover: #4a5670;
+  --builder-sidebar-width: 320px;
 }
 
 body {
@@ -59,8 +60,12 @@ body {
   display: none !important;
 }
 
-.app-tabs {
-  position: fixed;
+.app-root {
+  position: relative;
+}
+
+.app-root > .app-tabs {
+  position: absolute;
   top: 10px;
   right: 10px;
   z-index: 40;
@@ -73,13 +78,24 @@ body {
   backdrop-filter: none;
 }
 
+.builder-sidebar > .app-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  height: 14px;
+  margin-bottom: -14px;
+  overflow: visible;
+}
+
 .app-tab {
   background: #1d2230;
   border: 1px solid var(--panel-border);
   color: var(--text-main);
   border-radius: 8px;
-  padding: 5px;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .app-tab.active {
@@ -346,7 +362,7 @@ textarea {
 .builder-layout {
   height: 100%;
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: var(--builder-sidebar-width) 1fr;
   gap: 10px;
 }
 
@@ -384,6 +400,26 @@ textarea {
   border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.builder-scale-controls {
+  display: grid;
+  gap: 6px;
+}
+
+.builder-scale-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 44px;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: #b6beca;
+}
+
+.builder-scale-row input[type="range"] {
+  min-width: 0;
+  height: 6px;
+  accent-color: #89b4fa;
 }
 
 .builder-perf {
@@ -444,7 +480,7 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
 }
 
 .builder-wire-overlay {
@@ -468,8 +504,8 @@ textarea {
   border: 1px solid #2a3242;
   border-radius: 0;
   padding: 4px;
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 0 0 auto;
+  height: calc(var(--builder-layer-base-height-px, 220px) * var(--builder-scale-y, 1));
 }
 
 .builder-layer + .builder-layer {
@@ -489,15 +525,18 @@ textarea {
 }
 
 .builder-layer-outer64 {
-  grid-template-columns: repeat(64, minmax(320px, 1fr));
+  grid-template-columns: repeat(
+    64,
+    minmax(calc((var(--builder-middle-col-base-px, 1280px) / 4) * var(--builder-scale-x, 1)), 1fr)
+  );
 }
 
 .builder-layer-middle16 {
-  grid-template-columns: repeat(16, minmax(1280px, 1fr));
+  grid-template-columns: repeat(16, minmax(calc(var(--builder-middle-col-base-px, 1280px) * var(--builder-scale-x, 1)), 1fr));
 }
 
 .builder-layer-inner4 {
-  grid-template-columns: repeat(4, minmax(5120px, 1fr));
+  grid-template-columns: repeat(4, minmax(calc((var(--builder-middle-col-base-px, 1280px) * 4) * var(--builder-scale-x, 1)), 1fr));
 }
 
 .builder-segment {
