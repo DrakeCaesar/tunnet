@@ -283,6 +283,97 @@ function sameDirectedEndpoints(
   );
 }
 
+function instancePortKey(entityId: string, segmentIndex: number, port: number): string {
+  return `${entityId}@${segmentIndex}#${port}`;
+}
+
+function buildInstancePortSetForLink(
+  link: BuilderLinkRoot,
+  byId: Map<string, BuilderEntityRoot>,
+): Set<string> | null {
+  const from = byId.get(link.fromEntityId);
+  const to = byId.get(link.toEntityId);
+  if (!from || !to) {
+    return null;
+  }
+  const fromCount = LAYER_COUNTS[from.layer];
+  const toCount = LAYER_COUNTS[to.layer];
+  const out = new Set<string>();
+
+  // Same-root template: mirrors with toSeg = fromSeg + (pTo - pFrom).
+  if (link.fromEntityId === link.toEntityId && link.fromSegmentIndex !== undefined && link.toSegmentIndex !== undefined) {
+    const d = link.toSegmentIndex - link.fromSegmentIndex;
+    for (let s = 0; s < fromCount; s += 1) {
+      const t = s + d;
+      if (t < 0 || t >= toCount) continue;
+      out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
+      out.add(instancePortKey(link.toEntityId, t, link.toPort));
+    }
+    return out;
+  }
+
+  // Same-layer two roots: mirrors with toSeg = fromSeg + delta.
+  if (fromCount === toCount) {
+    const d = link.sameLayerSegmentDelta ?? 0;
+    for (let s = 0; s < fromCount; s += 1) {
+      const t = s + d;
+      if (t < 0 || t >= toCount) continue;
+      out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
+      out.add(instancePortKey(link.toEntityId, t, link.toPort));
+    }
+    return out;
+  }
+
+  // Cross-layer with explicit lane (slot): one fine per coarse segment.
+  const slot = link.crossLayerBlockSlot;
+  if (slot !== undefined) {
+    if (toCount > fromCount) {
+      const r = toCount / fromCount;
+      if (!Number.isInteger(r) || slot < 0 || slot >= r) return null;
+      for (let s = 0; s < fromCount; s += 1) {
+        const t = s * r + slot;
+        if (t < 0 || t >= toCount) continue;
+        out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
+        out.add(instancePortKey(link.toEntityId, t, link.toPort));
+      }
+      return out;
+    }
+    const r = fromCount / toCount;
+    if (!Number.isInteger(r) || slot < 0 || slot >= r) return null;
+    for (let t = 0; t < toCount; t += 1) {
+      const s = t * r + slot;
+      if (s < 0 || s >= fromCount) continue;
+      out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
+      out.add(instancePortKey(link.toEntityId, t, link.toPort));
+    }
+    return out;
+  }
+
+  // Legacy cross-layer behavior: all aligned base columns (occupies all segments on both sides).
+  for (let s = 0; s < fromCount; s += 1) {
+    out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
+  }
+  for (let t = 0; t < toCount; t += 1) {
+    out.add(instancePortKey(link.toEntityId, t, link.toPort));
+  }
+  return out;
+}
+
+function overlapsAnyInstancePort(
+  a: BuilderLinkRoot,
+  b: BuilderLinkRoot,
+  byId: Map<string, BuilderEntityRoot>,
+): boolean {
+  const aSet = buildInstancePortSetForLink(a, byId);
+  const bSet = buildInstancePortSetForLink(b, byId);
+  if (!aSet || !bSet) return false;
+  let hit = false;
+  aSet.forEach((key) => {
+    if (!hit && bSet.has(key)) hit = true;
+  });
+  return hit;
+}
+
 export type AddLinkRootOpts = {
   /** Same root: template segments; mirrors all clones with same port pair and segment offset. */
   sameEntityPin?: { fromSegmentIndex: number; toSegmentIndex: number };
@@ -304,6 +395,7 @@ export function addLinkRootOneWirePerPort(
   toPort: number,
   opts?: AddLinkRootOpts,
 ): { state: BuilderState; link: BuilderLinkRoot | null } {
+  const byId = new Map(state.entities.map((e) => [e.id, e]));
   const pin = opts?.sameEntityPin;
   const delta = opts?.sameLayerSegmentDelta;
   if (pin) {
@@ -314,10 +406,17 @@ export function addLinkRootOneWirePerPort(
       return { state, link: null };
     }
     const { fromSegmentIndex, toSegmentIndex } = pin;
-    const without = state.links.filter(
-      (l) =>
-        !linkTouchesPort(l, fromEntityId, fromPort) && !linkTouchesPort(l, toEntityId, toPort),
-    );
+    const candidate: BuilderLinkRoot = {
+      id: "__candidate__",
+      groupId: "__candidate__",
+      fromEntityId,
+      fromPort,
+      toEntityId,
+      toPort,
+      fromSegmentIndex,
+      toSegmentIndex,
+    };
+    const without = state.links.filter((l) => !overlapsAnyInstancePort(l, candidate, byId));
     const next: BuilderState = { ...state, links: without };
     const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort, {
       fromSegmentIndex,
@@ -334,13 +433,16 @@ export function addLinkRootOneWirePerPort(
     if (!fromEnt || !toEnt || fromEnt.layer !== toEnt.layer) {
       return { state, link: null };
     }
-    const without = state.links.filter(
-      (l) =>
-        !(
-          sameDirectedEndpoints(l, fromEntityId, fromPort, toEntityId, toPort) &&
-          (l.sameLayerSegmentDelta ?? 0) === delta
-        ),
-    );
+    const candidate: BuilderLinkRoot = {
+      id: "__candidate__",
+      groupId: "__candidate__",
+      fromEntityId,
+      fromPort,
+      toEntityId,
+      toPort,
+      sameLayerSegmentDelta: delta,
+    };
+    const without = state.links.filter((l) => !overlapsAnyInstancePort(l, candidate, byId));
     const next: BuilderState = { ...state, links: without };
     const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort, {
       sameLayerSegmentDelta: delta,
@@ -351,19 +453,16 @@ export function addLinkRootOneWirePerPort(
     return { state, link: null };
   }
   const slot = opts?.crossLayerBlockSlot;
-  const without =
-    slot !== undefined
-      ? state.links.filter(
-          (l) =>
-            !(
-              sameDirectedEndpoints(l, fromEntityId, fromPort, toEntityId, toPort) &&
-              l.crossLayerBlockSlot === slot
-            ),
-        )
-      : state.links.filter(
-          (l) =>
-            !linkTouchesPort(l, fromEntityId, fromPort) && !linkTouchesPort(l, toEntityId, toPort),
-        );
+  const candidate: BuilderLinkRoot = {
+    id: "__candidate__",
+    groupId: "__candidate__",
+    fromEntityId,
+    fromPort,
+    toEntityId,
+    toPort,
+    crossLayerBlockSlot: slot,
+  };
+  const without = state.links.filter((l) => !overlapsAnyInstancePort(l, candidate, byId));
   const next: BuilderState = { ...state, links: without };
   const link = createLinkRoot(
     next,
