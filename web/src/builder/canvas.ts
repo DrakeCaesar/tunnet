@@ -533,7 +533,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let boxSelection: BoxSelectionState = null;
   let suppressNextEntityClickToggle = false;
   const clampCanvasScaleX = (v: number): number => Math.max(0.25, Math.min(4, v));
-  const clampCanvasScaleY = (v: number): number => Math.max(1, Math.min(3, v));
+  const clampCanvasScaleY = (v: number): number => Math.max(0.25, Math.min(3, v));
   const loadCanvasScale = (): CanvasScale => {
     try {
       const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
@@ -593,17 +593,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           </label>
           <label class="builder-scale-row" for="builder-scale-y-outer64">
             <span>Vertical Outer</span>
-            <input id="builder-scale-y-outer64" type="range" min="1" max="3" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
+            <input id="builder-scale-y-outer64" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
             <span id="builder-scale-y-outer64-value">${canvasScale.yByLayer.outer64.toFixed(2)}x</span>
           </label>
           <label class="builder-scale-row" for="builder-scale-y-middle16">
             <span>Vertical Middle</span>
-            <input id="builder-scale-y-middle16" type="range" min="1" max="3" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
+            <input id="builder-scale-y-middle16" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
             <span id="builder-scale-y-middle16-value">${canvasScale.yByLayer.middle16.toFixed(2)}x</span>
           </label>
           <label class="builder-scale-row" for="builder-scale-y-inner4">
             <span>Vertical Inner</span>
-            <input id="builder-scale-y-inner4" type="range" min="1" max="3" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
+            <input id="builder-scale-y-inner4" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
             <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
           </label>
         </div>
