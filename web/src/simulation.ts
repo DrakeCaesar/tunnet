@@ -93,6 +93,32 @@ function makePortKey(ref: PortRef): string {
   return `${ref.deviceId}:${ref.port}`;
 }
 
+/** Adjacency: each port key → the port on the other end of the link. */
+export function buildPortAdjacency(topology: Topology): Map<string, PortRef> {
+  const out = new Map<string, PortRef>();
+  for (const link of topology.links) {
+    out.set(makePortKey(link.a), link.b);
+    out.set(makePortKey(link.b), link.a);
+  }
+  return out;
+}
+
+/** Egress port after internal hub routing (matches `processHub`). */
+export function getHubEgressPort(rotation: "clockwise" | "counterclockwise", ingressPort: number): number {
+  if (rotation === "clockwise") {
+    if (ingressPort === 0) return 1;
+    if (ingressPort === 1) return 2;
+    return 0;
+  }
+  if (ingressPort === 0) return 2;
+  if (ingressPort === 2) return 1;
+  return 0;
+}
+
+export function portKey(ref: PortRef): string {
+  return makePortKey(ref);
+}
+
 function splitPortKey(key: string): PortRef {
   const idx = key.lastIndexOf(":");
   if (idx < 0) return { deviceId: key, port: 0 };

@@ -37,8 +37,8 @@ import {
   saveBuilderState,
 } from "./persistence";
 import { compileBuilderToViewerPayload } from "./compile";
-import type { Packet, PortRef, SimulationStats, Topology } from "../simulation";
-import { TunnetSimulator } from "../simulation";
+import type { Device, Packet, PortRef, SimulationStats, Topology } from "../simulation";
+import { buildPortAdjacency, getHubEgressPort, portKey, TunnetSimulator } from "../simulation";
 import {
   formatSendRateLabel,
   formatSpeedLabel,
@@ -944,6 +944,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simCurrentOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simPacketProgress = 1;
   const builderEndpointIdByAddress = new Map<string, string>();
+  let builderSimDevices: Record<string, Device> = {};
+  let builderSimAdj: Map<string, PortRef> = new Map();
 
   function cloneSimOccupancy(occ: Array<{ port: PortRef; packet: Packet }>): Array<{ port: PortRef; packet: Packet }> {
     return occ.map((e) => ({ port: { ...e.port }, packet: e.packet }));
@@ -956,6 +958,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         builderEndpointIdByAddress.set(dev.address, dev.id);
       }
     }
+  }
+
+  function rebuildBuilderSimTopologyCache(top: Topology): void {
+    builderSimDevices = top.devices;
+    builderSimAdj = buildPortAdjacency(top);
   }
 
   function syncBuilderSimSliderLabels(): void {
@@ -1007,8 +1014,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simPlaying = false;
     simAnimating = false;
     const payload = compileBuilderToViewerPayload(state);
+    const topo = payload.topology as unknown as Topology;
     builderTopologySig = JSON.stringify(payload.topology);
-    builderSimulator = new TunnetSimulator(payload.topology as unknown as Topology, 1337);
+    rebuildBuilderSimTopologyCache(topo);
+    builderSimulator = new TunnetSimulator(topo, 1337);
     builderSimulator.setSendRateMultiplier(sendRateMultiplierFromExponent(simSendRateExponent));
     simStats = {
       tick: 0,
@@ -1028,7 +1037,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simEmaAchievedSpeed = null;
     simLastStepComputeMs = null;
     simEmaStepComputeMs = null;
-    rebuildBuilderSimEndpointIndex(payload.topology as unknown as Topology);
+    rebuildBuilderSimEndpointIndex(topo);
     simPreviousOccupancy = [];
     simCurrentOccupancy = cloneSimOccupancy(builderSimulator.getPortOccupancy());
     simPacketProgress = 1;
@@ -1671,6 +1680,74 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
   }
 
+  type SimXY = { x: number; y: number };
+
+  function simPointOnPolylineAt(pts: SimXY[], t: number): SimXY | null {
+    if (pts.length === 0) return null;
+    if (pts.length === 1) {
+      return pts[0] ?? null;
+    }
+    const segLens: number[] = [];
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const p = pts[i]!;
+      const q = pts[i + 1]!;
+      segLens.push(Math.hypot(q.x - p.x, q.y - p.y));
+    }
+    const total = segLens.reduce((a, b) => a + b, 0);
+    if (total < 1e-6) {
+      return pts[0] ?? null;
+    }
+    let d = t * total;
+    for (let i = 0; i < segLens.length; i += 1) {
+      const L = segLens[i] ?? 0;
+      if (d <= L) {
+        const u = d / (L < 1e-9 ? 1 : L);
+        const p0 = pts[i]!;
+        const p1 = pts[i + 1]!;
+        return { x: p0.x + (p1.x - p0.x) * u, y: p0.y + (p1.y - p0.y) * u };
+      }
+      d -= L;
+    }
+    return pts[pts.length - 1] ?? null;
+  }
+
+  function buildPacketAnimationPolyline(from: PortRef, to: PortRef): SimXY[] | null {
+    const pa = builderPortCenterInOverlayCoords(from);
+    const pb = builderPortCenterInOverlayCoords(to);
+    if (!pa || !pb) {
+      return null;
+    }
+    if (from.deviceId === to.deviceId && from.port === to.port) {
+      return [pa];
+    }
+    if (Object.keys(builderSimDevices).length === 0) {
+      return [pa, pb];
+    }
+    const dFrom = builderSimDevices[from.deviceId];
+    if (dFrom && dFrom.id !== to.deviceId) {
+      if (dFrom.type === "hub") {
+        const egress = getHubEgressPort(dFrom.rotation, from.port);
+        const nbr = builderSimAdj.get(portKey({ deviceId: from.deviceId, port: egress }));
+        if (nbr && nbr.deviceId === to.deviceId && nbr.port === to.port) {
+          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: egress });
+          if (pm) {
+            return [pa, pm, pb];
+          }
+        }
+      } else if (dFrom.type === "relay") {
+        const outPort: 0 | 1 = from.port === 0 ? 1 : 0;
+        const nbr = builderSimAdj.get(portKey({ deviceId: from.deviceId, port: outPort }));
+        if (nbr && nbr.deviceId === to.deviceId && nbr.port === to.port) {
+          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: outPort });
+          if (pm) {
+            return [pa, pm, pb];
+          }
+        }
+      }
+    }
+    return [pa, pb];
+  }
+
   function syncBuilderPacketOverlayDimensions(overlayWidth: number, overlayHeight: number): void {
     const w = Math.ceil(overlayWidth);
     const h = Math.ceil(overlayHeight);
@@ -1697,10 +1774,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const spawnId = builderEndpointIdByAddress.get(packet.src);
       const fromDeviceId = fromEntry?.port.deviceId ?? spawnId ?? port.deviceId;
       const fromPortNum = fromEntry?.port.port ?? 0;
+      const fromRef: PortRef = { deviceId: fromDeviceId, port: fromPortNum };
+      const toRef: PortRef = { ...port };
       const pa =
-        builderPortCenterInOverlayCoords({ deviceId: fromDeviceId, port: fromPortNum }) ??
-        builderPortCenterInOverlayCoords(port);
-      const pb = builderPortCenterInOverlayCoords(port);
+        builderPortCenterInOverlayCoords(fromRef) ?? builderPortCenterInOverlayCoords(toRef);
+      const pb = builderPortCenterInOverlayCoords(toRef);
       if (!pa || !pb) continue;
       let x: number;
       let y: number;
@@ -1709,15 +1787,28 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         x = pa.x + o.x;
         y = pa.y + o.y;
       } else {
-        const dx = pb.x - pa.x;
-        const dy = pb.y - pa.y;
-        if (dx * dx + dy * dy < 1) {
+        const line = buildPacketAnimationPolyline(fromRef, toRef);
+        if (!line || line.length < 2) {
           const o = simRestingPortOffset(port.port);
           x = pa.x + o.x;
           y = pa.y + o.y;
         } else {
-          x = pa.x + (pb.x - pa.x) * t;
-          y = pa.y + (pb.y - pa.y) * t;
+          const d0 = line[0]!;
+          const d1 = line[line.length - 1]!;
+          if (Math.hypot(d1.x - d0.x, d1.y - d0.y) < 1) {
+            const o = simRestingPortOffset(port.port);
+            x = pa.x + o.x;
+            y = pa.y + o.y;
+          } else {
+            const p = simPointOnPolylineAt(line, t);
+            if (p) {
+              x = p.x;
+              y = p.y;
+            } else {
+              x = pa.x + (pb.x - pa.x) * t;
+              y = pa.y + (pb.y - pa.y) * t;
+            }
+          }
         }
       }
       const hue = (packet.id * 47) % 360;
