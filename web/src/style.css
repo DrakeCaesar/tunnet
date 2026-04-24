@@ -17,8 +17,8 @@
   --scrollbar-thumb-hover: #4a5670;
   --builder-sidebar-width: 320px;
   --builder-layer-gap: 5px;
-  --builder-grid-step-x: 6.25%;
-  --builder-grid-step-y: 5%;
+  --builder-grid-step-x: 20px;
+  --builder-grid-step-y: 20px;
 }
 
 body {
@@ -560,6 +560,7 @@ textarea {
   border-radius: 4px;
   padding: 2px;
   position: relative;
+  overflow: hidden;
 }
 
 .builder-segment.drop-target {
@@ -585,6 +586,7 @@ textarea {
 .builder-segment-entities {
   position: relative;
   height: calc(100% - 14px);
+  overflow: hidden;
   background-image:
     repeating-linear-gradient(
       to right,
@@ -600,18 +602,6 @@ textarea {
       transparent 1px,
       transparent var(--builder-grid-step-y)
     );
-}
-
-.builder-segment[data-layer="outer64"] .builder-segment-entities {
-  --builder-grid-step-x: calc((100% + var(--builder-grid-compensation-x)) / 16);
-}
-
-.builder-segment[data-layer="middle16"] .builder-segment-entities {
-  --builder-grid-step-x: calc((100% + var(--builder-grid-compensation-x)) / 64);
-}
-
-.builder-segment[data-layer="inner4"] .builder-segment-entities {
-  --builder-grid-step-x: calc((100% + var(--builder-grid-compensation-x)) / 256);
 }
 
 .builder-entity {

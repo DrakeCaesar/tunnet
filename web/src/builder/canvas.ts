@@ -37,18 +37,8 @@ import { compileBuilderToViewerPayload } from "./compile";
 const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_LAYER_GAP_PX = 5;
-const BUILDER_GRID_COMPENSATION_X_PX = 12;
-const BUILDER_GRID_SNAP_STEP_Y = 0.05;
-const BUILDER_GRID_COLUMNS_BY_LAYER: Record<BuilderLayer, number> = {
-  outer64: 16,
-  middle16: 64,
-  inner4: 256,
-};
-const BUILDER_GRID_COMPENSATION_X_BY_LAYER: Record<BuilderLayer, number> = {
-  outer64: BUILDER_GRID_COMPENSATION_X_PX,
-  middle16: BUILDER_GRID_COMPENSATION_X_PX,
-  inner4: BUILDER_GRID_COMPENSATION_X_PX,
-};
+const BUILDER_GRID_TILE_SIZE_X_PX = 20;
+const BUILDER_GRID_TILE_SIZE_Y_PX = 20;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -600,10 +590,51 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     root.style.setProperty("--builder-scale-x", canvasScale.x.toFixed(3));
     root.style.setProperty("--builder-scale-y", canvasScale.y.toFixed(3));
-    root.style.setProperty("--builder-grid-compensation-x", `${BUILDER_GRID_COMPENSATION_X_PX}px`);
+    root.style.setProperty("--builder-grid-step-x", `${BUILDER_GRID_TILE_SIZE_X_PX}px`);
+    root.style.setProperty("--builder-grid-step-y", `${BUILDER_GRID_TILE_SIZE_Y_PX}px`);
     scaleXValueEl.textContent = `${canvasScale.x.toFixed(2)}x`;
     scaleYValueEl.textContent = `${canvasScale.y.toFixed(2)}x`;
     scheduleWireOverlayRender();
+  }
+
+  function layerViewportSizes(): Record<BuilderLayer, { width: number; height: number } | null> {
+    const readLayer = (layer: BuilderLayer): { width: number; height: number } | null => {
+      const host = canvasEl.querySelector<HTMLElement>(
+        `.builder-segment[data-layer="${layer}"] .builder-segment-entities`,
+      );
+      if (!host) return null;
+      return {
+        width: Math.max(1, host.clientWidth),
+        height: Math.max(1, host.clientHeight),
+      };
+    };
+    return {
+      outer64: readLayer("outer64"),
+      middle16: readLayer("middle16"),
+      inner4: readLayer("inner4"),
+    };
+  }
+
+  function rescaleEntityNormalizedPositionsAfterViewportResize(
+    before: Record<BuilderLayer, { width: number; height: number } | null>,
+    after: Record<BuilderLayer, { width: number; height: number } | null>,
+  ): void {
+    const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+    state = {
+      ...state,
+      entities: state.entities.map((entity) => {
+        const b = before[entity.layer];
+        const a = after[entity.layer];
+        if (!b || !a) return entity;
+        const scaleX = b.width / a.width;
+        const scaleY = b.height / a.height;
+        return {
+          ...entity,
+          x: clamp01(entity.x * scaleX),
+          y: clamp01(entity.y * scaleY),
+        };
+      }),
+    };
   }
 
   function recordPerf(key: BuilderPerfKey, ms: number): void {
@@ -857,21 +888,21 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function snapNormalizedToGridX(
     value: number,
-    layer: BuilderLayer,
     sectionWidthPx: number,
   ): number {
-    const cols = BUILDER_GRID_COLUMNS_BY_LAYER[layer];
-    const compensationPx = BUILDER_GRID_COMPENSATION_X_BY_LAYER[layer];
     const w = Math.max(1, sectionWidthPx);
-    const virtualW = w + compensationPx;
-    const stepPx = virtualW / cols;
+    const stepPx = BUILDER_GRID_TILE_SIZE_X_PX;
     const px = value * w;
     const snappedPx = Math.round(px / stepPx) * stepPx;
     return snappedPx / w;
   }
 
-  function snapNormalizedToGridY(value: number): number {
-    return Math.round(value / BUILDER_GRID_SNAP_STEP_Y) * BUILDER_GRID_SNAP_STEP_Y;
+  function snapNormalizedToGridY(value: number, sectionHeightPx: number): number {
+    const h = Math.max(1, sectionHeightPx);
+    const stepPx = BUILDER_GRID_TILE_SIZE_Y_PX;
+    const px = value * h;
+    const snappedPx = Math.round(px / stepPx) * stepPx;
+    return snappedPx / h;
   }
 
   function renderWireOverlay(): void {
@@ -1090,10 +1121,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           const rawX = (mv.clientX - segRect.left) / Math.max(1, segRect.width) - dx;
           const rawY = (mv.clientY - segRect.top) / Math.max(1, segRect.height) - dy;
           const x = snapNormalizedToPixels(
-            snapNormalizedToGridX(rawX, rootEnt.layer, segRect.width),
+            snapNormalizedToGridX(rawX, segRect.width),
             segRect.width,
           );
-          const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY), segRect.height);
+          const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY, segRect.height), segRect.height);
           state = updateEntityPosition(state, rootEnt.id, x, y);
           setEntityDomPosition(rootEnt.id, x, y);
           scheduleWireOverlayRender();
@@ -1163,10 +1194,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const rawX = (mv.clientX - segRect.left) / Math.max(1, segRect.width) - dx;
       const rawY = (mv.clientY - segRect.top) / Math.max(1, segRect.height) - dy;
       const x = snapNormalizedToPixels(
-        snapNormalizedToGridX(rawX, rootEnt.layer, segRect.width),
+        snapNormalizedToGridX(rawX, segRect.width),
         segRect.width,
       );
-      const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY), segRect.height);
+      const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY, segRect.height), segRect.height);
       state = updateEntityPosition(state, rootEnt.id, x, y);
       setEntityDomPosition(rootEnt.id, x, y);
       scheduleWireOverlayRender();
@@ -1600,11 +1631,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const entitiesRect = entitiesHost.getBoundingClientRect();
       const px = snapNormalizedToGridX(
         (ev.clientX - entitiesRect.left) / Math.max(1, entitiesRect.width),
-        layer,
         entitiesRect.width,
       );
       const py = snapNormalizedToGridY(
         (ev.clientY - entitiesRect.top) / Math.max(1, entitiesRect.height),
+        entitiesRect.height,
       );
       const segment = (() => {
         if (cell.dataset.voidOuter !== "1") {
@@ -1920,20 +1951,32 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   window.addEventListener("resize", applyCanvasScale);
 
   scaleXEl.addEventListener("input", () => {
+    const before = layerViewportSizes();
     const parsed = Number(scaleXEl.value);
     canvasScale.x = clampCanvasScaleX(Number.isFinite(parsed) ? parsed : 1);
     applyCanvasScale();
+    const after = layerViewportSizes();
+    rescaleEntityNormalizedPositionsAfterViewportResize(before, after);
+    renderCanvas();
+    renderInspector();
   });
   scaleXEl.addEventListener("change", () => {
     persistCanvasScale();
+    persist();
   });
   scaleYEl.addEventListener("input", () => {
+    const before = layerViewportSizes();
     const parsed = Number(scaleYEl.value);
     canvasScale.y = clampCanvasScaleY(Number.isFinite(parsed) ? parsed : 1);
     applyCanvasScale();
+    const after = layerViewportSizes();
+    rescaleEntityNormalizedPositionsAfterViewportResize(before, after);
+    renderCanvas();
+    renderInspector();
   });
   scaleYEl.addEventListener("change", () => {
     persistCanvasScale();
+    persist();
   });
 
   renderTemplates();
