@@ -603,15 +603,15 @@ textarea {
 }
 
 .builder-segment[data-layer="outer64"] .builder-segment-entities {
-  --builder-grid-step-x: 6.25%;
+  --builder-grid-step-x: calc((100% + var(--builder-grid-compensation-x)) / 16);
 }
 
 .builder-segment[data-layer="middle16"] .builder-segment-entities {
-  --builder-grid-step-x: 1.5625%;
+  --builder-grid-step-x: calc((100% + var(--builder-grid-compensation-x)) / 64);
 }
 
 .builder-segment[data-layer="inner4"] .builder-segment-entities {
-  --builder-grid-step-x: 0.390625%;
+  --builder-grid-step-x: calc((100% + var(--builder-grid-compensation-x)) / 256);
 }
 
 .builder-entity {

@@ -37,11 +37,17 @@ import { compileBuilderToViewerPayload } from "./compile";
 const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_LAYER_GAP_PX = 5;
+const BUILDER_GRID_COMPENSATION_X_PX = 12;
 const BUILDER_GRID_SNAP_STEP_Y = 0.05;
 const BUILDER_GRID_COLUMNS_BY_LAYER: Record<BuilderLayer, number> = {
   outer64: 16,
   middle16: 64,
   inner4: 256,
+};
+const BUILDER_GRID_COMPENSATION_X_BY_LAYER: Record<BuilderLayer, number> = {
+  outer64: BUILDER_GRID_COMPENSATION_X_PX,
+  middle16: BUILDER_GRID_COMPENSATION_X_PX,
+  inner4: BUILDER_GRID_COMPENSATION_X_PX,
 };
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
@@ -594,6 +600,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     root.style.setProperty("--builder-scale-x", canvasScale.x.toFixed(3));
     root.style.setProperty("--builder-scale-y", canvasScale.y.toFixed(3));
+    root.style.setProperty("--builder-grid-compensation-x", `${BUILDER_GRID_COMPENSATION_X_PX}px`);
     scaleXValueEl.textContent = `${canvasScale.x.toFixed(2)}x`;
     scaleYValueEl.textContent = `${canvasScale.y.toFixed(2)}x`;
     scheduleWireOverlayRender();
@@ -848,9 +855,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return Math.round(value * safeSize) / safeSize;
   }
 
-  function snapNormalizedToGridX(value: number, layer: BuilderLayer): number {
-    const step = 1 / BUILDER_GRID_COLUMNS_BY_LAYER[layer];
-    return Math.round(value / step) * step;
+  function snapNormalizedToGridX(
+    value: number,
+    layer: BuilderLayer,
+    sectionWidthPx: number,
+  ): number {
+    const cols = BUILDER_GRID_COLUMNS_BY_LAYER[layer];
+    const compensationPx = BUILDER_GRID_COMPENSATION_X_BY_LAYER[layer];
+    const w = Math.max(1, sectionWidthPx);
+    const virtualW = w + compensationPx;
+    const stepPx = virtualW / cols;
+    const px = value * w;
+    const snappedPx = Math.round(px / stepPx) * stepPx;
+    return snappedPx / w;
   }
 
   function snapNormalizedToGridY(value: number): number {
@@ -1072,7 +1089,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const onMove = (mv: MouseEvent): void => {
           const rawX = (mv.clientX - segRect.left) / Math.max(1, segRect.width) - dx;
           const rawY = (mv.clientY - segRect.top) / Math.max(1, segRect.height) - dy;
-          const x = snapNormalizedToPixels(snapNormalizedToGridX(rawX, rootEnt.layer), segRect.width);
+          const x = snapNormalizedToPixels(
+            snapNormalizedToGridX(rawX, rootEnt.layer, segRect.width),
+            segRect.width,
+          );
           const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY), segRect.height);
           state = updateEntityPosition(state, rootEnt.id, x, y);
           setEntityDomPosition(rootEnt.id, x, y);
@@ -1142,7 +1162,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const onMove = (mv: MouseEvent): void => {
       const rawX = (mv.clientX - segRect.left) / Math.max(1, segRect.width) - dx;
       const rawY = (mv.clientY - segRect.top) / Math.max(1, segRect.height) - dy;
-      const x = snapNormalizedToPixels(snapNormalizedToGridX(rawX, rootEnt.layer), segRect.width);
+      const x = snapNormalizedToPixels(
+        snapNormalizedToGridX(rawX, rootEnt.layer, segRect.width),
+        segRect.width,
+      );
       const y = snapNormalizedToPixels(snapNormalizedToGridY(rawY), segRect.height);
       state = updateEntityPosition(state, rootEnt.id, x, y);
       setEntityDomPosition(rootEnt.id, x, y);
@@ -1578,6 +1601,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const px = snapNormalizedToGridX(
         (ev.clientX - entitiesRect.left) / Math.max(1, entitiesRect.width),
         layer,
+        entitiesRect.width,
       );
       const py = snapNormalizedToGridY(
         (ev.clientY - entitiesRect.top) / Math.max(1, entitiesRect.height),
