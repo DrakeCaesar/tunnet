@@ -43,8 +43,20 @@ function hubMarkerId(instanceId: string): string {
   return `hubmk-${instanceId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 }
 
-/** SVG / hit box for hub (matches `.builder-hub` in CSS). */
-const HUB_VIEW = { w: 108, h: 96 } as const;
+/**
+ * Single hub size knob: all hub render/interaction geometry scales from this side length.
+ * Change this one number to resize hubs.
+ */
+const HUB_TRIANGLE_SIDE = 45;
+const HUB_BASE_TRIANGLE_SIDE = 45;
+const HUB_SCALE = HUB_TRIANGLE_SIDE / HUB_BASE_TRIANGLE_SIDE;
+/** SVG / hit box for hub (mirrors original proportions at side=70). */
+const HUB_VIEW = { w: 108 * HUB_SCALE, h: 96 * HUB_SCALE } as const;
+const HUB_PORT_RADIUS = 8 * HUB_SCALE;
+const HUB_TOP_PADDING = 18 * HUB_SCALE;
+const HUB_RING_PX = 30 * HUB_SCALE;
+const HUB_REVERSE_BUTTON_SIZE = 16 * HUB_SCALE;
+const HUB_REVERSE_ICON_SIZE = 13 * HUB_SCALE;
 
 type HubVec = { x: number; y: number };
 
@@ -52,11 +64,11 @@ type HubLayout = { T: HubVec; L: HubVec; R: HubVec; r: number; G: HubVec };
 
 /** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (16px). */
 function hubEquilateralLayout(): HubLayout {
-  const r = 8;
-  const s = 70;
+  const r = HUB_PORT_RADIUS;
+  const s = HUB_TRIANGLE_SIDE;
   const h = (s * Math.sqrt(3)) / 2;
   const cx = HUB_VIEW.w / 2;
-  const ty = 18;
+  const ty = HUB_TOP_PADDING;
   const by = ty + h;
   const T: HubVec = { x: cx, y: ty };
   const L: HubVec = { x: cx - s / 2, y: by };
@@ -75,9 +87,6 @@ function hubPortPinStyle(c: HubVec): string {
 function hubPortPinUprightStyle(c: HubVec, faceDeg: number): string {
   return `left:${(c.x / HUB_VIEW.w) * 100}%;top:${(c.y / HUB_VIEW.h) * 100}%;transform:translate(-50%,-50%) rotate(${-faceDeg}deg)`;
 }
-
-/** Band outside the equilateral (model space) for rotation; inside = move. */
-const HUB_RING_PX = 30;
 
 function hubLocalToModel(localX: number, localY: number, faceDeg: number): HubVec {
   const g = HUB_LAYOUT.G;
@@ -137,6 +146,9 @@ function hubPointerMode(
     hubDistToSeg(p, l, r),
     hubDistToSeg(p, r, t),
   );
+  // The visible hub body is a rounded triangle built around the core equilateral by radius `HUB_LAYOUT.r`.
+  // Treat that rounded band as "move" so pointer behavior matches the rendered shape.
+  if (d <= HUB_LAYOUT.r) return "move";
   if (d <= HUB_RING_PX) return "rotate";
   return "none";
 }
@@ -255,8 +267,8 @@ function hubTriangleSvg(instanceId: string, rotation: string | undefined): strin
 
   return `<svg class="builder-hub-svg" viewBox="0 0 ${HUB_VIEW.w} ${HUB_VIEW.h}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
     <defs>
-      <marker id="${mid}-tip" viewBox="0 0 4 4" refX="3.1" refY="2" markerWidth="3" markerHeight="3" orient="auto">
-        <path d="M0,0 L4,2 L0,4 Z" fill="rgba(255,255,255,0.4)" />
+      <marker id="${mid}-tip" viewBox="0 0 6 6" refX="4.8" refY="3" markerWidth="4.5" markerHeight="4.5" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="rgba(255,255,255,0.48)" />
       </marker>
     </defs>
     <path class="builder-hub-rotate-hint" d="${d}" />
@@ -1168,7 +1180,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                             const hubOriginY = (HUB_LAYOUT.G.y / HUB_VIEW.h) * 100;
                             const hubBlock =
                               entity.templateType === "hub"
-                                ? `<div class="builder-hub" data-face-angle="${hubFaceDeg}">
+                                ? `<div class="builder-hub" data-face-angle="${hubFaceDeg}" style="--hub-w:${HUB_VIEW.w}px;--hub-h:${HUB_VIEW.h}px;--hub-reverse-size:${HUB_REVERSE_BUTTON_SIZE}px;--hub-reverse-icon-size:${HUB_REVERSE_ICON_SIZE}px;">
         <div class="builder-hub-rot" style="transform:rotate(${hubFaceDeg}deg);transform-origin:${hubOriginX}% ${hubOriginY}%;">
           ${hubTriangleSvg(entity.instanceId, entity.settings.rotation)}
           <button type="button" class="builder-port builder-hub-port" style="${hubPortPinUprightStyle(HUB_LAYOUT.T, hubFaceDeg)}" data-instance-id="${entity.instanceId}" data-root-id="${entity.rootId}" data-port="0">0</button>
@@ -1186,7 +1198,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                   ? " builder-entity--hub"
                                   : "";
                             const settingsBlock =
-                              entity.templateType === "filter" || entity.templateType === "hub" || isOuterStatic
+                              entity.templateType === "relay" ||
+                              entity.templateType === "filter" ||
+                              entity.templateType === "hub" ||
+                              isOuterStatic ||
+                              settingsText.length === 0
                                 ? ""
                                 : `<div class="builder-entity-settings">${settingsText}</div>`;
                             const portBtn = (port: number): string =>
@@ -1195,6 +1211,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                               ? `<div class="builder-ports builder-ports--filter-bottom builder-ports--endpoint-bottom">${portBtn(0)}</div>`
                               : entity.templateType === "filter"
                                 ? `<div class="builder-ports builder-ports--filter-bottom">${portBtn(1)}</div>`
+                                : entity.templateType === "relay"
+                                  ? `<div class="builder-ports builder-ports--filter-bottom">${portBtn(1)}</div>`
                                 : entity.templateType === "hub"
                                   ? ""
                                   : `<div class="builder-ports">${entity.ports.map((p) => portBtn(p)).join("")}</div>`;
@@ -1207,7 +1225,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                 style="left:${entity.x * 100}%;top:${entity.y * 100}%"
                               >
                                 ${
-                                  entity.templateType === "filter"
+                                  entity.templateType === "filter" || entity.templateType === "relay"
                                     ? `<div class="builder-ports builder-ports--filter-top">${portBtn(0)}</div>`
                                     : ""
                                 }
@@ -1408,14 +1426,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           ? `<div class="builder-inspector-description">${buildFilterDescription(entity.settings)}</div>`
           : ""
       }
-      <div class="builder-settings">
+      ${
+        entries.length
+          ? `<div class="builder-settings">
         ${entries
           .map(
             ([k, v]) =>
               `<label class="builder-setting"><span>${k}</span><input data-setting-key="${k}" type="text" value="${v}" /></label>`,
           )
           .join("")}
-      </div>
+      </div>`
+          : ""
+      }
     `;
     inspectorEl.querySelectorAll<HTMLInputElement>("input[data-setting-key]").forEach((input) => {
       input.addEventListener("change", () => {

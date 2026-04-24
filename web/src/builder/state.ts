@@ -499,7 +499,7 @@ export function defaultSettings(type: BuilderTemplateType): Record<string, strin
   if (type === "endpoint") {
     return { address: "0.0.0.0" };
   }
-  return { mode: "pass-through" };
+  return {};
 }
 
 export function removeEntityGroup(state: BuilderState, groupId: string): BuilderState {

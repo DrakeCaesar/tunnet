@@ -25,19 +25,25 @@ body {
 }
 
 .app-tabs {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 40;
   display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--panel-border);
-  background: #11151d;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .app-tab {
   background: #1d2230;
   border: 1px solid var(--panel-border);
   color: var(--text-main);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 5px;
   font-size: 12px;
 }
 
@@ -49,16 +55,16 @@ body {
 .layout {
   display: grid;
   grid-template-columns: 1fr 480px;
-  height: calc(100vh - 48px);
+  height: 100vh;
 }
 
 .graph {
-  height: calc(100vh - 48px);
+  height: 100vh;
   border-right: 1px solid var(--panel-border);
 }
 
 .panel {
-  padding: 14px;
+  padding: 10px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -122,7 +128,7 @@ body {
   background: #1d2230;
   border: 1px solid var(--panel-border);
   color: var(--text-main);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 5px 8px;
   font-size: 12px;
 }
@@ -211,7 +217,7 @@ body {
 .stat-pill {
   background: #0f131b;
   border: 1px solid #2a3242;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 6px 8px;
   display: flex;
   justify-content: space-between;
@@ -239,7 +245,7 @@ body {
   max-height: 200px;
   overflow: auto;
   border: 1px solid #2a3242;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .timings-table {
@@ -285,7 +291,7 @@ body {
   font-size: 12px;
   background: var(--details-bg);
   border: 1px solid var(--details-border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 10px;
 }
 
@@ -297,7 +303,7 @@ textarea {
 }
 
 .builder-view {
-  height: calc(100vh - 48px);
+  height: 100vh;
   padding: 10px;
   box-sizing: border-box;
 }
@@ -333,7 +339,7 @@ textarea {
   background: #1d2230;
   border: 1px solid var(--panel-border);
   color: var(--text-main);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
 }
@@ -347,7 +353,7 @@ textarea {
   color: #b9c2d6;
   background: #0f131b;
   border: 1px solid #2a3242;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px;
   font-family:
     "FiraCode Nerd Font",
@@ -362,7 +368,7 @@ textarea {
 .builder-template {
   background: #0f131b;
   border: 1px solid #2a3242;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px;
   font-size: 12px;
   margin-bottom: 6px;
@@ -477,12 +483,12 @@ textarea {
 .builder-entity {
   border: 1px solid #2a3242;
   border-radius: 4px;
-  padding: 2px 3px;
+  padding: 2px 2px;
   font-size: 10px;
   background: #1a2130;
   color: #dbe3f5;
   position: absolute;
-  min-width: 94px;
+  min-width: 45px;
   max-width: 520px;
   transform: translate(-6px, -6px);
   cursor: grab;
@@ -594,8 +600,8 @@ textarea {
 
 .builder-hub {
   position: relative;
-  width: 108px;
-  height: 96px;
+  width: var(--hub-w, 108px);
+  height: var(--hub-h, 96px);
   margin: 0;
   flex-shrink: 0;
   overflow: visible;
@@ -666,8 +672,8 @@ textarea {
 .builder-hub-reverse {
   position: absolute;
   z-index: 3;
-  width: 24px;
-  height: 24px;
+  width: var(--hub-reverse-size, 24px);
+  height: var(--hub-reverse-size, 24px);
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(15, 19, 27, 0.92);
@@ -682,7 +688,7 @@ textarea {
 }
 
 .builder-hub-reverse-icon {
-  font-size: 13px;
+  font-size: var(--hub-reverse-icon-size, 13px);
   line-height: 1;
   display: block;
 }
