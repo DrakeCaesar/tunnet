@@ -1100,6 +1100,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simPlaying = false;
   let simAnimating = false;
   let simAnimHandle: number | null = null;
+  let simTickTimeoutHandle: number | null = null;
+  let simNextTickDeadlineMs: number | null = null;
   let simSpeedExponent = Number(simSpeedEl.value);
   if (!Number.isFinite(simSpeedExponent)) {
     simSpeedExponent = SPEED_EXP_DEFAULT;
@@ -1307,12 +1309,21 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     `;
   }
 
-  function resetBuilderSimulation(resumeIfWasPlaying = false): void {
-    const shouldResume = resumeIfWasPlaying && simPlaying;
+  function cancelBuilderSimTickTimers(): void {
     if (simAnimHandle !== null) {
       cancelAnimationFrame(simAnimHandle);
       simAnimHandle = null;
     }
+    if (simTickTimeoutHandle !== null) {
+      window.clearTimeout(simTickTimeoutHandle);
+      simTickTimeoutHandle = null;
+    }
+  }
+
+  function resetBuilderSimulation(resumeIfWasPlaying = false): void {
+    const shouldResume = resumeIfWasPlaying && simPlaying;
+    cancelBuilderSimTickTimers();
+    simNextTickDeadlineMs = null;
     simPlaying = false;
     simPlayPauseBtn.textContent = "Play";
     simAnimating = false;
@@ -1372,10 +1383,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     rebuildBuilderSimEndpointIndex(topo);
 
     const shouldResume = simPlaying;
-    if (simAnimHandle !== null) {
-      cancelAnimationFrame(simAnimHandle);
-      simAnimHandle = null;
-    }
+    cancelBuilderSimTickTimers();
+    simNextTickDeadlineMs = null;
     simAnimating = false;
     simPlaying = false;
     updateBuilderSimulatorTopology(topo);
@@ -1427,17 +1436,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         renderWireOverlay();
       }
     }
+    const targetTickIntervalMs = 1000 / Math.max(simSpeed, 0.1);
+    if (
+      simNextTickDeadlineMs === null ||
+      simNextTickDeadlineMs < tickWallStartMs - targetTickIntervalMs
+    ) {
+      simNextTickDeadlineMs = tickWallStartMs + targetTickIntervalMs;
+    }
+    const tickDeadlineMs = simNextTickDeadlineMs;
+    simNextTickDeadlineMs = tickDeadlineMs + targetTickIntervalMs;
     updateBuilderSimMeta();
-    const durationMs = Math.max(1, 1000 / Math.max(simSpeed, 0.1));
     const animStart = performance.now();
-    const animate = (now: number): void => {
-      const t = Math.min(1, (now - animStart) / durationMs);
-      simPacketProgress = t;
-      renderBuilderPacketCircles(t);
-      if (t < 1) {
-        simAnimHandle = requestAnimationFrame(animate);
-        return;
-      }
+    const durationMs = Math.max(0, tickDeadlineMs - animStart);
+    let finished = false;
+    const finishTick = (): void => {
+      if (finished) return;
+      finished = true;
+      cancelBuilderSimTickTimers();
       const wallMs = performance.now() - tickWallStartMs;
       if (wallMs > 1) {
         const instantAchieved = 1000 / wallMs;
@@ -1447,31 +1462,45 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             : SIM_ACHIEVED_SPEED_EMA_ALPHA * instantAchieved + (1 - SIM_ACHIEVED_SPEED_EMA_ALPHA) * simEmaAchievedSpeed;
       }
       simAnimating = false;
-      simAnimHandle = null;
       simPacketProgress = 1;
       renderBuilderPacketCircles(1);
       updateBuilderSimMeta();
       flushPendingBuilderSimulatorRefresh();
       if (simPlaying) {
         runOneBuilderSimTick();
+      } else {
+        simNextTickDeadlineMs = null;
       }
+    };
+    const animate = (now: number): void => {
+      if (finished) return;
+      const t = durationMs <= 0 ? 1 : Math.min(1, (now - animStart) / durationMs);
+      simPacketProgress = t;
+      renderBuilderPacketCircles(t);
+      if (t < 1) {
+        simAnimHandle = requestAnimationFrame(animate);
+        return;
+      }
+      finishTick();
     };
     simPacketProgress = 0;
     renderBuilderPacketCircles(0);
+    simTickTimeoutHandle = window.setTimeout(finishTick, durationMs);
     simAnimHandle = requestAnimationFrame(animate);
   }
 
   function setBuilderSimPlaying(enabled: boolean): void {
     simPlaying = enabled;
     simPlayPauseBtn.textContent = simPlaying ? "Pause" : "Play";
-    if (!simPlaying && simAnimHandle !== null) {
-      cancelAnimationFrame(simAnimHandle);
-      simAnimHandle = null;
+    if (!simPlaying && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
+      cancelBuilderSimTickTimers();
+      simNextTickDeadlineMs = null;
       simAnimating = false;
       simPacketProgress = 1;
       renderBuilderPacketCircles(1);
     }
     if (simPlaying && !simAnimating) {
+      simNextTickDeadlineMs = null;
       runOneBuilderSimTick();
     }
     updateBuilderSimMeta();
@@ -4400,9 +4429,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     simSpeed = speedMultiplierFromExponent(simSpeedExponent);
     simEmaAchievedSpeed = null;
-    if (simPlaying && simAnimHandle !== null) {
-      cancelAnimationFrame(simAnimHandle);
-      simAnimHandle = null;
+    if (simPlaying && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
+      cancelBuilderSimTickTimers();
+      simNextTickDeadlineMs = null;
       simAnimating = false;
       runOneBuilderSimTick();
     }
