@@ -77,7 +77,7 @@ const HUB_BASE_TRIANGLE_SIDE = 40;
 const HUB_SCALE = HUB_TRIANGLE_SIDE / HUB_BASE_TRIANGLE_SIDE;
 /** SVG / hit box for hub (mirrors original proportions at side=70). */
 const HUB_VIEW = { w: 108 * HUB_SCALE, h: 96 * HUB_SCALE } as const;
-const HUB_PORT_RADIUS = 8 * HUB_SCALE;
+const HUB_PORT_RADIUS = 8.5 * HUB_SCALE;
 const HUB_TOP_PADDING = 18 * HUB_SCALE;
 const HUB_ROTATE_OUTER_BAND_PX = 8 * HUB_SCALE;
 const HUB_REVERSE_BUTTON_SIZE = 16 * HUB_SCALE;
@@ -94,7 +94,7 @@ type BuilderPageState = {
   showPacketIps: boolean;
 };
 
-/** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (16px). */
+/** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (17px). */
 function hubEquilateralLayout(): HubLayout {
   const r = HUB_PORT_RADIUS;
   const s = HUB_TRIANGLE_SIDE;

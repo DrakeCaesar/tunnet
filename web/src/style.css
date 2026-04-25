@@ -753,7 +753,7 @@ textarea {
 .builder-entity {
   border: 1px solid #2a3242;
   border-radius: 4px;
-  padding: 2px 2px;
+  padding: 4px 2px;
   font-size: 10px;
   background: #1a2130;
   color: #dbe3f5;
@@ -817,6 +817,8 @@ textarea {
   font-size: 10px;
   color: #d9e1f3;
   line-height: 1;
+  position: relative;
+  top: 1px;
 }
 
 .builder-inspector-note {
@@ -830,12 +832,12 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
+  gap: 4px;
 }
 
 .builder-entity--filter .builder-entity-title {
   position: absolute;
-  top: 10px;
+  top: 13px;
   left: px;
   transform: translateY(-50%);
   margin: 0;
@@ -1121,6 +1123,8 @@ textarea {
   font-size: 10px;
   letter-spacing: 0.03em;
   margin-bottom: 2px;
+  position: relative;
+  top: 1px;
 }
 
 .builder-entity-settings {
@@ -1128,6 +1132,8 @@ textarea {
   line-height: 1;
   color: #b5bfd4;
   margin-bottom: 2px;
+  position: relative;
+  top: 1px;
 }
 
 .builder-inline-controls {
@@ -1138,7 +1144,6 @@ textarea {
   --builder-prop-label-col: 56px;
   --builder-prop-value-col: 115px;
   display: block;
-  margin-bottom: 4px;
 }
 
 .builder-filter-left {
@@ -1160,6 +1165,8 @@ textarea {
 .builder-row-label {
   font-size: 10px;
   color: #c7d0e3;
+  position: relative;
+  top: 1px;
 }
 
 .builder-hide-property-labels .builder-row-label {
@@ -1188,6 +1195,7 @@ textarea {
 
 .builder-cycle--tall .builder-cycle-value {
   min-height: 0;
+  height: 30px;
   align-self: stretch;
 }
 
@@ -1203,7 +1211,8 @@ textarea {
   font-size: 10px;
   height: 20px;
   line-height: 1;
-  padding: 0;
+  box-sizing: border-box;
+  padding: 1px 0 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1226,7 +1235,7 @@ textarea {
   background: #0f131b;
   border-radius: 0;
   font-size: 10px;
-  padding: 2px 4px;
+  padding: 3px 4px 1px;
   min-height: 20px;
   box-sizing: border-box;
   text-align: center;
@@ -1255,6 +1264,8 @@ textarea {
   line-height: 1;
   padding: 0 2px;
   user-select: none;
+  position: relative;
+  top: 1px;
 }
 
 .builder-mask-cell {
@@ -1274,8 +1285,12 @@ textarea {
   line-height: 1;
   color: #c7d0e3;
   text-align: center;
-  padding: 2px 0;
-  display: block;
+  box-sizing: border-box;
+  padding: 1px 0 0;
+  height: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-variant-numeric: tabular-nums;
   text-rendering: geometricPrecision;
 }
@@ -1288,6 +1303,8 @@ textarea {
   line-height: 1;
   width: 100%;
   height: 16px;
+  box-sizing: border-box;
+  padding: 1px 0 0;
   cursor: pointer;
 }
 
@@ -1327,15 +1344,16 @@ textarea {
 }
 
 .builder-port {
-  width: 16px;
-  height: 16px;
+  box-sizing: border-box;
+  width: 17px;
+  height: 17px;
   border-radius: 999px;
   border: 1px solid #4a556d;
   background: #0f131b;
   color: #d9e1f3;
   font-size: 10px;
   line-height: 1;
-  padding: 0;
+  padding: 1px 0 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
