@@ -37,11 +37,10 @@ jobs:
       - name: Typecheck
         run: pnpm run check
 
-      - name: Build topology data and Vite site
+      - name: Build Vite site
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
         run: |
-          pnpm run viewer:build
           pnpm run web:build
 
       - name: Upload Pages artifact

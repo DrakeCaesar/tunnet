@@ -4,4 +4,3 @@
 - Select a cloned entity and edit filter `mask`; verify whole group updates.
 - Delete a selected cloned entity; verify all group clones and attached links are removed.
 - Export state, reload page, import state; verify roundtrip is lossless.
-- Click `Preview In Viewer`; verify viewer tab loads compiled nodes/links.

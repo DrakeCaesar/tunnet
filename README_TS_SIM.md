@@ -25,22 +25,14 @@ pnpm start
 - `out/phase4-topology.graphml`
 - `out/phase5-topology.graphml`
 
-Web viewer:
+Web builder:
 
 ```bash
 pnpm dev
 ```
 
 Then open the URL printed by Vite (typically `http://localhost:5173`).
-`pnpm dev` runs both:
-- topology data build in watch mode (`src/viewer-build.ts`)
-- Vite dev server with live reload
-
-Manual one-off data export:
-
-```bash
-pnpm viewer:build
-```
+`pnpm dev` runs the Vite dev server with live reload.
 
 Production build:
 

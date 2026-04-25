@@ -38,7 +38,7 @@ import {
   loadBuilderState,
   saveBuilderState,
 } from "./persistence";
-import { compileBuilderToViewerPayload } from "./compile";
+import { compileBuilderPayload } from "./compile";
 import type { Device, Packet, PortRef, SimulationStats, Topology } from "../simulation";
 import { buildPortAdjacency, getHubEgressPort, portKey, TunnetSimulator } from "../simulation";
 import {
@@ -54,7 +54,6 @@ import {
   SPEED_EXP_MIN,
 } from "../sim-controls";
 
-const VIEWER_PREVIEW_KEY = "tunnet.builder.previewPayload";
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_HIDE_PROP_LABELS_KEY = "tunnet.builder.hidePropertyLabels";
 const BUILDER_LAYER_GAP_PX = 5;
@@ -325,7 +324,6 @@ function hubTriangleSvg(instanceId: string, rotation: string | undefined): strin
 
 interface BuilderMountOptions {
   root: HTMLDivElement;
-  onPreviewReady?: () => void;
 }
 
 type CanvasScale = {
@@ -563,7 +561,7 @@ function buildFilterDescription(settings: Record<string, string>): string {
 }
 
 export function mountBuilderView(options: BuilderMountOptions): void {
-  const { root, onPreviewReady } = options;
+  const { root } = options;
   let raw = loadBuilderState();
   if (!raw || raw.version !== 1) {
     raw = createEmptyBuilderState();
@@ -638,7 +636,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
           <button id="builder-export" type="button">Export Text</button>
           <button id="builder-import" type="button">Import Text</button>
-          <button id="builder-preview" type="button">Preview In Viewer</button>
         </div>
         <div class="section-title builder-spacer">Simulation</div>
         <div class="builder-sim-toolbar">
@@ -722,7 +719,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const togglePropLabelsBtn = root.querySelector<HTMLButtonElement>("#builder-toggle-prop-labels")!;
   const exportBtn = root.querySelector<HTMLButtonElement>("#builder-export")!;
   const importBtn = root.querySelector<HTMLButtonElement>("#builder-import")!;
-  const previewBtn = root.querySelector<HTMLButtonElement>("#builder-preview")!;
   const simPlayBtn = root.querySelector<HTMLButtonElement>("#builder-sim-play")!;
   const simPauseBtn = root.querySelector<HTMLButtonElement>("#builder-sim-pause")!;
   const simStepBtn = root.querySelector<HTMLButtonElement>("#builder-sim-step")!;
@@ -944,6 +940,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const SIM_STEP_COMPUTE_EMA_ALPHA = 0.2;
   let simPreviousOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simCurrentOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
+  let simPreviousOccupancyByPacketId = new Map<number, { port: PortRef; packet: Packet }>();
   let simPacketProgress = 1;
   const builderEndpointIdByAddress = new Map<string, string>();
   let builderSimDevices: Record<string, Device> = {};
@@ -1015,7 +1012,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     simPlaying = false;
     simAnimating = false;
-    const payload = compileBuilderToViewerPayload(state);
+    const payload = compileBuilderPayload(state);
     const topo = payload.topology as unknown as Topology;
     builderTopologySig = JSON.stringify(payload.topology);
     rebuildBuilderSimTopologyCache(topo);
@@ -1041,6 +1038,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simEmaStepComputeMs = null;
     rebuildBuilderSimEndpointIndex(topo);
     simPreviousOccupancy = [];
+    simPreviousOccupancyByPacketId = new Map();
     simCurrentOccupancy = cloneSimOccupancy(builderSimulator.getPortOccupancy());
     simPacketProgress = 1;
     if (selection?.kind === "packet") {
@@ -1053,7 +1051,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function initOrRefreshBuilderSimulatorIfTopologyChanged(): void {
-    const sig = JSON.stringify(compileBuilderToViewerPayload(state).topology);
+    const sig = JSON.stringify(compileBuilderPayload(state).topology);
     if (sig === builderTopologySig) return;
     resetBuilderSimulation();
   }
@@ -1063,6 +1061,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const tickWallStartMs = performance.now();
     simAnimating = true;
     simPreviousOccupancy = cloneSimOccupancy(simCurrentOccupancy);
+    simPreviousOccupancyByPacketId = simOccupancyByPacketId(simPreviousOccupancy);
     const stepStartMs = performance.now();
     const snapshot = builderSimulator.step();
     const emittedTick = snapshot.stats.emitted - simPreviousStatsTotals.emitted;
@@ -1671,17 +1670,32 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return m;
   }
 
-  function builderPortCenterInOverlayCoords(ref: PortRef): { x: number; y: number } | null {
+  function builderPortCenterInOverlayCoords(
+    ref: PortRef,
+    cache?: Map<string, { x: number; y: number } | null>,
+  ): { x: number; y: number } | null {
+    const key = portKey(ref);
+    if (cache?.has(key)) {
+      return cache.get(key) ?? null;
+    }
     const wrap = packetOverlayEl.parentElement;
-    if (!wrap) return null;
+    if (!wrap) {
+      cache?.set(key, null);
+      return null;
+    }
     const el = resolveBuilderPortForWireOverlay(ref.deviceId, ref.port);
-    if (!el) return null;
+    if (!el) {
+      cache?.set(key, null);
+      return null;
+    }
     const wrapRect = wrap.getBoundingClientRect();
     const r = el.getBoundingClientRect();
-    return {
+    const center = {
       x: r.left + r.width / 2 - wrapRect.left + wrap.scrollLeft,
       y: r.top + r.height / 2 - wrapRect.top + wrap.scrollTop,
     };
+    cache?.set(key, center);
+    return center;
   }
 
   type SimXY = { x: number; y: number };
@@ -1715,9 +1729,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return pts[pts.length - 1] ?? null;
   }
 
-  function buildPacketAnimationPolyline(from: PortRef, to: PortRef): SimXY[] | null {
-    const pa = builderPortCenterInOverlayCoords(from);
-    const pb = builderPortCenterInOverlayCoords(to);
+  function buildPacketAnimationPolyline(
+    from: PortRef,
+    to: PortRef,
+    centerCache: Map<string, SimXY | null>,
+  ): SimXY[] | null {
+    const pa = builderPortCenterInOverlayCoords(from, centerCache);
+    const pb = builderPortCenterInOverlayCoords(to, centerCache);
     if (!pa || !pb) {
       return null;
     }
@@ -1733,7 +1751,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const egress = getHubEgressPort(dFrom.rotation, from.port);
         const nbr = builderSimAdj.get(portKey({ deviceId: from.deviceId, port: egress }));
         if (nbr && nbr.deviceId === to.deviceId && nbr.port === to.port) {
-          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: egress });
+          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: egress }, centerCache);
           if (pm) {
             return [pa, pm, pb];
           }
@@ -1742,7 +1760,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const outPort: 0 | 1 = from.port === 0 ? 1 : 0;
         const nbr = builderSimAdj.get(portKey({ deviceId: from.deviceId, port: outPort }));
         if (nbr && nbr.deviceId === to.deviceId && nbr.port === to.port) {
-          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: outPort });
+          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: outPort }, centerCache);
           if (pm) {
             return [pa, pm, pb];
           }
@@ -1756,7 +1774,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           if (outPort === from.port) {
             return [pa, pb];
           }
-          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: outPort });
+          const pm = builderPortCenterInOverlayCoords({ deviceId: from.deviceId, port: outPort }, centerCache);
           if (pm) {
             return [pa, pm, pb];
           }
@@ -1785,7 +1803,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const overlayHeight = Math.max(wrap.clientHeight, contentHeight);
     syncBuilderPacketOverlayDimensions(overlayWidth, overlayHeight);
 
-    const prevMap = simOccupancyByPacketId(simPreviousOccupancy);
+    const prevMap = simPreviousOccupancyByPacketId;
+    const centerCache = new Map<string, SimXY | null>();
     const parts: string[] = [];
     const dotR = 5;
     for (const { port, packet } of simCurrentOccupancy) {
@@ -1795,9 +1814,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const fromPortNum = fromEntry?.port.port ?? 0;
       const fromRef: PortRef = { deviceId: fromDeviceId, port: fromPortNum };
       const toRef: PortRef = { ...port };
-      const pa =
-        builderPortCenterInOverlayCoords(fromRef) ?? builderPortCenterInOverlayCoords(toRef);
-      const pb = builderPortCenterInOverlayCoords(toRef);
+      const pa = builderPortCenterInOverlayCoords(fromRef, centerCache) ?? builderPortCenterInOverlayCoords(toRef, centerCache);
+      const pb = builderPortCenterInOverlayCoords(toRef, centerCache);
       if (!pa || !pb) continue;
       let x: number;
       let y: number;
@@ -1806,7 +1824,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         x = pa.x + o.x;
         y = pa.y + o.y;
       } else {
-        const line = buildPacketAnimationPolyline(fromRef, toRef);
+        const line = buildPacketAnimationPolyline(fromRef, toRef, centerCache);
         if (!line || line.length < 2) {
           const o = simRestingPortOffset(port.port);
           x = pa.x + o.x;
@@ -3523,12 +3541,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     renderCanvas();
   });
 
-  previewBtn.addEventListener("click", () => {
-    const payload = compileBuilderToViewerPayload(state);
-    window.sessionStorage.setItem(VIEWER_PREVIEW_KEY, JSON.stringify(payload));
-    onPreviewReady?.();
-  });
-
   packetOverlayEl.addEventListener("click", (ev) => {
     const t = ev.target;
     if (!(t instanceof Element)) return;
@@ -3904,5 +3916,3 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   });
   resetBuilderSimulation();
 }
-
-export { VIEWER_PREVIEW_KEY };

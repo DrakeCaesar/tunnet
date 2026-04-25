@@ -1,7 +1,7 @@
 import { BuilderEntityInstance, expandBuilderState } from "./clone-engine";
 import { BuilderState } from "./state";
 
-interface ViewerNode {
+interface BuilderNode {
   id: string;
   label: string;
   type: string;
@@ -10,7 +10,7 @@ interface ViewerNode {
   settingsText: string;
 }
 
-interface ViewerEdge {
+interface BuilderEdge {
   id: string;
   from: string;
   to: string;
@@ -78,7 +78,7 @@ function makeDevice(entity: BuilderEntityInstance): DeviceBase & Record<string, 
   };
 }
 
-export interface CompiledViewerPayload {
+export interface CompiledBuilderPayload {
   metadata: {
     generatedAt: string;
     phase: string;
@@ -88,15 +88,15 @@ export interface CompiledViewerPayload {
     flowCount: number;
     sourceEndpointCount: number;
   };
-  nodes: ViewerNode[];
-  edges: ViewerEdge[];
+  nodes: BuilderNode[];
+  edges: BuilderEdge[];
   topology: {
     devices: Record<string, Record<string, unknown>>;
     links: Array<{ a: TopologyLinkPort; b: TopologyLinkPort }>;
   };
 }
 
-export function compileBuilderToViewerPayload(state: BuilderState): CompiledViewerPayload {
+export function compileBuilderPayload(state: BuilderState): CompiledBuilderPayload {
   const expanded = expandBuilderState(state);
   const nodes = expanded.entities.map((entity) => ({
     id: entity.instanceId,
