@@ -3306,21 +3306,25 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const faceDeg = ((Number.parseFloat(rootEnt.settings.faceAngle ?? "0") % 360) + 360) % 360;
       const hubMode = hubPointerMode(localX, localY, faceDeg);
       if (hubMode === "none") return;
-      if (!selectedEntityRootIds.has(rootEnt.id)) {
+      if (!selectedEntityRootIds.has(rootEnt.id) && !ev.shiftKey && !ev.ctrlKey) {
         setSelection({ kind: "entity", rootId: rootEnt.id });
       }
       ev.preventDefault();
       if (hubMode === "move") {
         let shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
-        if (ev.ctrlKey) {
+        const preCopyState = state;
+        const preCopySelection = new Set(selectedEntityRootIds);
+        let didMove = false;
+        let didModifierCopy = false;
+        if (ev.ctrlKey || ev.shiftKey) {
           const idMap = createCopiedGroupInPlace(movingRootIds);
           const copiedIds = Array.from(idMap.values());
           if (!copiedIds.length) return;
           movingRootIds = copiedIds;
           rootDragId = idMap.get(rootEnt.id) ?? rootEnt.id;
           setEntitySelectionSet(new Set(movingRootIds));
-          renderCanvas();
           shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
+          didModifierCopy = true;
         }
         const rootDragEnt = state.entities.find((e) => e.id === rootDragId);
         if (!rootDragEnt) return;
@@ -3482,6 +3486,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           ) {
             return;
           }
+          if (didModifierCopy && !didMove) {
+            renderCanvas();
+          }
           lastX = rootPlacement.x;
           lastY = rootPlacement.y;
           lastLayer = rootPlacement.layer;
@@ -3506,6 +3513,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               setEntityDomPosition(id, nx, ny);
             }
           });
+          didMove = true;
           showDragGroupBounds(movingRootIds);
           if (shouldUpdateWiresDuringDrag) {
             scheduleWireOverlayRender();
@@ -3519,6 +3527,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             dragRenderRaf = null;
           }
           clearBuilderDragCursor();
+          if (didModifierCopy && !didMove) {
+            state = preCopyState;
+            const next = new Set(preCopySelection);
+            if (next.has(rootEnt.id)) next.delete(rootEnt.id);
+            else next.add(rootEnt.id);
+            setEntitySelectionSet(next);
+            return;
+          }
           hideDragGroupBounds();
           if (!shouldUpdateWiresDuringDrag) {
             scheduleWireOverlayRender();
@@ -3597,15 +3613,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const anchorX = (ev.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX;
     const anchorY = (ev.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX;
     let shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
-    if (ev.ctrlKey) {
+    const preCopyState = state;
+    const preCopySelection = new Set(selectedEntityRootIds);
+    let didMove = false;
+    let didModifierCopy = false;
+    if (ev.ctrlKey || ev.shiftKey) {
       const idMap = createCopiedGroupInPlace(movingRootIds);
       const copiedIds = Array.from(idMap.values());
       if (!copiedIds.length) return;
       movingRootIds = copiedIds;
       rootDragId = idMap.get(rootEnt.id) ?? rootEnt.id;
       setEntitySelectionSet(new Set(movingRootIds));
-      renderCanvas();
       shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
+      didModifierCopy = true;
     }
     const rootDragEnt = state.entities.find((e) => e.id === rootDragId);
     if (!rootDragEnt) return;
@@ -3759,6 +3779,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       ) {
         return;
       }
+      if (didModifierCopy && !didMove) {
+        renderCanvas();
+      }
       lastX = rootPlacement.x;
       lastY = rootPlacement.y;
       lastLayer = rootPlacement.layer;
@@ -3783,6 +3806,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           setEntityDomPosition(id, nx, ny);
         }
       });
+      didMove = true;
       showDragGroupBounds(movingRootIds);
       if (shouldUpdateWiresDuringDrag) {
         scheduleWireOverlayRender();
@@ -3795,6 +3819,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (dragRenderRaf !== null) {
         window.cancelAnimationFrame(dragRenderRaf);
         dragRenderRaf = null;
+      }
+      if (didModifierCopy && !didMove) {
+        state = preCopyState;
+        const next = new Set(preCopySelection);
+        if (next.has(rootEnt.id)) next.delete(rootEnt.id);
+        else next.add(rootEnt.id);
+        setEntitySelectionSet(next);
+        return;
       }
       hideDragGroupBounds();
       if (!shouldUpdateWiresDuringDrag) {
@@ -4554,7 +4586,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         return;
       }
       const rootEnt = state.entities.find((e) => e.id === rootId);
-      if (ev.shiftKey) {
+      if (ev.shiftKey || ev.ctrlKey) {
+        if (rootEnt?.templateType === "hub") {
+          // For modifier-toggle, accept clicks only on actual hub geometry, not transparent bbox area.
+          const hubEl = entityEl.querySelector<HTMLElement>(".builder-hub");
+          if (!hubEl) return;
+          const hubRect = hubEl.getBoundingClientRect();
+          const localX = ev.clientX - hubRect.left;
+          const localY = ev.clientY - hubRect.top;
+          const faceRaw = Number.parseFloat(hubEl.dataset.faceAngle ?? rootEnt.settings.faceAngle ?? "0");
+          const faceDeg = ((Number.isFinite(faceRaw) ? faceRaw : 0) % 360 + 360) % 360;
+          if (hubPointerMode(localX, localY, faceDeg) === "none") {
+            return;
+          }
+        }
         const next = currentEntitySelectionSet();
         if (next.has(rootId)) next.delete(rootId);
         else next.add(rootId);
@@ -4585,39 +4630,40 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   canvasEl.addEventListener("mousedown", (ev) => {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
+    if (ev.button !== 0) return;
     if (target.closest(".builder-note-editor")) return;
     if (target.closest("button")) return;
     const entityEl = target.closest<HTMLElement>(".builder-entity");
     if (!entityEl) return;
     const rootId = entityEl.dataset.rootId;
-    if (rootId && ev.shiftKey) {
-      const next = currentEntitySelectionSet();
-      if (next.has(rootId)) next.delete(rootId);
-      else next.add(rootId);
-      setEntitySelectionSet(next);
-      suppressNextEntityClickToggle = true;
-      return;
-    }
     const rootEnt = rootId ? state.entities.find((e) => e.id === rootId) : null;
     const preserveMulti = !!rootId && selectedEntityRootIds.has(rootId);
-    if (rootEnt?.templateType === "hub") {
-      const hubEl = entityEl.querySelector<HTMLElement>(".builder-hub");
-      if (!hubEl) return;
-      const hubRect = hubEl.getBoundingClientRect();
-      const localX = ev.clientX - hubRect.left;
-      const localY = ev.clientY - hubRect.top;
-      const faceRaw = Number.parseFloat(hubEl.dataset.faceAngle ?? rootEnt.settings.faceAngle ?? "0");
-      const faceDeg = ((Number.isFinite(faceRaw) ? faceRaw : 0) % 360 + 360) % 360;
-      if (hubPointerMode(localX, localY, faceDeg) === "none") return;
-      ev.stopImmediatePropagation();
-      startEntityDragFromElement(entityEl, ev);
-      return;
-    }
     if (rootId && !preserveMulti && !ev.shiftKey && !ev.ctrlKey) {
       setSelection({ kind: "entity", rootId });
     }
-    ev.stopImmediatePropagation();
-    startEntityDragFromElement(entityEl, ev);
+    const downX = ev.clientX;
+    const downY = ev.clientY;
+    const DRAG_START_THRESHOLD_PX = 3;
+    let started = false;
+    const onMove = (mv: MouseEvent): void => {
+      if (started) return;
+      const dx = mv.clientX - downX;
+      const dy = mv.clientY - downY;
+      if (Math.hypot(dx, dy) < DRAG_START_THRESHOLD_PX) return;
+      started = true;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      // Drag start should not also toggle click-selection on release.
+      suppressNextEntityClickToggle = true;
+      ev.stopImmediatePropagation();
+      startEntityDragFromElement(entityEl, mv);
+    };
+    const onUp = (): void => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   });
 
   canvasEl.addEventListener("mousedown", (ev) => {
