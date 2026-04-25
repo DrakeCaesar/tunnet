@@ -1770,6 +1770,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return [primaryRootId];
   }
 
+  function entityIdsHaveLinks(ids: Iterable<string>): boolean {
+    const idSet = new Set(ids);
+    if (idSet.size === 0) return false;
+    return state.links.some((link) => idSet.has(link.fromEntityId) || idSet.has(link.toEntityId));
+  }
+
   function templatePlacementInSection(
     templateType: BuilderTemplateType,
     section: { layer: BuilderLayer; segment: number; rect: DOMRect; widthPx: number; heightPx: number },
@@ -1860,27 +1866,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (!current) return;
       lastPlacementKey = key;
       if (current.layer !== placement.layer) {
-        state = updateEntityPlacement(
-          state,
-          createdRootId,
-          placement.layer,
-          placement.segment,
-          placement.x,
-          placement.y,
-        );
+        setEntityPlacementDuringDrag(createdRootId, placement.layer, placement.segment, placement.x, placement.y);
         scheduleDragRender();
       } else if (current.segmentIndex !== placement.segment) {
-        state = updateEntityPlacement(
-          state,
-          createdRootId,
-          placement.layer,
-          placement.segment,
-          placement.x,
-          placement.y,
-        );
+        setEntityPlacementDuringDrag(createdRootId, placement.layer, placement.segment, placement.x, placement.y);
         setEntityDomPosition(createdRootId, placement.x, placement.y);
       } else {
-        state = updateEntityPosition(state, createdRootId, placement.x, placement.y);
+        setEntityPositionDuringDrag(createdRootId, placement.x, placement.y);
         setEntityDomPosition(createdRootId, placement.x, placement.y);
       }
     };
@@ -2297,6 +2289,28 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       });
   }
 
+  function setEntityPositionDuringDrag(rootId: string, x: number, y: number): void {
+    const ent = state.entities.find((e) => e.id === rootId);
+    if (!ent || ent.isStatic || isStaticOuterLeafEndpoint(ent)) return;
+    ent.x = x;
+    ent.y = y;
+  }
+
+  function setEntityPlacementDuringDrag(
+    rootId: string,
+    layer: BuilderLayer,
+    segment: number,
+    x: number,
+    y: number,
+  ): void {
+    const ent = state.entities.find((e) => e.id === rootId);
+    if (!ent || ent.isStatic || isStaticOuterLeafEndpoint(ent)) return;
+    ent.layer = layer;
+    ent.segmentIndex = segment;
+    ent.x = x;
+    ent.y = y;
+  }
+
   function setHubFaceAngleDom(rootId: string, faceDeg: number): void {
     const normalizedFace = ((faceDeg % 360) + 360) % 360;
     const portStyleFor = (port: string): string => {
@@ -2683,6 +2697,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           const e = state.entities.find((x) => x.id === id);
           return e?.templateType === "relay";
         });
+        const shouldUpdateWiresDuringDrag = entityIdsHaveLinks(rotatingRootIds);
         const baseById = new Map<string, number>();
         rotatingRootIds.forEach((id) => {
           const ent = state.entities.find((x) => x.id === id);
@@ -2713,7 +2728,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             changed = true;
           });
           if (!changed) return;
-          scheduleWireOverlayRender();
+          if (shouldUpdateWiresDuringDrag) {
+            scheduleWireOverlayRender();
+          }
         };
         const onUp = (): void => {
           window.removeEventListener("mousemove", onMove);
@@ -2723,8 +2740,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             dragRenderRaf = null;
           }
           document.body.style.removeProperty("cursor");
-          renderCanvas();
-          persist();
+          if (!shouldUpdateWiresDuringDrag) {
+            scheduleWireOverlayRender();
+          }
+          schedulePersist();
           renderInspector();
         };
         document.body.style.cursor = "grabbing";
@@ -2747,6 +2766,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
       ev.preventDefault();
       if (hubMode === "move") {
+        let shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
         if (ev.ctrlKey) {
           const idMap = createCopiedGroupInPlace(movingRootIds);
           const copiedIds = Array.from(idMap.values());
@@ -2755,6 +2775,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           rootDragId = idMap.get(rootEnt.id) ?? rootEnt.id;
           setEntitySelectionSet(new Set(movingRootIds));
           renderCanvas();
+          shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
         }
         const rootDragEnt = state.entities.find((e) => e.id === rootDragId);
         if (!rootDragEnt) return;
@@ -2930,18 +2951,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             const cur = state.entities.find((e) => e.id === id);
             if (!cur) return;
             if (cur.layer !== targetLayer) {
-              state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+              setEntityPlacementDuringDrag(id, targetLayer, targetSegment, nx, ny);
               scheduleDragRender();
             } else if (cur.segmentIndex !== targetSegment) {
-              state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+              setEntityPlacementDuringDrag(id, targetLayer, targetSegment, nx, ny);
               setEntityDomPosition(id, nx, ny);
             } else {
-              state = updateEntityPosition(state, id, nx, ny);
+              setEntityPositionDuringDrag(id, nx, ny);
               setEntityDomPosition(id, nx, ny);
             }
           });
           showDragGroupBounds(movingRootIds);
-          scheduleWireOverlayRender();
+          if (shouldUpdateWiresDuringDrag) {
+            scheduleWireOverlayRender();
+          }
         };
         const onUp = (): void => {
           window.removeEventListener("mousemove", onMove);
@@ -2951,6 +2974,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             dragRenderRaf = null;
           }
           hideDragGroupBounds();
+          if (!shouldUpdateWiresDuringDrag) {
+            scheduleWireOverlayRender();
+          }
           schedulePersist();
           renderInspector();
         };
@@ -2966,6 +2992,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const e = state.entities.find((x) => x.id === id);
         return e?.templateType === "hub";
       });
+      const shouldUpdateWiresDuringDrag = entityIdsHaveLinks(rotatingRootIds);
       const baseById = new Map<string, number>();
       rotatingRootIds.forEach((id) => {
         const ent = state.entities.find((x) => x.id === id);
@@ -2994,7 +3021,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           changed = true;
         });
         if (!changed) return;
-        scheduleWireOverlayRender();
+        if (shouldUpdateWiresDuringDrag) {
+          scheduleWireOverlayRender();
+        }
       };
       const onUp = (): void => {
         window.removeEventListener("mousemove", onMove);
@@ -3004,6 +3033,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           dragRenderRaf = null;
         }
         document.body.style.removeProperty("cursor");
+        if (!shouldUpdateWiresDuringDrag) {
+          scheduleWireOverlayRender();
+        }
         schedulePersist();
         renderInspector();
       };
@@ -3018,6 +3050,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const segRect = entitiesHost.getBoundingClientRect();
     const anchorX = (ev.clientX - segRect.left) / BUILDER_GRID_TILE_SIZE_X_PX;
     const anchorY = (ev.clientY - segRect.top) / BUILDER_GRID_TILE_SIZE_Y_PX;
+    let shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
     if (ev.ctrlKey) {
       const idMap = createCopiedGroupInPlace(movingRootIds);
       const copiedIds = Array.from(idMap.values());
@@ -3026,6 +3059,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       rootDragId = idMap.get(rootEnt.id) ?? rootEnt.id;
       setEntitySelectionSet(new Set(movingRootIds));
       renderCanvas();
+      shouldUpdateWiresDuringDrag = entityIdsHaveLinks(movingRootIds);
     }
     const rootDragEnt = state.entities.find((e) => e.id === rootDragId);
     if (!rootDragEnt) return;
@@ -3193,18 +3227,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const cur = state.entities.find((e) => e.id === id);
         if (!cur) return;
         if (cur.layer !== targetLayer) {
-          state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+          setEntityPlacementDuringDrag(id, targetLayer, targetSegment, nx, ny);
           scheduleDragRender();
         } else if (cur.segmentIndex !== targetSegment) {
-          state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+          setEntityPlacementDuringDrag(id, targetLayer, targetSegment, nx, ny);
           setEntityDomPosition(id, nx, ny);
         } else {
-          state = updateEntityPosition(state, id, nx, ny);
+          setEntityPositionDuringDrag(id, nx, ny);
           setEntityDomPosition(id, nx, ny);
         }
       });
       showDragGroupBounds(movingRootIds);
-      scheduleWireOverlayRender();
+      if (shouldUpdateWiresDuringDrag) {
+        scheduleWireOverlayRender();
+      }
     };
     const onUp = (): void => {
       window.removeEventListener("mousemove", onMove);
@@ -3214,6 +3250,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         dragRenderRaf = null;
       }
       hideDragGroupBounds();
+      if (!shouldUpdateWiresDuringDrag) {
+        scheduleWireOverlayRender();
+      }
       schedulePersist();
       renderInspector();
     };
