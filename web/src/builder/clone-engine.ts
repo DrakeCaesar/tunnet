@@ -109,6 +109,34 @@ function isMiddleVoidSegment(segmentIndex: number): boolean {
   return segmentIndex === 3;
 }
 
+/**
+ * Global mirror policy for this builder:
+ * - static outer leaf endpoints are fixed (no mirrors)
+ * - outer void band 12-15 is non-mirroring
+ * - middle segment 3 (0.0.3.*) is non-mirroring
+ */
+function segmentExistsForRoot(root: BuilderEntityRoot, segment: number): boolean {
+  if (root.layer === "outer64") {
+    if (isOuterLeafVoidSegment(root.segmentIndex)) {
+      return segment === root.segmentIndex;
+    }
+    if (isOuterLeafVoidSegment(segment) && segment !== root.segmentIndex) {
+      return false;
+    }
+    return true;
+  }
+  if (root.layer === "middle16") {
+    if (isMiddleVoidSegment(root.segmentIndex)) {
+      return segment === root.segmentIndex;
+    }
+    if (isMiddleVoidSegment(segment) && segment !== root.segmentIndex) {
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
 /** Parse `rootId@segment` from port / entity `data-instance-id` (last `@` is the split). */
 export function parseBuilderInstanceId(id: string): { rootId: string; segmentIndex: number } | null {
   const at = id.lastIndexOf("@");
@@ -147,26 +175,7 @@ function expandEntities(roots: BuilderEntityRoot[], opts?: { builderView?: boole
     }
     const count = LAYER_COUNTS[root.layer];
     for (let segment = 0; segment < count; segment += 1) {
-      if (
-        view &&
-        (
-          (root.layer === "outer64" &&
-            (
-              // For roots placed in the merged 0.0.3.* area, keep only their primary instance.
-              isOuterLeafVoidSegment(root.segmentIndex)
-                ? segment !== root.segmentIndex
-                : // For non-void outer roots, never mirror into 0.0.3.* segments.
-                  isOuterLeafVoidSegment(segment) && segment !== root.segmentIndex
-            )) ||
-          (root.layer === "middle16" &&
-            (
-              // Mirror policy aligned with outer 0.0.3.* void band: middle segment 3 is not mirrored.
-              isMiddleVoidSegment(root.segmentIndex)
-                ? segment !== root.segmentIndex
-                : isMiddleVoidSegment(segment) && segment !== root.segmentIndex
-            ))
-        )
-      ) {
+      if (!segmentExistsForRoot(root, segment)) {
         continue;
       }
       out.push({
@@ -213,6 +222,9 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
         if (toSeg < 0 || toSeg >= toCount) {
           continue;
         }
+        if (!segmentExistsForRoot(from, fromSeg) || !segmentExistsForRoot(to, toSeg)) {
+          continue;
+        }
         out.push({
           instanceId: `${root.id}@se-${fromSeg}-${toSeg}`,
           rootId: root.id,
@@ -234,6 +246,9 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
       for (let fromSeg = 0; fromSeg < fromCount; fromSeg += 1) {
         const toSeg = fromSeg + d;
         if (toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
+        if (!segmentExistsForRoot(from, fromSeg) || !segmentExistsForRoot(to, toSeg)) {
           continue;
         }
         out.push({
@@ -266,6 +281,9 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
           if (fromSeg < 0 || fromSeg >= fromCount) {
             continue;
           }
+          if (!segmentExistsForRoot(from, fromSeg) || !segmentExistsForRoot(to, toSeg)) {
+            continue;
+          }
           out.push({
             instanceId: `${root.id}@f2c-s${toSeg}-${fromSeg}`,
             rootId: root.id,
@@ -283,6 +301,9 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
         const fromSeg = segmentByBaseColumn(from.layer, base);
         const toSeg = segmentByBaseColumn(to.layer, base);
         if (fromSeg < 0 || fromSeg >= fromCount || toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
+        if (!segmentExistsForRoot(from, fromSeg) || !segmentExistsForRoot(to, toSeg)) {
           continue;
         }
         out.push({
@@ -313,6 +334,9 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
           if (toSeg < 0 || toSeg >= toCount) {
             continue;
           }
+          if (!segmentExistsForRoot(from, fromSeg) || !segmentExistsForRoot(to, toSeg)) {
+            continue;
+          }
           out.push({
             instanceId: `${root.id}@c2f-s${fromSeg}-${toSeg}`,
             rootId: root.id,
@@ -330,6 +354,9 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
         const fromSeg = segmentByBaseColumn(from.layer, base);
         const toSeg = segmentByBaseColumn(to.layer, base);
         if (fromSeg < 0 || fromSeg >= fromCount || toSeg < 0 || toSeg >= toCount) {
+          continue;
+        }
+        if (!segmentExistsForRoot(from, fromSeg) || !segmentExistsForRoot(to, toSeg)) {
           continue;
         }
         out.push({
