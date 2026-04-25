@@ -55,9 +55,15 @@ import {
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_HIDE_PROP_LABELS_KEY = "tunnet.builder.hidePropertyLabels";
 const BUILDER_PAGE_STATE_KEY = "tunnet.builder.pageState";
+const BUILDER_SIDEBAR_WIDTH_KEY = "tunnet.builder.sidebarWidth";
 const BUILDER_LAYER_GAP_PX = 5;
 const BUILDER_GRID_TILE_SIZE_X_PX = 20;
 const BUILDER_GRID_TILE_SIZE_Y_PX = 20;
+const BUILDER_SIDEBAR_DEFAULT_WIDTH_PX = 400;
+const BUILDER_SIDEBAR_MIN_WIDTH_PX = 240;
+const BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX = 16;
+const BUILDER_SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
+const BUILDER_MAIN_MIN_WIDTH_PX = 240;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
 const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "canvasScale", "inspector", "performance"] as const;
 
@@ -672,7 +678,32 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return { collapsedSections: {}, showPacketIps: true };
     }
   };
+  const clampBuilderSidebarWidth = (width: number, layoutWidth = window.innerWidth): number => {
+    if (!Number.isFinite(width)) return BUILDER_SIDEBAR_DEFAULT_WIDTH_PX;
+    const maxWidth = Math.max(
+      BUILDER_SIDEBAR_MIN_WIDTH_PX,
+      layoutWidth - BUILDER_MAIN_MIN_WIDTH_PX,
+    );
+    if (width <= BUILDER_SIDEBAR_COLLAPSE_THRESHOLD_PX) {
+      return BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
+    }
+    return Math.max(BUILDER_SIDEBAR_MIN_WIDTH_PX, Math.min(maxWidth, width));
+  };
+  const loadBuilderSidebarWidth = (): number => {
+    try {
+      const raw = window.localStorage.getItem(BUILDER_SIDEBAR_WIDTH_KEY);
+      if (raw === null) return BUILDER_SIDEBAR_DEFAULT_WIDTH_PX;
+      return clampBuilderSidebarWidth(Number(raw));
+    } catch {
+      return BUILDER_SIDEBAR_DEFAULT_WIDTH_PX;
+    }
+  };
   let builderPageState = loadBuilderPageState();
+  let builderSidebarWidth = loadBuilderSidebarWidth();
+  let builderSidebarExpandedWidth =
+    builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX
+      ? BUILDER_SIDEBAR_DEFAULT_WIDTH_PX
+      : builderSidebarWidth;
   const panelSectionAttrs = (id: BuilderPanelSectionId): string => {
     const collapsed = builderPageState.collapsedSections[id] === true;
     return `class="builder-panel-section${collapsed ? " collapsed" : ""}" data-builder-panel-section="${id}"`;
@@ -770,6 +801,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           </div>
         </section>
       </aside>
+      <div class="builder-sidebar-resizer" role="separator" aria-orientation="vertical" title="Drag to resize side panel"></div>
       <main class="builder-main card">
         <div class="builder-canvas-wrap">
           <svg id="builder-wire-overlay" class="builder-wire-overlay"></svg>
@@ -780,6 +812,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     </div>
   `;
 
+  const builderLayoutEl = root.querySelector<HTMLDivElement>(".builder-layout")!;
+  const builderSidebarEl = root.querySelector<HTMLElement>(".builder-sidebar")!;
+  const builderSidebarResizerEl = root.querySelector<HTMLDivElement>(".builder-sidebar-resizer")!;
   const templatesEl = root.querySelector<HTMLDivElement>("#builder-templates")!;
   const canvasEl = root.querySelector<HTMLDivElement>("#builder-canvas")!;
   const wireOverlayEl = root.querySelector<SVGSVGElement>("#builder-wire-overlay")!;
@@ -837,6 +872,28 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     window.localStorage.setItem(BUILDER_PAGE_STATE_KEY, JSON.stringify(builderPageState));
   }
 
+  function persistBuilderSidebarWidth(): void {
+    window.localStorage.setItem(BUILDER_SIDEBAR_WIDTH_KEY, String(Math.round(builderSidebarWidth)));
+  }
+
+  function applyBuilderSidebarWidth(width: number, persistWidth = false): void {
+    const layoutWidth = builderLayoutEl.getBoundingClientRect().width || window.innerWidth;
+    builderSidebarWidth = clampBuilderSidebarWidth(width, layoutWidth);
+    if (builderSidebarWidth !== BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX) {
+      builderSidebarExpandedWidth = builderSidebarWidth;
+    }
+    builderLayoutEl.style.setProperty("--builder-sidebar-width", `${builderSidebarWidth}px`);
+    builderLayoutEl.classList.toggle(
+      "builder-sidebar-collapsed",
+      builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX,
+    );
+    if (persistWidth) {
+      persistBuilderSidebarWidth();
+    }
+    scheduleWireOverlayRender();
+    renderBuilderPacketCircles(simPacketProgress);
+  }
+
   function setPanelSectionCollapsed(sectionId: BuilderPanelSectionId, collapsed: boolean): void {
     builderPageState = {
       ...builderPageState,
@@ -860,6 +917,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simTogglePacketIpsBtn.textContent = visible ? "Hide IPs" : "Show IPs";
     if (!visible) {
       packetLabelPool.forEach((label) => {
+        label.bg.setAttribute("display", "none");
         label.text.setAttribute("display", "none");
         label.text.removeAttribute("data-packet-id");
       });
@@ -880,6 +938,50 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   window.addEventListener("blur", clearBuilderDragCursor);
   window.addEventListener("contextmenu", clearBuilderDragCursor);
+
+  builderSidebarResizerEl.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const startX = ev.clientX;
+    const startWidth = builderSidebarWidth;
+    const startedCollapsed = startWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
+    let dragged = false;
+    builderSidebarResizerEl.setPointerCapture(ev.pointerId);
+    document.body.style.cursor = "col-resize";
+    root.classList.add("builder-resizing-sidebar");
+
+    const onMove = (moveEv: PointerEvent): void => {
+      const dx = moveEv.clientX - startX;
+      if (Math.abs(dx) > 3) {
+        dragged = true;
+      }
+      applyBuilderSidebarWidth(startWidth + dx);
+    };
+    const onEnd = (endEv: PointerEvent): void => {
+      if (builderSidebarResizerEl.hasPointerCapture(ev.pointerId)) {
+        builderSidebarResizerEl.releasePointerCapture(ev.pointerId);
+      }
+      builderSidebarResizerEl.removeEventListener("pointermove", onMove);
+      builderSidebarResizerEl.removeEventListener("pointerup", onEnd);
+      builderSidebarResizerEl.removeEventListener("pointercancel", onEnd);
+      document.body.style.removeProperty("cursor");
+      root.classList.remove("builder-resizing-sidebar");
+      if (startedCollapsed && !dragged && endEv.type === "pointerup") {
+        applyBuilderSidebarWidth(builderSidebarExpandedWidth, true);
+      } else {
+        persistBuilderSidebarWidth();
+      }
+    };
+
+    builderSidebarResizerEl.addEventListener("pointermove", onMove);
+    builderSidebarResizerEl.addEventListener("pointerup", onEnd);
+    builderSidebarResizerEl.addEventListener("pointercancel", onEnd);
+  });
+
+  builderSidebarEl.addEventListener("click", () => {
+    if (builderSidebarWidth !== BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX) return;
+    applyBuilderSidebarWidth(builderSidebarExpandedWidth, true);
+  });
 
   function applyCanvasScale(): void {
     const wrap = wireOverlayEl.parentElement;
@@ -1144,8 +1246,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simPreparedPacketRenderDirty = true;
   let packetCircleGroupEl: SVGGElement | null = null;
   const packetCirclePool: SVGCircleElement[] = [];
-  const packetLabelPool: Array<{ text: SVGTextElement; src: SVGTSpanElement; dest: SVGTSpanElement }> = [];
+  const packetLabelPool: Array<{
+    bg: SVGRectElement;
+    text: SVGTextElement;
+    src: SVGTSpanElement;
+    dest: SVGTSpanElement;
+  }> = [];
   let activePacketCircleCount = 0;
+  applyBuilderSidebarWidth(builderSidebarWidth);
 
   function cloneSimOccupancy(occ: Array<{ port: PortRef; packet: Packet }>): Array<{ port: PortRef; packet: Packet }> {
     return occ.map((e) => ({ port: { ...e.port }, packet: e.packet }));
@@ -2290,11 +2398,21 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return circle;
   }
 
-  function ensureBuilderPacketLabel(index: number): { text: SVGTextElement; src: SVGTSpanElement; dest: SVGTSpanElement } {
+  function ensureBuilderPacketLabel(index: number): {
+    bg: SVGRectElement;
+    text: SVGTextElement;
+    src: SVGTSpanElement;
+    dest: SVGTSpanElement;
+  } {
     const existing = packetLabelPool[index];
     if (existing) {
       return existing;
     }
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("class", "builder-packet-label-bg");
+    bg.setAttribute("rx", "4");
+    bg.setAttribute("ry", "4");
+
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("class", "builder-packet-label");
     text.setAttribute("dominant-baseline", "middle");
@@ -2308,8 +2426,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     dest.setAttribute("dy", "1.16em");
 
     text.append(src, dest);
-    ensureBuilderPacketCircleGroup().appendChild(text);
-    const label = { text, src, dest };
+    ensureBuilderPacketCircleGroup().append(bg, text);
+    const label = { bg, text, src, dest };
     packetLabelPool[index] = label;
     return label;
   }
@@ -2425,6 +2543,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (builderPageState.showPacketIps) {
         const shownLabel = label!;
         const labelX = (render.x + dotR + 5).toFixed(2);
+        shownLabel.bg.removeAttribute("display");
         shownLabel.text.removeAttribute("display");
         shownLabel.text.setAttribute("x", labelX);
         shownLabel.text.setAttribute("y", render.y.toFixed(2));
@@ -2435,7 +2554,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           shownLabel.dest.textContent = render.dest;
           shownLabel.text.setAttribute("data-packet-id", String(render.packetId));
         }
+        const labelBox = shownLabel.text.getBBox();
+        shownLabel.bg.setAttribute("x", (labelBox.x - 3).toFixed(2));
+        shownLabel.bg.setAttribute("y", (labelBox.y - 2).toFixed(2));
+        shownLabel.bg.setAttribute("width", (labelBox.width + 6).toFixed(2));
+        shownLabel.bg.setAttribute("height", (labelBox.height + 4).toFixed(2));
       } else if (label) {
+        label.bg.setAttribute("display", "none");
         label.text.setAttribute("display", "none");
         label.text.removeAttribute("data-packet-id");
       }
@@ -2448,6 +2573,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
       const label = packetLabelPool[i];
       if (label) {
+        label.bg.setAttribute("display", "none");
         label.text.setAttribute("display", "none");
         label.text.removeAttribute("data-packet-id");
       }
@@ -4373,6 +4499,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
   window.addEventListener("resize", scheduleWireOverlayRender);
   window.addEventListener("resize", applyCanvasScale);
+  window.addEventListener("resize", () => applyBuilderSidebarWidth(builderSidebarWidth));
 
   scaleXEl.addEventListener("input", () => {
     const parsed = Number(scaleXEl.value);
