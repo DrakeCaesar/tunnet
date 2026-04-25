@@ -64,6 +64,12 @@ const BUILDER_SIDEBAR_MIN_WIDTH_PX = 240;
 const BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX = 16;
 const BUILDER_SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
 const BUILDER_MAIN_MIN_WIDTH_PX = 240;
+const PACKET_IP_LABEL_CHAR_COUNT = 7;
+const PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX = 6.1;
+const PACKET_IP_LABEL_WIDTH_PX = Math.ceil(PACKET_IP_LABEL_CHAR_COUNT * PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX + 8);
+const PACKET_IP_LABEL_HEIGHT_PX = 24;
+const PACKET_IP_LABEL_OFFSET_X_PX = -3;
+const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
 const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "canvasScale", "inspector", "performance"] as const;
 
@@ -917,9 +923,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simTogglePacketIpsBtn.textContent = visible ? "Hide IPs" : "Show IPs";
     if (!visible) {
       packetLabelPool.forEach((label) => {
-        label.bg.setAttribute("display", "none");
-        label.text.setAttribute("display", "none");
+        if (label.visible) {
+          label.bg.setAttribute("display", "none");
+          label.text.setAttribute("display", "none");
+          label.visible = false;
+        }
         label.text.removeAttribute("data-packet-id");
+        label.lastPacketId = null;
       });
     }
     persistBuilderPageState();
@@ -1255,6 +1265,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     bgOffsetY: number;
     bgWidth: number;
     bgHeight: number;
+    lastPacketId: number | null;
+    lastTextX: number;
+    lastTextY: number;
+    visible: boolean;
   }> = [];
   let activePacketCircleCount = 0;
   applyBuilderSidebarWidth(builderSidebarWidth);
@@ -2411,6 +2425,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     bgOffsetY: number;
     bgWidth: number;
     bgHeight: number;
+    lastPacketId: number | null;
+    lastTextX: number;
+    lastTextY: number;
+    visible: boolean;
   } {
     const existing = packetLabelPool[index];
     if (existing) {
@@ -2440,10 +2458,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       text,
       src,
       dest,
-      bgOffsetX: -3,
-      bgOffsetY: -9,
-      bgWidth: 24,
-      bgHeight: 18,
+      bgOffsetX: PACKET_IP_LABEL_OFFSET_X_PX,
+      bgOffsetY: PACKET_IP_LABEL_OFFSET_Y_PX,
+      bgWidth: PACKET_IP_LABEL_WIDTH_PX,
+      bgHeight: PACKET_IP_LABEL_HEIGHT_PX,
+      lastPacketId: null,
+      lastTextX: Number.NaN,
+      lastTextY: Number.NaN,
+      visible: false,
     };
     packetLabelPool[index] = label;
     return label;
@@ -2560,30 +2582,40 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (builderPageState.showPacketIps) {
         const shownLabel = label!;
         const labelX = render.x + dotR + 5;
-        shownLabel.bg.removeAttribute("display");
-        shownLabel.text.removeAttribute("display");
-        shownLabel.text.setAttribute("x", labelX.toFixed(2));
-        shownLabel.text.setAttribute("y", render.y.toFixed(2));
-        shownLabel.src.setAttribute("x", labelX.toFixed(2));
-        shownLabel.dest.setAttribute("x", labelX.toFixed(2));
-        if (shownLabel.text.getAttribute("data-packet-id") !== String(render.packetId)) {
+        if (!shownLabel.visible) {
+          shownLabel.bg.removeAttribute("display");
+          shownLabel.text.removeAttribute("display");
+          shownLabel.visible = true;
+        }
+        if (shownLabel.lastTextX !== labelX) {
+          shownLabel.lastTextX = labelX;
+          const labelXText = labelX.toFixed(2);
+          shownLabel.text.setAttribute("x", labelXText);
+          shownLabel.src.setAttribute("x", labelXText);
+          shownLabel.dest.setAttribute("x", labelXText);
+          shownLabel.bg.setAttribute("x", (labelX + shownLabel.bgOffsetX).toFixed(2));
+        }
+        if (shownLabel.lastTextY !== render.y) {
+          shownLabel.lastTextY = render.y;
+          shownLabel.text.setAttribute("y", render.y.toFixed(2));
+          shownLabel.bg.setAttribute("y", (render.y + shownLabel.bgOffsetY).toFixed(2));
+        }
+        if (shownLabel.lastPacketId !== render.packetId) {
+          shownLabel.lastPacketId = render.packetId;
           shownLabel.src.textContent = render.src;
           shownLabel.dest.textContent = render.dest;
           shownLabel.text.setAttribute("data-packet-id", String(render.packetId));
-          const labelBox = shownLabel.text.getBBox();
-          shownLabel.bgOffsetX = labelBox.x - labelX - 3;
-          shownLabel.bgOffsetY = labelBox.y - render.y - 2;
-          shownLabel.bgWidth = labelBox.width + 6;
-          shownLabel.bgHeight = labelBox.height + 4;
+          shownLabel.bg.setAttribute("width", shownLabel.bgWidth.toFixed(2));
+          shownLabel.bg.setAttribute("height", shownLabel.bgHeight.toFixed(2));
         }
-        shownLabel.bg.setAttribute("x", (labelX + shownLabel.bgOffsetX).toFixed(2));
-        shownLabel.bg.setAttribute("y", (render.y + shownLabel.bgOffsetY).toFixed(2));
-        shownLabel.bg.setAttribute("width", shownLabel.bgWidth.toFixed(2));
-        shownLabel.bg.setAttribute("height", shownLabel.bgHeight.toFixed(2));
       } else if (label) {
-        label.bg.setAttribute("display", "none");
-        label.text.setAttribute("display", "none");
+        if (label.visible) {
+          label.bg.setAttribute("display", "none");
+          label.text.setAttribute("display", "none");
+          label.visible = false;
+        }
         label.text.removeAttribute("data-packet-id");
+        label.lastPacketId = null;
       }
     }
     for (let i = simPreparedPacketRenders.length; i < activePacketCircleCount; i += 1) {
@@ -2594,9 +2626,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
       const label = packetLabelPool[i];
       if (label) {
-        label.bg.setAttribute("display", "none");
-        label.text.setAttribute("display", "none");
+        if (label.visible) {
+          label.bg.setAttribute("display", "none");
+          label.text.setAttribute("display", "none");
+          label.visible = false;
+        }
         label.text.removeAttribute("data-packet-id");
+        label.lastPacketId = null;
       }
     }
     activePacketCircleCount = simPreparedPacketRenders.length;
