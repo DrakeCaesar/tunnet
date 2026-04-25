@@ -72,8 +72,8 @@ function hubMarkerId(instanceId: string): string {
  * Single hub size knob: all hub render/interaction geometry scales from this side length.
  * Change this one number to resize hubs.
  */
-const HUB_TRIANGLE_SIDE = 45;
-const HUB_BASE_TRIANGLE_SIDE = 45;
+const HUB_TRIANGLE_SIDE = 40;
+const HUB_BASE_TRIANGLE_SIDE = 40;
 const HUB_SCALE = HUB_TRIANGLE_SIDE / HUB_BASE_TRIANGLE_SIDE;
 /** SVG / hit box for hub (mirrors original proportions at side=70). */
 const HUB_VIEW = { w: 108 * HUB_SCALE, h: 96 * HUB_SCALE } as const;
@@ -867,6 +867,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     persistBuilderPageState();
     renderBuilderPacketCircles(simPacketProgress);
   }
+
+  function setBuilderDragCursor(cursor: "grabbing" | "crosshair"): void {
+    document.body.style.cursor = cursor;
+    root.classList.toggle("builder-dragging-grab", cursor === "grabbing");
+  }
+
+  function clearBuilderDragCursor(): void {
+    document.body.style.removeProperty("cursor");
+    root.classList.remove("builder-dragging-grab");
+  }
+
+  window.addEventListener("blur", clearBuilderDragCursor);
+  window.addEventListener("contextmenu", clearBuilderDragCursor);
 
   function applyCanvasScale(): void {
     const wrap = wireOverlayEl.parentElement;
@@ -1977,7 +1990,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const onUp = (up: MouseEvent): void => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      document.body.style.removeProperty("cursor");
+      clearBuilderDragCursor();
       floatingGhostEl.remove();
       if (!createdRootId) return;
       schedulePersist();
@@ -1985,7 +1998,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       up.preventDefault();
     };
 
-    document.body.style.cursor = "grabbing";
+    setBuilderDragCursor("grabbing");
     updateDraggedEntity(ev.clientX, ev.clientY);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -2885,14 +2898,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             window.cancelAnimationFrame(dragRenderRaf);
             dragRenderRaf = null;
           }
-          document.body.style.removeProperty("cursor");
+          clearBuilderDragCursor();
           if (!shouldUpdateWiresDuringDrag) {
             scheduleWireOverlayRender();
           }
           schedulePersist();
           renderInspector();
         };
-        document.body.style.cursor = "grabbing";
+        setBuilderDragCursor("grabbing");
         window.addEventListener("mousemove", onMove);
         window.addEventListener("mouseup", onUp);
         return;
@@ -3119,6 +3132,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             window.cancelAnimationFrame(dragRenderRaf);
             dragRenderRaf = null;
           }
+          clearBuilderDragCursor();
           hideDragGroupBounds();
           if (!shouldUpdateWiresDuringDrag) {
             scheduleWireOverlayRender();
@@ -3126,7 +3140,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           schedulePersist();
           renderInspector();
         };
-        document.body.style.cursor = "grabbing";
+        setBuilderDragCursor("grabbing");
         window.addEventListener("mousemove", onMove);
         window.addEventListener("mouseup", onUp);
         return;
@@ -3178,14 +3192,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           window.cancelAnimationFrame(dragRenderRaf);
           dragRenderRaf = null;
         }
-        document.body.style.removeProperty("cursor");
+        clearBuilderDragCursor();
         if (!shouldUpdateWiresDuringDrag) {
           scheduleWireOverlayRender();
         }
         schedulePersist();
         renderInspector();
       };
-      document.body.style.cursor = "grabbing";
+      setBuilderDragCursor("grabbing");
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
       return;
@@ -3391,6 +3405,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const onUp = (): void => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      clearBuilderDragCursor();
       if (dragRenderRaf !== null) {
         window.cancelAnimationFrame(dragRenderRaf);
         dragRenderRaf = null;
@@ -3402,6 +3417,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       schedulePersist();
       renderInspector();
     };
+    setBuilderDragCursor("grabbing");
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
@@ -3428,7 +3444,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onEnd);
       window.removeEventListener("pointercancel", onEnd);
-      document.body.style.removeProperty("cursor");
+      clearBuilderDragCursor();
       if (wireDragRaf !== null) {
         window.cancelAnimationFrame(wireDragRaf);
         wireDragRaf = null;
@@ -3516,7 +3532,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       setSelection({ kind: "link", rootId: added.link.id });
     };
     linkDrag = { from, endClient: { x: ev.clientX, y: ev.clientY } };
-    document.body.style.cursor = "crosshair";
+    setBuilderDragCursor("crosshair");
     renderWireOverlay();
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onEnd);

@@ -765,6 +765,16 @@ textarea {
   cursor: grab;
 }
 
+.builder-dragging-grab .builder-entity,
+.builder-dragging-grab .builder-entity--hub,
+.builder-dragging-grab .builder-port,
+.builder-dragging-grab .builder-hub--hover-move,
+.builder-dragging-grab .builder-hub--hover-rotate,
+.builder-dragging-grab .builder-entity--hub.builder-hub--hover-move,
+.builder-dragging-grab .builder-entity--hub.builder-hub--hover-rotate {
+  cursor: grabbing !important;
+}
+
 .builder-entity--outer-endpoint {
   left: 0 !important;
   top: 0 !important;
