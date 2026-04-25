@@ -504,6 +504,39 @@ function instancePortKey(entityId: string, segmentIndex: number, port: number): 
   return `${entityId}@${segmentIndex}#${port}`;
 }
 
+function isMiddleVoidSegment(segmentIndex: number): boolean {
+  return segmentIndex === 3;
+}
+
+/**
+ * Builder mirror policy: only count instance ports that can actually exist in builder view.
+ * This is used for one-wire replacement and instance-port deletion matching.
+ */
+function segmentExistsForRootInBuilder(root: BuilderEntityRoot, segment: number): boolean {
+  if (isStaticOuterLeafEndpoint(root)) {
+    return segment === root.segmentIndex;
+  }
+  if (root.layer === "outer64") {
+    if (isOuterLeafVoidSegment(root.segmentIndex)) {
+      return segment === root.segmentIndex;
+    }
+    if (isOuterLeafVoidSegment(segment) && segment !== root.segmentIndex) {
+      return false;
+    }
+    return true;
+  }
+  if (root.layer === "middle16") {
+    if (isMiddleVoidSegment(root.segmentIndex)) {
+      return segment === root.segmentIndex;
+    }
+    if (isMiddleVoidSegment(segment) && segment !== root.segmentIndex) {
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
 function buildInstancePortSetForLink(
   link: BuilderLinkRoot,
   byId: Map<string, BuilderEntityRoot>,
@@ -523,6 +556,7 @@ function buildInstancePortSetForLink(
     for (let s = 0; s < fromCount; s += 1) {
       const t = s + d;
       if (t < 0 || t >= toCount) continue;
+      if (!segmentExistsForRootInBuilder(from, s) || !segmentExistsForRootInBuilder(to, t)) continue;
       out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
       out.add(instancePortKey(link.toEntityId, t, link.toPort));
     }
@@ -535,6 +569,7 @@ function buildInstancePortSetForLink(
     for (let s = 0; s < fromCount; s += 1) {
       const t = s + d;
       if (t < 0 || t >= toCount) continue;
+      if (!segmentExistsForRootInBuilder(from, s) || !segmentExistsForRootInBuilder(to, t)) continue;
       out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
       out.add(instancePortKey(link.toEntityId, t, link.toPort));
     }
@@ -550,6 +585,7 @@ function buildInstancePortSetForLink(
       for (let s = 0; s < fromCount; s += 1) {
         const t = s * r + slot;
         if (t < 0 || t >= toCount) continue;
+        if (!segmentExistsForRootInBuilder(from, s) || !segmentExistsForRootInBuilder(to, t)) continue;
         out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
         out.add(instancePortKey(link.toEntityId, t, link.toPort));
       }
@@ -560,6 +596,7 @@ function buildInstancePortSetForLink(
     for (let t = 0; t < toCount; t += 1) {
       const s = t * r + slot;
       if (s < 0 || s >= fromCount) continue;
+      if (!segmentExistsForRootInBuilder(from, s) || !segmentExistsForRootInBuilder(to, t)) continue;
       out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
       out.add(instancePortKey(link.toEntityId, t, link.toPort));
     }
@@ -568,9 +605,11 @@ function buildInstancePortSetForLink(
 
   // Legacy cross-layer behavior: all aligned base columns (occupies all segments on both sides).
   for (let s = 0; s < fromCount; s += 1) {
+    if (!segmentExistsForRootInBuilder(from, s)) continue;
     out.add(instancePortKey(link.fromEntityId, s, link.fromPort));
   }
   for (let t = 0; t < toCount; t += 1) {
+    if (!segmentExistsForRootInBuilder(to, t)) continue;
     out.add(instancePortKey(link.toEntityId, t, link.toPort));
   }
   return out;
