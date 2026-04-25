@@ -40,7 +40,10 @@ function colorForType(type: string): string {
   return "#cdd6f4";
 }
 
-function makeDevice(entity: BuilderEntityInstance): DeviceBase & Record<string, unknown> {
+function makeDevice(entity: BuilderEntityInstance): (DeviceBase & Record<string, unknown>) | null {
+  if (entity.templateType === "text") {
+    return null;
+  }
   if (entity.templateType === "endpoint") {
     return {
       id: entity.instanceId,
@@ -114,12 +117,17 @@ export function compileBuilderPayload(state: BuilderState): CompiledBuilderPaylo
   }));
   const devices: Record<string, Record<string, unknown>> = {};
   expanded.entities.forEach((entity) => {
-    devices[entity.instanceId] = makeDevice(entity);
+    const device = makeDevice(entity);
+    if (device) {
+      devices[entity.instanceId] = device;
+    }
   });
-  const links = expanded.links.map((link) => ({
-    a: { deviceId: link.fromInstanceId, port: link.fromPort },
-    b: { deviceId: link.toInstanceId, port: link.toPort },
-  }));
+  const links = expanded.links
+    .filter((link) => devices[link.fromInstanceId] !== undefined && devices[link.toInstanceId] !== undefined)
+    .map((link) => ({
+      a: { deviceId: link.fromInstanceId, port: link.fromPort },
+      b: { deviceId: link.toInstanceId, port: link.toPort },
+    }));
   const endpointEntities = expanded.entities.filter((e) => e.templateType === "endpoint");
   const uniqueAddresses = Array.from(
     new Set(endpointEntities.map((e) => e.settings.address ?? "0.0.0.0")),

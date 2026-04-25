@@ -406,6 +406,15 @@ function buildTemplateDragImage(templateType: BuilderTemplateType): HTMLDivEleme
   wrap.className = "builder-drag-image";
   const portBtn = (port: number): string =>
     `<button class="builder-port" type="button" disabled>${port}</button>`;
+  if (templateType === "text") {
+    wrap.innerHTML = `
+      <div class="builder-entity builder-entity--text" style="--builder-text-w:41px;--builder-text-h:41px;">
+        <div class="builder-entity-title">Note</div>
+        <div class="builder-text-box"></div>
+      </div>
+    `;
+    return wrap;
+  }
   if (templateType === "hub") {
     const faceDeg = 0;
     const hubOriginX = (HUB_LAYOUT.G.x / HUB_VIEW.w) * 100;
@@ -545,16 +554,17 @@ type BuilderPerfKey =
 type BuilderPerfStat = { lastMs: number; emaMs: number; maxMs: number; samples: number };
 
 function templateList(): BuilderTemplateType[] {
-  return ["relay", "hub", "filter"];
+  return ["relay", "hub", "filter", "text"];
 }
 
 function isBuilderTemplateType(value: string): value is BuilderTemplateType {
-  return value === "relay" || value === "hub" || value === "filter";
+  return value === "relay" || value === "hub" || value === "filter" || value === "text";
 }
 
 function templateLabel(type: BuilderTemplateType): string {
   if (type === "relay") return "Relay";
   if (type === "hub") return "Hub";
+  if (type === "text") return "Note";
   return "Filter";
 }
 
@@ -584,6 +594,18 @@ function buildFilterDescription(settings: Record<string, string>): string {
     return `${firstLine}\nIn case of collision, the packet received on port ${nonOperatingPort} is dropped.`;
   }
   return `${firstLine}\nIn case of collision, the packet received on port ${nonOperatingPort} is sent back.`;
+}
+
+function textTileSizeFromSettings(settings: Record<string, string>): { wTiles: number; hTiles: number } {
+  const wRaw = Number.parseInt(settings.widthTiles ?? "2", 10);
+  const hRaw = Number.parseInt(settings.heightTiles ?? "2", 10);
+  const wTiles = Number.isFinite(wRaw) ? Math.max(2, Math.min(64, wRaw)) : 2;
+  const hTiles = Number.isFinite(hRaw) ? Math.max(2, Math.min(64, hRaw)) : 2;
+  return { wTiles, hTiles };
+}
+
+function textTileSizeFromEntity(entity: { settings: Record<string, string> }): { wTiles: number; hTiles: number } {
+  return textTileSizeFromSettings(entity.settings);
 }
 
 export function mountBuilderView(options: BuilderMountOptions): void {
@@ -1730,6 +1752,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const height = 3;
       return { left: 0, right: width - 1, top: 0, bottom: height - 1 };
     }
+    if (entity.templateType === "text") {
+      const { wTiles, hTiles } = textTileSizeFromEntity(entity);
+      return { left: 0, right: wTiles - 1, top: 0, bottom: hTiles - 1 };
+    }
     return { left: 0, right: 0, top: 0, bottom: 0 };
   }
 
@@ -2711,6 +2737,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       });
   }
 
+  function setTextEntitySizeDom(rootId: string, widthTiles: number, heightTiles: number): void {
+    const wPx = widthTiles * BUILDER_GRID_TILE_SIZE_X_PX + 1;
+    const hPx = heightTiles * BUILDER_GRID_TILE_SIZE_Y_PX + 1;
+    canvasEl
+      .querySelectorAll<HTMLElement>(`.builder-entity.builder-entity--text[data-root-id="${rootId}"]`)
+      .forEach((entityEl) => {
+        entityEl.style.setProperty("--builder-text-w", `${wPx}px`);
+        entityEl.style.setProperty("--builder-text-h", `${hPx}px`);
+      });
+  }
+
   function snapPixelToGridX(pixelX: number): number {
     return Math.round(pixelX / BUILDER_GRID_TILE_SIZE_X_PX);
   }
@@ -3035,6 +3072,82 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const seg = entityEl.closest<HTMLElement>(".builder-segment");
     if (!rootEnt || !seg) return;
     if (isStaticOuterLeafEndpoint(rootEnt)) return;
+    if (rootEnt.templateType === "text") {
+      const rect = entityEl.getBoundingClientRect();
+      const edgePad = 8;
+      const localX = ev.clientX - rect.left;
+      const localY = ev.clientY - rect.top;
+      const hitRight = localX >= rect.width - edgePad;
+      const hitBottom = localY >= rect.height - edgePad;
+      const resizeX = hitRight ? 1 : 0;
+      const resizeY = hitBottom ? 1 : 0;
+      if (resizeX !== 0 || resizeY !== 0) {
+        ev.preventDefault();
+        const host = segmentEntitiesHost(rootEnt.layer, rootEnt.segmentIndex) ?? seg;
+        const hostW = Math.max(1, host.clientWidth);
+        const hostH = Math.max(1, host.clientHeight);
+        const maxX = Math.max(0, Math.floor(hostW / BUILDER_GRID_TILE_SIZE_X_PX) - 1);
+        const maxY = Math.max(0, Math.floor(hostH / BUILDER_GRID_TILE_SIZE_Y_PX) - 1);
+        const startX = ev.clientX;
+        const startY = ev.clientY;
+        const startTiles = textTileSizeFromEntity(rootEnt);
+        const startLeft = rootEnt.x;
+        const startTop = rootEnt.y;
+        const startRight = startLeft + startTiles.wTiles - 1;
+        const startBottom = startTop + startTiles.hTiles - 1;
+        const onMove = (mv: MouseEvent): void => {
+          const dxTiles = Math.round((mv.clientX - startX) / BUILDER_GRID_TILE_SIZE_X_PX);
+          const dyTiles = Math.round((mv.clientY - startY) / BUILDER_GRID_TILE_SIZE_Y_PX);
+          let left = startLeft;
+          let right = startRight;
+          let top = startTop;
+          let bottom = startBottom;
+          if (resizeX < 0) {
+            left = Math.max(0, Math.min(startRight - 1, startLeft + dxTiles));
+          } else if (resizeX > 0) {
+            right = Math.max(startLeft + 1, Math.min(maxX, startRight + dxTiles));
+          }
+          if (resizeY < 0) {
+            top = Math.max(0, Math.min(startBottom - 1, startTop + dyTiles));
+          } else if (resizeY > 0) {
+            bottom = Math.max(startTop + 1, Math.min(maxY, startBottom + dyTiles));
+          }
+          const nextW = right - left + 1;
+          const nextH = bottom - top + 1;
+          const ent = state.entities.find((e) => e.id === rootEnt.id);
+          if (!ent || ent.templateType !== "text") return;
+          if (
+            ent.x === left &&
+            ent.y === top &&
+            textTileSizeFromEntity(ent).wTiles === nextW &&
+            textTileSizeFromEntity(ent).hTiles === nextH
+          ) {
+            return;
+          }
+          ent.x = left;
+          ent.y = top;
+          ent.settings = {
+            ...ent.settings,
+            widthTiles: String(nextW),
+            heightTiles: String(nextH),
+          };
+          setEntityDomPosition(ent.id, left, top);
+          setTextEntitySizeDom(ent.id, nextW, nextH);
+          scheduleWireOverlayRender();
+        };
+        const onUp = (): void => {
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+          clearBuilderDragCursor();
+          schedulePersist();
+          renderInspector();
+        };
+        setBuilderDragCursor("grabbing");
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+        return;
+      }
+    }
     let movingRootIds = selectedEntityIdsForAction(rootEnt.id)
       .filter((id) => {
         const e = state.entities.find((x) => x.id === id);
@@ -3832,6 +3945,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                               entity.templateType === "endpoint" &&
                               entity.layer === "outer64" &&
                               staticRootIds.has(entity.rootId);
+                            const textTiles = textTileSizeFromSettings(entity.settings);
                             const addrParts = (entity.settings.address ?? "0.0.0.0").split(".");
                             const endpointAddressBlock = isOuterStatic
                               ? `
@@ -3945,10 +4059,16 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         <button type="button" class="builder-hub-reverse" style="left:${hubOriginX}%;top:${hubOriginY}%;transform:translate(-50%,-50%)" data-hub-toggle-rotation data-root-id="${entity.rootId}" title="Reverse forwarding direction"><span class="builder-hub-reverse-icon" aria-hidden="true">${hubCw ? "↻" : "↺"}</span></button>
       </div>`
                                 : "";
+                            const textBlock =
+                              entity.templateType === "text"
+                                ? `<div class="builder-text-box"><textarea class="builder-note-editor" data-note-root-id="${entity.rootId}" spellcheck="false">${entity.settings.label ?? ""}</textarea></div>`
+                                : "";
                             const entityShapeClass = isOuterStatic
                               ? " builder-entity--filter builder-entity--outer-endpoint"
                               : entity.templateType === "filter"
                                 ? " builder-entity--filter"
+                                : entity.templateType === "text"
+                                  ? " builder-entity--text"
                                 : entity.templateType === "relay"
                                   ? " builder-entity--relay"
                                 : entity.templateType === "hub"
@@ -3957,6 +4077,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                             const settingsBlock =
                               entity.templateType === "relay" ||
                               entity.templateType === "filter" ||
+                              entity.templateType === "text" ||
                               entity.templateType === "hub" ||
                               isOuterStatic ||
                               settingsText.length === 0
@@ -3968,6 +4089,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                               ? `<div class="builder-ports builder-ports--filter-bottom builder-ports--endpoint-bottom">${portBtn(0)}</div>`
                               : entity.templateType === "filter"
                                 ? `<div class="builder-ports builder-ports--filter-bottom">${portBtn(1)}</div>`
+                                : entity.templateType === "text"
+                                  ? ""
                                 : entity.templateType === "relay"
                                   ? ""
                                 : entity.templateType === "hub"
@@ -3988,7 +4111,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                   entity.templateType === "hub"
                                     ? `calc((${entity.y} + 0.5) * var(--builder-grid-step-y) - ${HUB_LAYOUT.G.y.toFixed(3)}px)`
                                     : `calc(${entity.y} * var(--builder-grid-step-y))`
-                                }"
+                                };--builder-text-w:${textTiles.wTiles * BUILDER_GRID_TILE_SIZE_X_PX + 1}px;--builder-text-h:${textTiles.hTiles * BUILDER_GRID_TILE_SIZE_Y_PX + 1}px"
                               >
                                 ${
                                   entity.templateType === "filter"
@@ -4000,6 +4123,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                     ? ""
                                     : isOuterStatic
                                       ? `<div class="builder-entity-title builder-endpoint-title">endpoint</div>`
+                                    : entity.templateType === "text"
+                                      ? `<div class="builder-entity-title">Note</div>`
                                     : entity.templateType === "relay"
                                       ? ""
                                     : `<div class="builder-entity-title">${entity.templateType}</div>`
@@ -4008,6 +4133,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                 ${filterControls}
                                 ${endpointAddressBlock}
                                 ${hubBlock}
+                                ${textBlock}
                                 ${
                                   entity.templateType === "relay"
                                     ? `<div class="builder-relay-core">
@@ -4033,6 +4159,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       .join("");
     const tHtml1 = performance.now();
     recordPerf("canvas.htmlBuild", tHtml1 - tHtml0);
+    canvasEl.querySelectorAll<HTMLTextAreaElement>(".builder-note-editor[data-note-root-id]").forEach((editor) => {
+      editor.addEventListener("input", () => {
+        const rootId = editor.dataset.noteRootId;
+        if (!rootId) return;
+        const ent = state.entities.find((e) => e.id === rootId);
+        if (!ent || ent.templateType !== "text") return;
+        const nextLabel = editor.value;
+        if ((ent.settings.label ?? "") === nextLabel) return;
+        state = updateEntitySettings(state, ent.id, { ...ent.settings, label: nextLabel });
+        schedulePersist();
+      });
+    });
     const tCache0 = performance.now();
     rebuildPortElementCache();
     const tCache1 = performance.now();
@@ -4290,6 +4428,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   canvasEl.addEventListener("click", (ev) => {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
+    if (target.closest(".builder-note-editor")) return;
 
     const portEl = target.closest<HTMLButtonElement>(".builder-port");
     if (portEl) {
@@ -4382,6 +4521,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   canvasEl.addEventListener("mousedown", (ev) => {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
+    if (target.closest(".builder-note-editor")) return;
     if (target.closest("button")) return;
     const entityEl = target.closest<HTMLElement>(".builder-entity");
     if (!entityEl) return;

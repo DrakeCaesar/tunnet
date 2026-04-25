@@ -1,5 +1,5 @@
 export type BuilderLayer = "outer64" | "middle16" | "inner4" | "core1";
-export type BuilderTemplateType = "endpoint" | "relay" | "hub" | "filter";
+export type BuilderTemplateType = "endpoint" | "relay" | "hub" | "filter" | "text";
 
 export interface BuilderEntityRoot {
   id: string;
@@ -62,6 +62,17 @@ function normalizeEntitySettings(
     const snapped = Math.round(angle / 90) * 90;
     const normalized = ((snapped % 360) + 360) % 360;
     return { angle: String(normalized) };
+  }
+  if (templateType === "text") {
+    const widthRaw = Number.parseInt(src.widthTiles ?? "2", 10);
+    const heightRaw = Number.parseInt(src.heightTiles ?? "2", 10);
+    const widthTiles = Number.isFinite(widthRaw) ? Math.max(2, Math.min(64, widthRaw)) : 2;
+    const heightTiles = Number.isFinite(heightRaw) ? Math.max(2, Math.min(64, heightRaw)) : 2;
+    return {
+      label: src.label ?? "",
+      widthTiles: String(widthTiles),
+      heightTiles: String(heightTiles),
+    };
   }
   return { ...src };
 }
@@ -757,6 +768,7 @@ export function addLinkRootOneWirePerPort(
 }
 
 export function templatePortCount(type: BuilderTemplateType): number {
+  if (type === "text") return 0;
   if (type === "endpoint") return 1;
   if (type === "relay") return 2;
   if (type === "filter") return 2;
@@ -764,6 +776,9 @@ export function templatePortCount(type: BuilderTemplateType): number {
 }
 
 export function defaultSettings(type: BuilderTemplateType): Record<string, string> {
+  if (type === "text") {
+    return { label: "", widthTiles: "2", heightTiles: "2" };
+  }
   if (type === "relay") {
     return { angle: "0" };
   }
