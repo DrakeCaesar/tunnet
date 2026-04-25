@@ -18,8 +18,6 @@ import {
   removeEntityGroup,
   removeLinkGroup,
   removeLinksTouchingInstancePort,
-  updateEntityPlacement,
-  updateEntityPosition,
   updateEntitySettings,
 } from "./state";
 import {
@@ -56,10 +54,12 @@ import {
 
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_HIDE_PROP_LABELS_KEY = "tunnet.builder.hidePropertyLabels";
+const BUILDER_PAGE_STATE_KEY = "tunnet.builder.pageState";
 const BUILDER_LAYER_GAP_PX = 5;
 const BUILDER_GRID_TILE_SIZE_X_PX = 20;
 const BUILDER_GRID_TILE_SIZE_Y_PX = 20;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
+const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "canvasScale", "inspector", "performance"] as const;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -86,6 +86,12 @@ const HUB_REVERSE_ICON_SIZE = 13 * HUB_SCALE;
 type HubVec = { x: number; y: number };
 
 type HubLayout = { T: HubVec; L: HubVec; R: HubVec; r: number; G: HubVec };
+
+type BuilderPanelSectionId = (typeof BUILDER_PANEL_SECTION_IDS)[number];
+
+type BuilderPageState = {
+  collapsedSections: Partial<Record<BuilderPanelSectionId, boolean>>;
+};
 
 /** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (16px). */
 function hubEquilateralLayout(): HubLayout {
@@ -650,70 +656,118 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return false;
     }
   };
+  const loadBuilderPageState = (): BuilderPageState => {
+    try {
+      const raw = window.localStorage.getItem(BUILDER_PAGE_STATE_KEY);
+      if (!raw) return { collapsedSections: {} };
+      const parsed = JSON.parse(raw) as Partial<BuilderPageState>;
+      const collapsedSections: BuilderPageState["collapsedSections"] = {};
+      const parsedSections = parsed.collapsedSections ?? {};
+      BUILDER_PANEL_SECTION_IDS.forEach((id) => {
+        collapsedSections[id] = parsedSections[id] === true;
+      });
+      return { collapsedSections };
+    } catch {
+      return { collapsedSections: {} };
+    }
+  };
+  let builderPageState = loadBuilderPageState();
+  const panelSectionAttrs = (id: BuilderPanelSectionId): string => {
+    const collapsed = builderPageState.collapsedSections[id] === true;
+    return `class="builder-panel-section${collapsed ? " collapsed" : ""}" data-builder-panel-section="${id}"`;
+  };
+  const panelToggle = (id: BuilderPanelSectionId, title: string): string => {
+    const collapsed = builderPageState.collapsedSections[id] === true;
+    return `<button class="section-title builder-panel-section-toggle" type="button" data-builder-panel-toggle="${id}" aria-expanded="${collapsed ? "false" : "true"}" aria-controls="builder-panel-${id}-body"><span>${title}</span><span class="builder-panel-section-caret" aria-hidden="true">›</span></button>`;
+  };
 
   root.innerHTML = `
     <div class="builder-layout">
       <aside class="builder-sidebar card">
-        <div class="section-title">Templates</div>
-        <div id="builder-templates"></div>
-        <div class="section-title builder-spacer">Actions</div>
-        <div class="builder-actions">
-          <button id="builder-delete" type="button">Delete selected</button>
-          <button id="builder-delete-all" type="button">Delete all</button>
-          <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
-          <button id="builder-export" type="button">Export Text</button>
-          <button id="builder-import" type="button">Import Text</button>
-        </div>
-        <div class="section-title builder-spacer">Simulation</div>
-        <div class="builder-sim-toolbar">
-          <button id="builder-sim-play" type="button">Play</button>
-          <button id="builder-sim-pause" type="button">Pause</button>
-          <button id="builder-sim-step" type="button">Step</button>
-          <button id="builder-sim-reset" type="button">Reset</button>
-        </div>
-        <label class="builder-scale-row" for="builder-sim-speed">
-          <span>Tick pace</span>
-          <input id="builder-sim-speed" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
-          <span id="builder-sim-speed-value">${formatSpeedLabel(SPEED_EXP_DEFAULT)}</span>
-        </label>
-        <label class="builder-scale-row" for="builder-sim-send-rate">
-          <span>Send rate</span>
-          <input id="builder-sim-send-rate" type="range" min="${SEND_RATE_EXP_MIN}" max="${SEND_RATE_EXP_MAX}" step="1" value="${SEND_RATE_EXP_DEFAULT}" />
-          <span id="builder-sim-send-rate-value">${formatSendRateLabel(SEND_RATE_EXP_DEFAULT)}</span>
-        </label>
-        <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
-        <div class="section-title builder-spacer">Performance</div>
-        <pre id="builder-perf" class="builder-perf">Collecting samples...</pre>
-        <div class="section-title builder-spacer">Canvas Scale</div>
-        <div class="builder-scale-controls">
-          <label class="builder-scale-row" for="builder-scale-x">
-            <span>Horizontal</span>
-            <input id="builder-scale-x" type="range" min="0" max="${CANVAS_SCALE_X_STEPS.length - 1}" step="1" value="${canvasScaleXIndexFromValue(canvasScale.x)}" />
-            <span id="builder-scale-x-value">${formatCanvasScaleX(canvasScale.x)}</span>
-          </label>
-          <label class="builder-scale-row" for="builder-scale-y-outer64">
-            <span>Vertical Outer</span>
-            <input id="builder-scale-y-outer64" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
-            <span id="builder-scale-y-outer64-value">${canvasScale.yByLayer.outer64.toFixed(2)}x</span>
-          </label>
-          <label class="builder-scale-row" for="builder-scale-y-middle16">
-            <span>Vertical Middle</span>
-            <input id="builder-scale-y-middle16" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
-            <span id="builder-scale-y-middle16-value">${canvasScale.yByLayer.middle16.toFixed(2)}x</span>
-          </label>
-          <label class="builder-scale-row" for="builder-scale-y-inner4">
-            <span>Vertical Inner</span>
-            <input id="builder-scale-y-inner4" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
-            <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
-          </label>
-          <label class="builder-scale-row" for="builder-scale-y-core1">
-            <span>Vertical Core</span>
-            <input id="builder-scale-y-core1" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
-            <span id="builder-scale-y-core1-value">${canvasScale.yByLayer.core1.toFixed(2)}x</span>
-          </label>
-        </div>
-        <div class="section-title builder-spacer">Inspector</div>
-        <div id="builder-inspector">No selection.</div>
+        <section ${panelSectionAttrs("actions")}>
+          ${panelToggle("actions", "Actions")}
+          <div id="builder-panel-actions-body" class="builder-panel-section-body">
+            <div class="builder-actions">
+              <button id="builder-import" type="button">Import text</button>
+              <button id="builder-export" type="button">Export text</button>
+              <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
+              <button id="builder-delete" type="button">Delete selected</button>
+              <button id="builder-delete-all" type="button">Delete all</button>
+            </div>
+          </div>
+        </section>
+        <section ${panelSectionAttrs("templates")}>
+          ${panelToggle("templates", "Templates")}
+          <div id="builder-panel-templates-body" class="builder-panel-section-body">
+            <div id="builder-templates"></div>
+          </div>
+        </section>
+        <section ${panelSectionAttrs("simulation")}>
+          ${panelToggle("simulation", "Simulation")}
+          <div id="builder-panel-simulation-body" class="builder-panel-section-body">
+            <div class="builder-sim-toolbar">
+              <button id="builder-sim-play" type="button">Play</button>
+              <button id="builder-sim-pause" type="button">Pause</button>
+              <button id="builder-sim-step" type="button">Step</button>
+              <button id="builder-sim-reset" type="button">Reset</button>
+            </div>
+            <label class="builder-scale-row" for="builder-sim-speed">
+              <span>Tick pace</span>
+              <input id="builder-sim-speed" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
+              <span id="builder-sim-speed-value">${formatSpeedLabel(SPEED_EXP_DEFAULT)}</span>
+            </label>
+            <label class="builder-scale-row" for="builder-sim-send-rate">
+              <span>Send rate</span>
+              <input id="builder-sim-send-rate" type="range" min="${SEND_RATE_EXP_MIN}" max="${SEND_RATE_EXP_MAX}" step="1" value="${SEND_RATE_EXP_DEFAULT}" />
+              <span id="builder-sim-send-rate-value">${formatSendRateLabel(SEND_RATE_EXP_DEFAULT)}</span>
+            </label>
+            <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
+          </div>
+        </section>
+        <section ${panelSectionAttrs("canvasScale")}>
+          ${panelToggle("canvasScale", "Canvas Scale")}
+          <div id="builder-panel-canvasScale-body" class="builder-panel-section-body">
+            <div class="builder-scale-controls">
+              <label class="builder-scale-row" for="builder-scale-x">
+                <span>Horizontal</span>
+                <input id="builder-scale-x" type="range" min="0" max="${CANVAS_SCALE_X_STEPS.length - 1}" step="1" value="${canvasScaleXIndexFromValue(canvasScale.x)}" />
+                <span id="builder-scale-x-value">${formatCanvasScaleX(canvasScale.x)}</span>
+              </label>
+              <label class="builder-scale-row" for="builder-scale-y-outer64">
+                <span>Vertical Outer</span>
+                <input id="builder-scale-y-outer64" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
+                <span id="builder-scale-y-outer64-value">${canvasScale.yByLayer.outer64.toFixed(2)}x</span>
+              </label>
+              <label class="builder-scale-row" for="builder-scale-y-middle16">
+                <span>Vertical Middle</span>
+                <input id="builder-scale-y-middle16" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
+                <span id="builder-scale-y-middle16-value">${canvasScale.yByLayer.middle16.toFixed(2)}x</span>
+              </label>
+              <label class="builder-scale-row" for="builder-scale-y-inner4">
+                <span>Vertical Inner</span>
+                <input id="builder-scale-y-inner4" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
+                <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
+              </label>
+              <label class="builder-scale-row" for="builder-scale-y-core1">
+                <span>Vertical Core</span>
+                <input id="builder-scale-y-core1" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
+                <span id="builder-scale-y-core1-value">${canvasScale.yByLayer.core1.toFixed(2)}x</span>
+              </label>
+            </div>
+          </div>
+        </section>
+        <section ${panelSectionAttrs("inspector")}>
+          ${panelToggle("inspector", "Inspector")}
+          <div id="builder-panel-inspector-body" class="builder-panel-section-body">
+            <div id="builder-inspector">No selection.</div>
+          </div>
+        </section>
+        <section ${panelSectionAttrs("performance")}>
+          ${panelToggle("performance", "Performance")}
+          <div id="builder-panel-performance-body" class="builder-panel-section-body">
+            <pre id="builder-perf" class="builder-perf">Collecting samples...</pre>
+          </div>
+        </section>
       </aside>
       <main class="builder-main card">
         <div class="builder-canvas-wrap">
@@ -776,6 +830,25 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function persistHidePropertyLabels(): void {
     window.localStorage.setItem(BUILDER_HIDE_PROP_LABELS_KEY, hideEntityPropertyLabels ? "1" : "0");
+  }
+
+  function persistBuilderPageState(): void {
+    window.localStorage.setItem(BUILDER_PAGE_STATE_KEY, JSON.stringify(builderPageState));
+  }
+
+  function setPanelSectionCollapsed(sectionId: BuilderPanelSectionId, collapsed: boolean): void {
+    builderPageState = {
+      ...builderPageState,
+      collapsedSections: {
+        ...builderPageState.collapsedSections,
+        [sectionId]: collapsed,
+      },
+    };
+    const sectionEl = root.querySelector<HTMLElement>(`[data-builder-panel-section="${sectionId}"]`);
+    const toggleEl = root.querySelector<HTMLButtonElement>(`[data-builder-panel-toggle="${sectionId}"]`);
+    sectionEl?.classList.toggle("collapsed", collapsed);
+    toggleEl?.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    persistBuilderPageState();
   }
 
   function applyCanvasScale(): void {
@@ -3820,7 +3893,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     });
   }
 
-  deleteBtn.addEventListener("click", () => {
+  root.querySelectorAll<HTMLButtonElement>("[data-builder-panel-toggle]").forEach((toggleEl) => {
+    toggleEl.addEventListener("click", () => {
+      const sectionId = toggleEl.dataset.builderPanelToggle as BuilderPanelSectionId | undefined;
+      if (!sectionId || !BUILDER_PANEL_SECTION_IDS.includes(sectionId)) return;
+      setPanelSectionCollapsed(sectionId, toggleEl.getAttribute("aria-expanded") === "true");
+    });
+  });
+
+  const deleteSelected = (): void => {
     if (!selection) return;
     if (selection.kind === "packet") {
       selection = null;
@@ -3850,7 +3931,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     linkDrag = null;
     renderInspector();
     renderCanvas();
-  });
+  };
+
+  deleteBtn.addEventListener("click", deleteSelected);
 
   deleteAllBtn.addEventListener("click", () => {
     if (!state.entities.length && !state.links.length) return;
@@ -4247,13 +4330,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   simSendRateEl.addEventListener("change", applyBuilderSimSendRateFromSlider);
 
   window.addEventListener("keydown", (ev) => {
-    if (ev.code !== "Space") return;
     const bv = root.closest(".builder-view");
     if (!bv || bv.classList.contains("hidden")) return;
     const tag = (ev.target as HTMLElement | null)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON") return;
-    ev.preventDefault();
-    setBuilderSimPlaying(!simPlaying);
+    if (ev.code === "Space") {
+      ev.preventDefault();
+      setBuilderSimPlaying(!simPlaying);
+      return;
+    }
+    if (ev.key === "Delete") {
+      ev.preventDefault();
+      deleteSelected();
+    }
   });
 
   renderTemplates();

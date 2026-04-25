@@ -378,8 +378,7 @@ textarea {
 .builder-sidebar,
 .builder-main,
 .timings-wrap,
-.builder-perf,
-.builder-sim-meta {
+.builder-perf {
   clip-path: inset(0 round 8px);
 }
 
@@ -390,6 +389,37 @@ textarea {
 
 .builder-spacer {
   margin-top: 12px;
+}
+
+.builder-panel-section + .builder-panel-section {
+  margin-top: 12px;
+}
+
+.builder-panel-section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.builder-panel-section-caret {
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+
+.builder-panel-section:not(.collapsed) .builder-panel-section-caret {
+  transform: rotate(90deg);
+}
+
+.builder-panel-section.collapsed .builder-panel-section-body {
+  display: none;
 }
 
 .builder-actions {
@@ -426,8 +456,6 @@ textarea {
   color: var(--meta-text);
   font-size: 11px;
   line-height: 1.25;
-  max-height: 280px;
-  overflow: auto;
   margin-top: 6px;
 }
 
