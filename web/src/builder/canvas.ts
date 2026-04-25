@@ -959,6 +959,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     initOrRefreshBuilderSimulatorIfTopologyChanged();
   }
 
+  let deferredPersistHandle: number | null = null;
+  function schedulePersist(): void {
+    if (deferredPersistHandle !== null) {
+      window.clearTimeout(deferredPersistHandle);
+    }
+    deferredPersistHandle = window.setTimeout(() => {
+      deferredPersistHandle = null;
+      persist();
+    }, 120);
+  }
+
   let builderTopologySig = "";
   type SimFrame = {
     prevOccupancy: Array<{ port: PortRef; packet: Packet }>;
@@ -1828,7 +1839,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const current = state.entities.find((e) => e.id === createdRootId);
       if (!current) return;
       lastPlacementKey = key;
-      if (current.layer !== placement.layer || current.segmentIndex !== placement.segment) {
+      if (current.layer !== placement.layer) {
         state = updateEntityPlacement(
           state,
           createdRootId,
@@ -1837,7 +1848,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           placement.x,
           placement.y,
         );
-        renderCanvas();
+        scheduleDragRender();
+      } else if (current.segmentIndex !== placement.segment) {
+        state = updateEntityPlacement(
+          state,
+          createdRootId,
+          placement.layer,
+          placement.segment,
+          placement.x,
+          placement.y,
+        );
+        setEntityDomPosition(createdRootId, placement.x, placement.y);
       } else {
         state = updateEntityPosition(state, createdRootId, placement.x, placement.y);
         setEntityDomPosition(createdRootId, placement.x, placement.y);
@@ -1854,8 +1875,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       document.body.style.removeProperty("cursor");
       floatingGhostEl.remove();
       if (!createdRootId) return;
-      persist();
-      renderCanvas();
+      schedulePersist();
       renderInspector();
       up.preventDefault();
     };
@@ -2880,7 +2900,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           lastY = rootPlacement.y;
           lastLayer = rootPlacement.layer;
           lastSegment = rootPlacement.segment;
-          let shouldRerender = false;
           placements.forEach((nextPlacement, id) => {
             const p0 = initialPlacementById.get(id);
             if (!p0) return;
@@ -2890,17 +2909,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             const targetSegment = nextPlacement.segment;
             const cur = state.entities.find((e) => e.id === id);
             if (!cur) return;
-            if (cur.layer !== targetLayer || cur.segmentIndex !== targetSegment) {
-              shouldRerender = true;
+            if (cur.layer !== targetLayer) {
               state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+              scheduleDragRender();
+            } else if (cur.segmentIndex !== targetSegment) {
+              state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+              setEntityDomPosition(id, nx, ny);
             } else {
               state = updateEntityPosition(state, id, nx, ny);
               setEntityDomPosition(id, nx, ny);
             }
           });
-          if (shouldRerender) {
-            renderCanvas();
-          }
           showDragGroupBounds(movingRootIds);
           scheduleWireOverlayRender();
         };
@@ -2912,8 +2931,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             dragRenderRaf = null;
           }
           hideDragGroupBounds();
-          renderCanvas();
-          persist();
+          schedulePersist();
           renderInspector();
         };
         document.body.style.cursor = "grabbing";
@@ -2966,8 +2984,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           dragRenderRaf = null;
         }
         document.body.style.removeProperty("cursor");
-        renderCanvas();
-        persist();
+        schedulePersist();
         renderInspector();
       };
       document.body.style.cursor = "grabbing";
@@ -3146,7 +3163,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       lastY = rootPlacement.y;
       lastLayer = rootPlacement.layer;
       lastSegment = rootPlacement.segment;
-      let shouldRerender = false;
       placements.forEach((nextPlacement, id) => {
         const p0 = initialPlacementById.get(id);
         if (!p0) return;
@@ -3156,17 +3172,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         const targetSegment = nextPlacement.segment;
         const cur = state.entities.find((e) => e.id === id);
         if (!cur) return;
-        if (cur.layer !== targetLayer || cur.segmentIndex !== targetSegment) {
-          shouldRerender = true;
+        if (cur.layer !== targetLayer) {
           state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+          scheduleDragRender();
+        } else if (cur.segmentIndex !== targetSegment) {
+          state = updateEntityPlacement(state, id, targetLayer, targetSegment, nx, ny);
+          setEntityDomPosition(id, nx, ny);
         } else {
           state = updateEntityPosition(state, id, nx, ny);
           setEntityDomPosition(id, nx, ny);
         }
       });
-      if (shouldRerender) {
-        renderCanvas();
-      }
       showDragGroupBounds(movingRootIds);
       scheduleWireOverlayRender();
     };
@@ -3178,8 +3194,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         dragRenderRaf = null;
       }
       hideDragGroupBounds();
-      renderCanvas();
-      persist();
+      schedulePersist();
       renderInspector();
     };
     window.addEventListener("mousemove", onMove);
