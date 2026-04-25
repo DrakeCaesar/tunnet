@@ -276,9 +276,11 @@ export class TunnetSimulator {
 
   private processEndpoint(device: EndpointDevice, ctx: StepContext): void {
     const inbound = this.packetAt({ deviceId: device.id, port: 0 });
+    let receivedAddressedThisTick = false;
     let repliedThisTick = false;
     if (inbound) {
       if (inbound.dest === device.address) {
+        receivedAddressedThisTick = true;
         ctx.stats.delivered += 1;
         const replyTo = new Set(device.generator?.replyToSources ?? []);
         if (replyTo.has(inbound.src)) {
@@ -310,6 +312,7 @@ export class TunnetSimulator {
 
     if (!device.generator) return;
     if (ctx.tick < device.state.nextSendTick) return;
+    if (receivedAddressedThisTick) return;
     if (repliedThisTick) return;
     const destinations = device.generator.destinations.filter((d) => d !== device.address);
     if (destinations.length === 0) return;
