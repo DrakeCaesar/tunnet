@@ -366,6 +366,56 @@ export function createEmptyBuilderState(): BuilderState {
   });
 }
 
+/**
+ * Compacts generated root IDs to the smallest possible sequence while preserving static outer endpoint IDs.
+ * Entity/link order is preserved.
+ */
+export function compactBuilderIds(state: BuilderState): { state: BuilderState; changed: boolean } {
+  const entityIdMap = new Map<string, string>();
+  let next = 1;
+  for (const entity of state.entities) {
+    if (isStaticOuterLeafEndpoint(entity)) {
+      entityIdMap.set(entity.id, entity.id);
+      continue;
+    }
+    entityIdMap.set(entity.id, `e${next}`);
+    next += 1;
+  }
+
+  const entities = state.entities.map((entity) => {
+    const id = entityIdMap.get(entity.id) ?? entity.id;
+    const groupId = isStaticOuterLeafEndpoint(entity) ? entity.groupId : id;
+    return id === entity.id && groupId === entity.groupId ? entity : { ...entity, id, groupId };
+  });
+
+  const links = state.links.map((link) => {
+    const id = `l${next}`;
+    next += 1;
+    const fromEntityId = entityIdMap.get(link.fromEntityId) ?? link.fromEntityId;
+    const toEntityId = entityIdMap.get(link.toEntityId) ?? link.toEntityId;
+    const groupId = id;
+    if (
+      id === link.id &&
+      groupId === link.groupId &&
+      fromEntityId === link.fromEntityId &&
+      toEntityId === link.toEntityId
+    ) {
+      return link;
+    }
+    return { ...link, id, groupId, fromEntityId, toEntityId };
+  });
+
+  const nextId = next;
+  const changed =
+    nextId !== state.nextId ||
+    entities.some((entity, index) => entity !== state.entities[index]) ||
+    links.some((link, index) => link !== state.links[index]);
+  if (!changed) {
+    return { state, changed: false };
+  }
+  return { state: { ...state, entities, links, nextId }, changed: true };
+}
+
 export function nextBuilderId(state: BuilderState, prefix: "e" | "l"): string {
   const id = `${prefix}${state.nextId}`;
   state.nextId += 1;

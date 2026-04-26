@@ -7,6 +7,7 @@ import {
   addLinkRootOneWirePerPort,
   createLinkRoot,
   createEmptyBuilderState,
+  compactBuilderIds,
   crossLayerBlockSlotFromSegments,
   defaultSettings,
   isStaticOuterLeafEndpoint,
@@ -617,8 +618,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
   const rebuiltInitialState = rebuildStateWithOuterLeafEndpoints(raw);
   const sanitizedInitial = sanitizeDuplicateTypePlacements(rebuiltInitialState);
-  let state = sanitizedInitial.state;
-  if (sanitizedInitial.changed) {
+  const compactedInitial = compactBuilderIds(sanitizedInitial.state);
+  let state = compactedInitial.state;
+  if (sanitizedInitial.changed || compactedInitial.changed) {
     saveBuilderState(state);
   }
 
@@ -4892,21 +4894,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   });
 
   exportBtn.addEventListener("click", async () => {
-    const text = exportBuilderStateText(state);
+    const text = await exportBuilderStateText(state);
     await navigator.clipboard.writeText(text);
-    alert("Builder state copied to clipboard.");
+    alert("Tunnet Simulator state copied to clipboard.");
   });
 
-  importBtn.addEventListener("click", () => {
-    const text = window.prompt("Paste builder JSON:");
+  importBtn.addEventListener("click", async () => {
+    const text = window.prompt("Paste Tunnet Simulator state:");
     if (!text) return;
-    const parsed = importBuilderStateText(text);
+    const parsed = await importBuilderStateText(text);
     if (!parsed) {
-      alert("Invalid builder JSON.");
+      alert("Invalid Tunnet Simulator state.");
       return;
     }
     const rebuiltImportedState = rebuildStateWithOuterLeafEndpoints(parsed);
-    state = sanitizeDuplicateTypePlacements(rebuiltImportedState).state;
+    const sanitizedImported = sanitizeDuplicateTypePlacements(rebuiltImportedState);
+    state = compactBuilderIds(sanitizedImported.state).state;
     persist();
     selection = null;
     renderInspector();
