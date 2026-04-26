@@ -638,6 +638,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let boxSelection: BoxSelectionState = null;
   let suppressNextEntityClickToggle = false;
   let suppressNextPacketClick = false;
+  let suppressBoxSelectionUntilMouseUp = false;
   const WIRE_PORT_DROP_ZONE_PX = 5;
   const WIRE_DRAG_START_THRESHOLD_PX = 3;
   const nearestCanvasScaleXStep = (v: number): number => {
@@ -5055,6 +5056,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (!target) return;
     const portEl = target.closest<HTMLButtonElement>(".builder-port") ?? builderPortFromClientPoint(ev.clientX, ev.clientY);
     if (!portEl) return;
+    suppressBoxSelectionUntilMouseUp = true;
+    const clearSuppression = (): void => {
+      suppressBoxSelectionUntilMouseUp = false;
+      window.removeEventListener("mouseup", clearSuppression, true);
+    };
+    window.addEventListener("mouseup", clearSuppression, true);
     startLinkDragFromPort(portEl, ev);
   };
   canvasWrapEl?.addEventListener("pointerdown", onWirePortPointerDown);
@@ -5102,6 +5109,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
     if (ev.button !== 0) return;
+    if (suppressBoxSelectionUntilMouseUp) return;
     if (target.closest("button")) return;
     const entityUnder = target.closest<HTMLElement>(".builder-entity");
     if (entityUnder) {
