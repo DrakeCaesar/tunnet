@@ -94,6 +94,7 @@ interface StepContext {
   tick: number;
   adjacency: Map<string, PortRef>;
   nextPortPackets: Map<string, Packet>;
+  droppedDeviceIds: Set<string>;
   packetIdCounter: number;
   rnd: () => number;
   stats: SimulationStats;
@@ -268,11 +269,13 @@ export class TunnetSimulator {
     if (!packet) {
       ctx.stats.ttlExpired += 1;
       ctx.stats.dropped += 1;
+      ctx.droppedDeviceIds.add(sourceDeviceId);
       return;
     }
     const to = ctx.adjacency.get(makePortKey({ deviceId: sourceDeviceId, port: sourcePort }));
     if (!to) {
       ctx.stats.dropped += 1;
+      ctx.droppedDeviceIds.add(sourceDeviceId);
       return;
     }
     this.emitMove(ctx, to, packet);
@@ -306,6 +309,7 @@ export class TunnetSimulator {
         }
       } else if (inbound.sensitive) {
         ctx.stats.dropped += 1;
+        ctx.droppedDeviceIds.add(device.id);
       } else {
         const bounced = decrementTtl(inbound);
         if (bounced) {
@@ -315,6 +319,7 @@ export class TunnetSimulator {
         } else {
           ctx.stats.ttlExpired += 1;
           ctx.stats.dropped += 1;
+          ctx.droppedDeviceIds.add(device.id);
         }
       }
     }
@@ -393,10 +398,12 @@ export class TunnetSimulator {
       if (!decremented) {
         ctx.stats.ttlExpired += 1;
         ctx.stats.dropped += 1;
+        ctx.droppedDeviceIds.add(device.id);
       } else {
         const acted = this.shouldFilterAct(device, decremented);
         if (acted && device.action === "drop") {
           ctx.stats.dropped += 1;
+          ctx.droppedDeviceIds.add(device.id);
         } else if (acted && device.action === "send_back") {
           inboundOutPort = op;
           inboundOutPacket = decremented;
@@ -421,10 +428,12 @@ export class TunnetSimulator {
     ) {
       if (device.collisionHandling === "drop_inbound") {
         ctx.stats.dropped += 1;
+        ctx.droppedDeviceIds.add(device.id);
         inboundOutPort = null;
         inboundOutPacket = null;
       } else if (device.collisionHandling === "drop_outbound") {
         ctx.stats.dropped += 1;
+        ctx.droppedDeviceIds.add(device.id);
         outboundOutPort = null;
         outboundOutPacket = null;
       } else {
@@ -440,12 +449,14 @@ export class TunnetSimulator {
     }
   }
 
-  step(): { tick: number; inFlightPackets: number; stats: SimulationStats } {
+  step(): { tick: number; inFlightPackets: number; stats: SimulationStats; droppedDeviceIds: string[] } {
     const nextPortPackets = new Map<string, Packet>();
+    const droppedDeviceIds = new Set<string>();
     const ctx: StepContext = {
       tick: this.tick,
       adjacency: this.adjacency,
       nextPortPackets,
+      droppedDeviceIds,
       packetIdCounter: this.packetIdCounter,
       rnd: () => this.random(),
       stats: this.stats,
@@ -465,7 +476,12 @@ export class TunnetSimulator {
     });
     this.tick += 1;
     this.stats.tick = this.tick;
-    return { tick: this.tick, inFlightPackets: this.currentPortPackets.size, stats: { ...this.stats } };
+    return {
+      tick: this.tick,
+      inFlightPackets: this.currentPortPackets.size,
+      stats: { ...this.stats },
+      droppedDeviceIds: Array.from(droppedDeviceIds),
+    };
   }
 
   setSendRateMultiplier(multiplier: number): void {

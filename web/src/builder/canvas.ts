@@ -1246,6 +1246,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     prevOccupancy: Array<{ port: PortRef; packet: Packet }>;
     currentOccupancy: Array<{ port: PortRef; packet: Packet }>;
     stats: SimulationStats;
+    droppedDeviceIds: string[];
     stepComputeMs: number;
   };
   let builderSimulator: TunnetSimulator | null = null;
@@ -1347,45 +1348,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function computeSimTickHighlights(
     prev: Array<{ port: PortRef; packet: Packet }>,
     current: Array<{ port: PortRef; packet: Packet }>,
-    statsBefore: SimulationStats,
-    statsAfter: SimulationStats,
-  ): { delivered: Set<string>; collisionDrop: Set<string> } {
+  ): { delivered: Set<string> } {
     const currentPacketIds = new Set(current.map((e) => e.packet.id));
     const delivered = new Set<string>();
-    const missingNonDelivered: Array<{ port: PortRef; packet: Packet }> = [];
-    const prevCountByDevice = new Map<string, number>();
-    for (const e of prev) {
-      prevCountByDevice.set(e.port.deviceId, (prevCountByDevice.get(e.port.deviceId) ?? 0) + 1);
-    }
     for (const e of prev) {
       if (currentPacketIds.has(e.packet.id)) continue;
       const device = builderSimDevices[e.port.deviceId];
       if (device?.type === "endpoint" && e.port.port === 0 && e.packet.dest === device.address) {
         const rootId = simRootIdFromDeviceId(e.port.deviceId);
         if (rootId) delivered.add(rootId);
-        continue;
-      }
-      missingNonDelivered.push(e);
-    }
-    const collisionTickCount = Math.max(0, statsAfter.collisions - statsBefore.collisions);
-    if (collisionTickCount <= 0 || missingNonDelivered.length === 0) {
-      return { delivered, collisionDrop: new Set<string>() };
-    }
-    const weightedRoots: string[] = [];
-    for (const e of missingNonDelivered) {
-      const rootId = simRootIdFromDeviceId(e.port.deviceId);
-      if (!rootId) continue;
-      weightedRoots.push(rootId);
-      if ((prevCountByDevice.get(e.port.deviceId) ?? 0) > 1) {
-        weightedRoots.push(rootId);
       }
     }
-    const collisionDrop = new Set<string>();
-    for (const rootId of weightedRoots) {
-      collisionDrop.add(rootId);
-      if (collisionDrop.size >= collisionTickCount) break;
-    }
-    return { delivered, collisionDrop };
+    return { delivered };
   }
 
   function simPortCountForDevice(device: Device): number {
@@ -1483,6 +1457,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       prevOccupancy: prev,
       currentOccupancy: cloneSimOccupancyWithPackets(builderSimulatorOccupancy),
       stats: { ...snap.stats },
+      droppedDeviceIds: [...snap.droppedDeviceIds],
       stepComputeMs,
     };
   }
@@ -1646,11 +1621,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const tickHighlights = computeSimTickHighlights(
       frame.prevOccupancy,
       frame.currentOccupancy,
-      statsBeforeTick,
-      frame.stats,
     );
     simTickDeliveredEntityRootIds = tickHighlights.delivered;
-    simTickCollisionDropEntityRootIds = tickHighlights.collisionDrop;
+    simTickCollisionDropEntityRootIds = new Set(
+      frame.droppedDeviceIds.map((deviceId) => simRootIdFromDeviceId(deviceId)).filter((rootId): rootId is string => !!rootId),
+    );
     applySimTickHighlightsToCanvas();
     simPreviousStatsTotals = { ...frame.stats };
     const stepMs = frame.stepComputeMs;
