@@ -71,6 +71,8 @@ const PACKET_IP_LABEL_CHAR_COUNT = 7;
 const PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX = 6.1;
 const PACKET_IP_LABEL_WIDTH_PX = Math.ceil(PACKET_IP_LABEL_CHAR_COUNT * PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX + 8);
 const PACKET_IP_LABEL_HEIGHT_PX = 24;
+const PACKET_DOT_RADIUS_PX = 8;
+const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + 5;
 const PACKET_IP_LABEL_OFFSET_X_PX = -3;
 const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
@@ -981,7 +983,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
     simTogglePacketIpsBtn.textContent = visible ? "Hide IPs" : "Show IPs";
     if (!visible) {
-      packetLabelPool.forEach((label) => {
+      packetLabelPool.forEach((label, index) => {
         if (label.visible) {
           label.bg.setAttribute("display", "none");
           label.text.setAttribute("display", "none");
@@ -1316,7 +1318,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simPreparedPacketRenderDirty = true;
   let packetCircleGroupEl: SVGGElement | null = null;
   let packetSelectedGuideEl: SVGLineElement | null = null;
-  const packetCirclePool: SVGCircleElement[] = [];
+  const packetPortCenterCache = new Map<string, SimXY | null>();
+  const packetPreparedRouteByKey = new Map<string, SimPreparedPolyline | null>();
+  const packetCirclePool: Array<{
+    group: SVGGElement;
+    el: SVGCircleElement;
+    visible: boolean;
+    lastPacketId: number | null;
+    lastSelected: boolean | null;
+    lastStroke: string;
+    lastStrokeWidth: number;
+  }> = [];
   const packetLabelPool: Array<{
     bg: SVGRectElement;
     text: SVGTextElement;
@@ -1327,11 +1339,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     bgWidth: number;
     bgHeight: number;
     lastPacketId: number | null;
-    lastTextX: number;
-    lastTextY: number;
     visible: boolean;
   }> = [];
-  let activePacketCircleCount = 0;
+  const packetSlotByPacketId = new Map<number, number>();
+  const packetFreeSlots: number[] = [];
+  const packetSlotLastSeenFrame: number[] = [];
+  let packetRenderFrameId = 0;
+  let packetOverlayWidthPx = -1;
+  let packetOverlayHeightPx = -1;
   applyBuilderSidebarWidth(builderSidebarWidth);
 
   function cloneSimOccupancy(occ: Array<{ port: PortRef; packet: Packet }>): Array<{ port: PortRef; packet: Packet }> {
@@ -2482,6 +2497,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function syncBuilderPacketOverlayDimensions(overlayWidth: number, overlayHeight: number): void {
     const w = Math.ceil(overlayWidth);
     const h = Math.ceil(overlayHeight);
+    if (packetOverlayWidthPx === w && packetOverlayHeightPx === h) {
+      return;
+    }
+    packetOverlayWidthPx = w;
+    packetOverlayHeightPx = h;
     packetOverlayEl.setAttribute("width", String(w));
     packetOverlayEl.setAttribute("height", String(h));
     packetOverlayEl.style.width = `${w}px`;
@@ -2492,13 +2512,24 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simPreparedPacketRenderDirty = true;
   }
 
+  function invalidateBuilderPacketGeometryCache(): void {
+    packetPortCenterCache.clear();
+    packetPreparedRouteByKey.clear();
+  }
+
   function clearBuilderPacketCirclePool(): void {
     packetOverlayEl.innerHTML = "";
     packetCircleGroupEl = null;
     packetSelectedGuideEl = null;
+    invalidateBuilderPacketGeometryCache();
     packetCirclePool.length = 0;
     packetLabelPool.length = 0;
-    activePacketCircleCount = 0;
+    packetSlotByPacketId.clear();
+    packetFreeSlots.length = 0;
+    packetSlotLastSeenFrame.length = 0;
+    packetRenderFrameId = 0;
+    packetOverlayWidthPx = -1;
+    packetOverlayHeightPx = -1;
   }
 
   function ensureBuilderPacketCircleGroup(): SVGGElement {
@@ -2523,16 +2554,38 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return guide;
   }
 
-  function ensureBuilderPacketCircle(index: number): SVGCircleElement {
+  function ensureBuilderPacketCircle(index: number): {
+    group: SVGGElement;
+    el: SVGCircleElement;
+    visible: boolean;
+    lastPacketId: number | null;
+    lastSelected: boolean | null;
+    lastStroke: string;
+    lastStrokeWidth: number;
+  } {
     const existing = packetCirclePool[index];
     if (existing) {
       return existing;
     }
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("class", "builder-packet-dot");
-    ensureBuilderPacketCircleGroup().appendChild(circle);
-    packetCirclePool[index] = circle;
-    return circle;
+    circle.setAttribute("r", String(PACKET_DOT_RADIUS_PX));
+    circle.setAttribute("cx", "0");
+    circle.setAttribute("cy", "0");
+    group.appendChild(circle);
+    ensureBuilderPacketCircleGroup().appendChild(group);
+    const slot = {
+      group,
+      el: circle,
+      visible: true,
+      lastPacketId: null,
+      lastSelected: null,
+      lastStroke: "",
+      lastStrokeWidth: Number.NaN,
+    };
+    packetCirclePool[index] = slot;
+    return slot;
   }
 
   function ensureBuilderPacketLabel(index: number): {
@@ -2545,33 +2598,43 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     bgWidth: number;
     bgHeight: number;
     lastPacketId: number | null;
-    lastTextX: number;
-    lastTextY: number;
     visible: boolean;
   } {
     const existing = packetLabelPool[index];
     if (existing) {
       return existing;
     }
+    const circle = ensureBuilderPacketCircle(index);
+    const group = circle.group;
     const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bg.setAttribute("class", "builder-packet-label-bg");
     bg.setAttribute("rx", "4");
     bg.setAttribute("ry", "4");
+    bg.setAttribute("display", "none");
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("class", "builder-packet-label");
     text.setAttribute("dominant-baseline", "middle");
+    text.setAttribute("x", "0");
+    text.setAttribute("y", "0");
+    text.setAttribute("display", "none");
 
     const src = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
     src.setAttribute("class", "builder-packet-label-src");
     src.setAttribute("dy", "-0.58em");
+    src.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
 
     const dest = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
     dest.setAttribute("class", "builder-packet-label-dest");
     dest.setAttribute("dy", "1.16em");
+    dest.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
 
     text.append(src, dest);
-    ensureBuilderPacketCircleGroup().append(bg, text);
+    bg.setAttribute("x", (PACKET_LABEL_ANCHOR_X_PX + PACKET_IP_LABEL_OFFSET_X_PX).toFixed(2));
+    bg.setAttribute("y", PACKET_IP_LABEL_OFFSET_Y_PX.toFixed(2));
+    text.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
+    text.setAttribute("y", "0");
+    group.append(bg, text);
     const label = {
       bg,
       text,
@@ -2582,19 +2645,41 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       bgWidth: PACKET_IP_LABEL_WIDTH_PX,
       bgHeight: PACKET_IP_LABEL_HEIGHT_PX,
       lastPacketId: null,
-      lastTextX: Number.NaN,
-      lastTextY: Number.NaN,
       visible: false,
     };
     packetLabelPool[index] = label;
     return label;
   }
 
+  function hideBuilderPacketSlot(slotIndex: number): void {
+    const circle = packetCirclePool[slotIndex];
+    if (circle) {
+      if (circle.visible) {
+        circle.group.setAttribute("display", "none");
+        circle.visible = false;
+      }
+      if (circle.lastPacketId !== null) {
+        circle.el.removeAttribute("data-packet-id");
+        circle.lastPacketId = null;
+      }
+    }
+    const label = packetLabelPool[slotIndex];
+    if (label) {
+      if (label.visible) {
+        label.visible = false;
+      }
+      if (label.lastPacketId !== null) {
+        label.text.removeAttribute("data-packet-id");
+        label.lastPacketId = null;
+      }
+    }
+  }
+
   function prepareBuilderPacketRenders(): number {
-    const centerCache = new Map<string, SimXY | null>();
-    const preparedRouteByKey = new Map<string, SimPreparedPolyline | null>();
+    const centerCache = packetPortCenterCache;
+    const preparedRouteByKey = packetPreparedRouteByKey;
     const prepared: SimPreparedPacketRender[] = [];
-    let polylineMs = 0;
+    const tPoly0 = performance.now();
 
     for (const { port, packet } of simCurrentOccupancy) {
       const fromEntry = simPreviousOccupancyByPacketId.get(packet.id);
@@ -2615,13 +2700,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       let line: SimPreparedPolyline | null = null;
       if (fromDeviceId !== port.deviceId || fromPortNum !== port.port) {
         const routeKey = packetRouteKey(fromRef, toRef);
-        const tPoly0 = performance.now();
         line = preparedRouteByKey.get(routeKey);
         if (line === undefined) {
           line = buildPacketAnimationPolylinePrepared(fromRef, toRef, centerCache);
           preparedRouteByKey.set(routeKey, line);
         }
-        polylineMs += performance.now() - tPoly0;
         if (!line || line.points.length < 2 || line.totalLen < 1) {
           line = null;
         }
@@ -2646,7 +2729,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
     simPreparedPacketRenders = prepared;
     simPreparedPacketRenderDirty = false;
-    return polylineMs;
+    return performance.now() - tPoly0;
   }
 
   function renderBuilderPacketCircles(t: number): void {
@@ -2662,7 +2745,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     syncBuilderPacketOverlayDimensions(overlayWidth, overlayHeight);
     const tResize1 = performance.now();
 
-    const dotR = 8;
     let polylineMs = 0;
     let interpolateMs = 0;
     const tCompute0 = performance.now();
@@ -2693,40 +2775,53 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       ensureBuilderPacketCircleGroup();
     }
     const selectedGuide = ensureSelectedPacketGuide();
+    packetRenderFrameId += 1;
+    const frameId = packetRenderFrameId;
     for (let i = 0; i < simPreparedPacketRenders.length; i += 1) {
       const render = simPreparedPacketRenders[i]!;
-      const circle = ensureBuilderPacketCircle(i);
+      let slotIndex = packetSlotByPacketId.get(render.packetId);
+      if (slotIndex === undefined) {
+        slotIndex =
+          packetFreeSlots.length > 0 ? (packetFreeSlots.pop() as number) : packetCirclePool.length;
+        packetSlotByPacketId.set(render.packetId, slotIndex);
+      }
+      packetSlotLastSeenFrame[slotIndex] = frameId;
+      const circle = ensureBuilderPacketCircle(slotIndex);
       const selected = render.selected;
-      circle.removeAttribute("display");
-      circle.setAttribute("class", selected ? "builder-packet-dot builder-packet-dot--selected" : "builder-packet-dot");
-      circle.setAttribute("cx", render.x.toFixed(2));
-      circle.setAttribute("cy", render.y.toFixed(2));
-      circle.setAttribute("r", String(dotR));
-      circle.setAttribute("fill", render.fill);
-      circle.setAttribute("stroke", selected ? "#f9e2af" : render.stroke);
-      circle.setAttribute("stroke-width", String(selected ? 2.2 : 1.2));
-      circle.setAttribute("data-packet-id", String(render.packetId));
-      const label = builderPageState.showPacketIps ? ensureBuilderPacketLabel(i) : packetLabelPool[i];
+      const circleEl = circle.el;
+      if (!circle.visible) {
+        circle.group.removeAttribute("display");
+        circle.visible = true;
+      }
+      circle.group.setAttribute("transform", `translate(${render.x.toFixed(2)} ${render.y.toFixed(2)})`);
+      if (circle.lastPacketId !== render.packetId) {
+        circle.lastPacketId = render.packetId;
+        circleEl.setAttribute("data-packet-id", String(render.packetId));
+        circleEl.setAttribute("fill", render.fill);
+      }
+      const stroke = selected ? "#f9e2af" : render.stroke;
+      const strokeWidth = selected ? 2.2 : 1.2;
+      if (circle.lastSelected !== selected) {
+        circle.lastSelected = selected;
+        circleEl.setAttribute("class", selected ? "builder-packet-dot builder-packet-dot--selected" : "builder-packet-dot");
+      }
+      if (circle.lastStroke !== stroke) {
+        circle.lastStroke = stroke;
+        circleEl.setAttribute("stroke", stroke);
+      }
+      if (circle.lastStrokeWidth !== strokeWidth) {
+        circle.lastStrokeWidth = strokeWidth;
+        circleEl.setAttribute("stroke-width", String(strokeWidth));
+      }
+      const label = builderPageState.showPacketIps
+        ? ensureBuilderPacketLabel(slotIndex)
+        : packetLabelPool[slotIndex];
       if (builderPageState.showPacketIps) {
         const shownLabel = label!;
-        const labelX = render.x + dotR + 5;
         if (!shownLabel.visible) {
           shownLabel.bg.removeAttribute("display");
           shownLabel.text.removeAttribute("display");
           shownLabel.visible = true;
-        }
-        if (shownLabel.lastTextX !== labelX) {
-          shownLabel.lastTextX = labelX;
-          const labelXText = labelX.toFixed(2);
-          shownLabel.text.setAttribute("x", labelXText);
-          shownLabel.src.setAttribute("x", labelXText);
-          shownLabel.dest.setAttribute("x", labelXText);
-          shownLabel.bg.setAttribute("x", (labelX + shownLabel.bgOffsetX).toFixed(2));
-        }
-        if (shownLabel.lastTextY !== render.y) {
-          shownLabel.lastTextY = render.y;
-          shownLabel.text.setAttribute("y", render.y.toFixed(2));
-          shownLabel.bg.setAttribute("y", (render.y + shownLabel.bgOffsetY).toFixed(2));
         }
         if (shownLabel.lastPacketId !== render.packetId) {
           shownLabel.lastPacketId = render.packetId;
@@ -2742,27 +2837,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           label.text.setAttribute("display", "none");
           label.visible = false;
         }
-        label.text.removeAttribute("data-packet-id");
-        label.lastPacketId = null;
-      }
-    }
-    for (let i = simPreparedPacketRenders.length; i < activePacketCircleCount; i += 1) {
-      const circle = packetCirclePool[i];
-      if (circle) {
-        circle.setAttribute("display", "none");
-        circle.removeAttribute("data-packet-id");
-      }
-      const label = packetLabelPool[i];
-      if (label) {
-        if (label.visible) {
-          label.bg.setAttribute("display", "none");
-          label.text.setAttribute("display", "none");
-          label.visible = false;
+        if (label.lastPacketId !== null) {
+          label.text.removeAttribute("data-packet-id");
+          label.lastPacketId = null;
         }
-        label.text.removeAttribute("data-packet-id");
-        label.lastPacketId = null;
       }
     }
+    const stalePacketIds: number[] = [];
+    packetSlotByPacketId.forEach((slotIndex, packetId) => {
+      if (packetSlotLastSeenFrame[slotIndex] === frameId) return;
+      hideBuilderPacketSlot(slotIndex);
+      packetFreeSlots.push(slotIndex);
+      stalePacketIds.push(packetId);
+    });
+    stalePacketIds.forEach((packetId) => {
+      packetSlotByPacketId.delete(packetId);
+    });
     if (selectedRender) {
       selectedGuide.removeAttribute("display");
       selectedGuide.setAttribute("x1", selectedRender.x.toFixed(2));
@@ -2772,7 +2862,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     } else {
       selectedGuide.setAttribute("display", "none");
     }
-    activePacketCircleCount = simPreparedPacketRenders.length;
     const tCommit1 = performance.now();
     perfCounts.packetsInFlight = simCurrentOccupancy.length;
     recordPerf("packet.overlayResize", tResize1 - tResize0);
@@ -3038,6 +3127,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
     }
     wireOverlayEl.innerHTML = lineMarkup;
+    invalidateBuilderPacketGeometryCache();
     invalidateBuilderPacketRenderCache();
     renderBuilderPacketCircles(simPacketProgress);
     recordPerf("wire.total", performance.now() - t0);
