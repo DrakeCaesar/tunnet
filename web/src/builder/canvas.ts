@@ -1295,8 +1295,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simEmaAchievedSpeed: number | null = null;
   let simLastStepComputeMs: number | null = null;
   let simEmaStepComputeMs: number | null = null;
-  const SIM_ACHIEVED_SPEED_EMA_ALPHA = 0.12;
   const SIM_STEP_COMPUTE_EMA_ALPHA = 0.2;
+  let simAchievedStartMs: number | null = null;
+  let simAchievedStartTick = 0;
   let simPreviousOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simCurrentOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simPreviousOccupancyByPacketId = new Map<number, { port: PortRef; packet: Packet }>();
@@ -1524,6 +1525,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simDropPctTick = null;
     simDropPctCumulative = null;
     simEmaAchievedSpeed = null;
+    simAchievedStartMs = null;
+    simAchievedStartTick = 0;
     simLastStepComputeMs = null;
     simEmaStepComputeMs = null;
     rebuildBuilderSimEndpointIndex(topo);
@@ -1574,6 +1577,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function runOneBuilderSimTick(): void {
     if (simAnimating) return;
     const tickWallStartMs = performance.now();
+    if (simAchievedStartMs === null) {
+      simAchievedStartMs = tickWallStartMs;
+      simAchievedStartTick = simStats.tick;
+    }
     const frame = computeNextBuilderSimFrame();
     if (!frame) return;
     simAnimating = true;
@@ -1628,15 +1635,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     let finished = false;
     const finishTick = (): void => {
       if (finished) return;
+      const now = performance.now();
       finished = true;
       cancelBuilderSimTickTimers();
-      const wallMs = performance.now() - tickWallStartMs;
-      if (wallMs > 1) {
-        const instantAchieved = 1000 / wallMs;
-        simEmaAchievedSpeed =
-          simEmaAchievedSpeed === null
-            ? instantAchieved
-            : SIM_ACHIEVED_SPEED_EMA_ALPHA * instantAchieved + (1 - SIM_ACHIEVED_SPEED_EMA_ALPHA) * simEmaAchievedSpeed;
+      if (simAchievedStartMs !== null) {
+        const elapsedMs = now - simAchievedStartMs;
+        const completedTicks = simStats.tick - simAchievedStartTick;
+        if (elapsedMs > 1 && completedTicks > 0) {
+          simEmaAchievedSpeed = (completedTicks * 1000) / elapsedMs;
+        }
       }
       simAnimating = false;
       simPacketProgress = 1;
@@ -1651,7 +1658,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
     const animate = (now: number): void => {
       if (finished) return;
-      const t = durationMs <= 0 ? 1 : Math.min(1, (now - animStart) / durationMs);
+      const t = durationMs <= 0 ? 1 : clamp01((now - animStart) / durationMs);
       simPacketProgress = t;
       renderBuilderPacketCircles(t);
       if (t < 1) {
@@ -1667,8 +1674,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function setBuilderSimPlaying(enabled: boolean): void {
+    const wasPlaying = simPlaying;
     simPlaying = enabled;
     simPlayPauseBtn.textContent = simPlaying ? "Pause" : "Play";
+    if (simPlaying && !wasPlaying) {
+      simEmaAchievedSpeed = null;
+      simAchievedStartMs = null;
+      simAchievedStartTick = simStats.tick;
+    }
     if (!simPlaying && !simAnimating && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
       cancelBuilderSimTickTimers();
       simNextTickDeadlineMs = null;
@@ -2348,6 +2361,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return { points, segLens, totalLen };
   }
 
+  function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+  }
+
   function simPointOnPreparedPolylineAt(line: SimPreparedPolyline, t: number): SimXY | null {
     const pts = line.points;
     if (pts.length === 0) return null;
@@ -2357,7 +2375,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (line.totalLen < 1e-6) {
       return pts[0] ?? null;
     }
-    let d = t * line.totalLen;
+    let d = clamp01(t) * line.totalLen;
     for (let i = 0; i < line.segLens.length; i += 1) {
       const L = line.segLens[i] ?? 0;
       if (d <= L) {
@@ -2607,6 +2625,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const t0 = performance.now();
     const wrap = packetOverlayEl.parentElement;
     if (!wrap) return;
+    const progress = clamp01(t);
     const tResize0 = performance.now();
     const contentWidth = Math.max(canvasEl.scrollWidth, canvasEl.clientWidth);
     const contentHeight = Math.max(canvasEl.scrollHeight, canvasEl.clientHeight);
@@ -2628,7 +2647,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       let y = render.fallback.y;
       if (render.line) {
         const tInterp0 = performance.now();
-        const p = simPointOnPreparedPolylineAt(render.line, t);
+        const p = simPointOnPreparedPolylineAt(render.line, progress);
         interpolateMs += performance.now() - tInterp0;
         if (p) {
           x = p.x;
@@ -4868,6 +4887,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     persistBuilderPageState();
     simSpeed = speedMultiplierFromExponent(simSpeedExponent);
     simEmaAchievedSpeed = null;
+    simAchievedStartMs = null;
+    simAchievedStartTick = simStats.tick;
     if (simPlaying && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
       cancelBuilderSimTickTimers();
       simNextTickDeadlineMs = null;
