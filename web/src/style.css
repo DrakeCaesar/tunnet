@@ -590,13 +590,30 @@ textarea {
 .builder-floating-tools {
   position: absolute;
   left: 20px;
-  bottom: 35px;
+  bottom: calc(20px + var(--builder-floating-scrollbar-bottom, 0px));
   z-index: 7;
   display: flex;
   align-items: flex-end;
   gap: 10px;
   width: max-content;
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.builder-floating-scale {
+  position: absolute;
+  right: calc(20px + var(--builder-floating-scrollbar-right, 0px));
+  bottom: calc(20px + var(--builder-floating-scrollbar-bottom, 0px));
+  z-index: 7;
+  width: 360px;
+  max-width: min(360px, calc(100% - 40px));
+  padding: 8px;
+  border: 1px solid #2a3242;
+  border-radius: 10px;
+  background: rgba(15, 19, 27, 0.92);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
 }

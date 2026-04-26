@@ -72,7 +72,7 @@ const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + 5;
 const PACKET_IP_LABEL_OFFSET_X_PX = -3;
 const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
-const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "canvasScale", "inspector", "performance"] as const;
+const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "inspector", "performance"] as const;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -798,38 +798,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
           </div>
         </section>
-        <section ${panelSectionAttrs("canvasScale")}>
-          ${panelToggle("canvasScale", "Canvas Scale")}
-          <div id="builder-panel-canvasScale-body" class="builder-panel-section-body">
-            <div class="builder-scale-controls">
-              <label class="builder-scale-row" for="builder-scale-x">
-                <span>Horizontal</span>
-                <input id="builder-scale-x" type="range" min="0" max="${CANVAS_SCALE_X_STEPS.length - 1}" step="1" value="${canvasScaleXIndexFromValue(canvasScale.x)}" />
-                <span id="builder-scale-x-value">${formatCanvasScaleX(canvasScale.x)}</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-outer64">
-                <span>Vertical Octet 4</span>
-                <input id="builder-scale-y-outer64" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
-                <span id="builder-scale-y-outer64-value">${canvasScale.yByLayer.outer64.toFixed(2)}x</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-middle16">
-                <span>Vertical Octet 3</span>
-                <input id="builder-scale-y-middle16" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
-                <span id="builder-scale-y-middle16-value">${canvasScale.yByLayer.middle16.toFixed(2)}x</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-inner4">
-                <span>Vertical Octet 2</span>
-                <input id="builder-scale-y-inner4" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
-                <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-core1">
-                <span>Vertical Octet 1</span>
-                <input id="builder-scale-y-core1" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
-                <span id="builder-scale-y-core1-value">${canvasScale.yByLayer.core1.toFixed(2)}x</span>
-              </label>
-            </div>
-          </div>
-        </section>
         <section ${panelSectionAttrs("inspector")}>
           ${panelToggle("inspector", "Inspector")}
           <div id="builder-panel-inspector-body" class="builder-panel-section-body">
@@ -854,6 +822,35 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           <div id="builder-templates" class="builder-floating-templates"></div>
           <div id="builder-delete-drop-zone" class="builder-delete-drop-zone" aria-label="Drop here to delete">
             Drop to delete
+          </div>
+        </div>
+        <div class="builder-floating-scale" aria-label="Canvas scale controls">
+          <div class="builder-scale-controls">
+            <label class="builder-scale-row" for="builder-scale-x">
+              <span>Horizontal</span>
+              <input id="builder-scale-x" type="range" min="0" max="${CANVAS_SCALE_X_STEPS.length - 1}" step="1" value="${canvasScaleXIndexFromValue(canvasScale.x)}" />
+              <span id="builder-scale-x-value">${formatCanvasScaleX(canvasScale.x)}</span>
+            </label>
+            <label class="builder-scale-row" for="builder-scale-y-outer64">
+              <span>Octet 4</span>
+              <input id="builder-scale-y-outer64" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
+              <span id="builder-scale-y-outer64-value">${canvasScale.yByLayer.outer64.toFixed(2)}x</span>
+            </label>
+            <label class="builder-scale-row" for="builder-scale-y-middle16">
+              <span>Octet 3</span>
+              <input id="builder-scale-y-middle16" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
+              <span id="builder-scale-y-middle16-value">${canvasScale.yByLayer.middle16.toFixed(2)}x</span>
+            </label>
+            <label class="builder-scale-row" for="builder-scale-y-inner4">
+              <span>Octet 2</span>
+              <input id="builder-scale-y-inner4" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
+              <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
+            </label>
+            <label class="builder-scale-row" for="builder-scale-y-core1">
+              <span>Octet 1</span>
+              <input id="builder-scale-y-core1" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
+              <span id="builder-scale-y-core1-value">${canvasScale.yByLayer.core1.toFixed(2)}x</span>
+            </label>
           </div>
         </div>
       </main>
@@ -3073,6 +3070,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const t0 = performance.now();
     const wrap = wireOverlayEl.parentElement;
     if (!wrap) return;
+    const scrollbarRightPx = Math.max(0, wrap.offsetWidth - wrap.clientWidth);
+    const scrollbarBottomPx = Math.max(0, wrap.offsetHeight - wrap.clientHeight);
+    root.style.setProperty("--builder-floating-scrollbar-right", `${scrollbarRightPx}px`);
+    root.style.setProperty("--builder-floating-scrollbar-bottom", `${scrollbarBottomPx}px`);
     const tExpand0 = performance.now();
     const viewLinks = expandLinks(state.links, state.entities);
     const tExpand1 = performance.now();
