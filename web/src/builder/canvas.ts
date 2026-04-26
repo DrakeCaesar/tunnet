@@ -788,7 +788,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               <button id="builder-import" type="button">Import text</button>
               <button id="builder-export" type="button">Export text</button>
               <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
-              <button id="builder-delete" type="button">Delete selected</button>
               <button id="builder-delete-all" type="button">Delete all</button>
             </div>
           </div>
@@ -897,7 +896,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const scaleYMiddleValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-middle16-value")!;
   const scaleYInnerValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-inner4-value")!;
   const scaleYCoreValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-core1-value")!;
-  const deleteBtn = root.querySelector<HTMLButtonElement>("#builder-delete")!;
   const deleteAllBtn = root.querySelector<HTMLButtonElement>("#builder-delete-all")!;
   const togglePropLabelsBtn = root.querySelector<HTMLButtonElement>("#builder-toggle-prop-labels")!;
   const exportBtn = root.querySelector<HTMLButtonElement>("#builder-export")!;
@@ -1534,21 +1532,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function updateBuilderSimMeta(): void {
-    const achievedValue =
-      simEmaAchievedSpeed === null
-        ? `—`
-        : `${simEmaAchievedSpeed.toFixed(2)}× ${Math.min(999, Math.round((simEmaAchievedSpeed / Math.max(simSpeed, 1e-9)) * 100))}%`;
-    const stepComputeValue =
-      simLastStepComputeMs === null
-        ? `—`
-        : `${simLastStepComputeMs.toFixed(2)}ms (ema ${(simEmaStepComputeMs ?? simLastStepComputeMs).toFixed(2)}ms)`;
     simMetaEl.innerHTML = `
-      <div class="stats-subtitle">Runtime</div>
-      <div class="stats-row">
-        <div class="stat-pill"><span>Achieved</span><strong>${achievedValue}</strong></div>
-        <div class="stat-pill"><span>Step compute</span><strong>${stepComputeValue}</strong></div>
-      </div>
-      <div class="stats-subtitle stats-subtitle-gap">Simulation</div>
+      <div class="stats-subtitle">Simulation</div>
       <div class="stats-row">
         <div class="stat-pill"><span>Tick</span><strong>${simStats.tick}</strong></div>
         <div class="stat-pill"><span>In-flight</span><strong>${simCurrentOccupancy.length}</strong></div>
@@ -4912,8 +4897,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     renderInspector();
     renderCanvas();
   };
-
-  deleteBtn.addEventListener("click", deleteSelected);
 
   deleteAllBtn.addEventListener("click", () => {
     if (!state.entities.length && !state.links.length) return;
