@@ -386,6 +386,7 @@ textarea {
 .builder-main {
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .builder-sidebar-resizer {
@@ -583,6 +584,60 @@ textarea {
   overflow-y: auto;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.builder-floating-tools {
+  position: absolute;
+  left: 20px;
+  bottom: 35px;
+  z-index: 7;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  width: max-content;
+  pointer-events: none;
+}
+
+.builder-floating-templates {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #2a3242;
+  border-radius: 10px;
+  background: rgba(15, 19, 27, 0.92);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.builder-floating-templates .builder-template {
+  margin-bottom: 0;
+  min-width: 82px;
+  text-align: center;
+}
+
+.builder-delete-drop-zone {
+  min-width: 150px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 2px dotted rgba(243, 139, 168, 0.95);
+  border-radius: 10px;
+  background: rgba(92, 35, 52, 0.35);
+  color: #f3a1b8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.32);
+  pointer-events: auto;
+}
+
+.builder-delete-drop-zone.active {
+  background: rgba(157, 61, 88, 0.52);
+  border-color: #f38ba8;
+  color: #ffd7e3;
 }
 
 .builder-box-selection {

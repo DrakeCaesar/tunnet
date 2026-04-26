@@ -793,12 +793,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             </div>
           </div>
         </section>
-        <section ${panelSectionAttrs("templates")}>
-          ${panelToggle("templates", "Templates")}
-          <div id="builder-panel-templates-body" class="builder-panel-section-body">
-            <div id="builder-templates"></div>
-          </div>
-        </section>
         <section ${panelSectionAttrs("simulation")}>
           ${panelToggle("simulation", "Simulation")}
           <div id="builder-panel-simulation-body" class="builder-panel-section-body">
@@ -873,6 +867,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           <svg id="builder-packet-overlay" class="builder-packet-overlay" aria-hidden="true"></svg>
           <div id="builder-canvas" class="builder-canvas"></div>
         </div>
+        <div class="builder-floating-tools" aria-label="Canvas tools">
+          <div id="builder-templates" class="builder-floating-templates"></div>
+          <div id="builder-delete-drop-zone" class="builder-delete-drop-zone" aria-label="Drop here to delete">
+            Drop to delete
+          </div>
+        </div>
       </main>
     </div>
   `;
@@ -881,6 +881,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const builderSidebarEl = root.querySelector<HTMLElement>(".builder-sidebar")!;
   const builderSidebarResizerEl = root.querySelector<HTMLDivElement>(".builder-sidebar-resizer")!;
   const templatesEl = root.querySelector<HTMLDivElement>("#builder-templates")!;
+  const deleteDropZoneEl = root.querySelector<HTMLDivElement>("#builder-delete-drop-zone")!;
   const canvasEl = root.querySelector<HTMLDivElement>("#builder-canvas")!;
   const wireOverlayEl = root.querySelector<SVGSVGElement>("#builder-wire-overlay")!;
   const packetOverlayEl = root.querySelector<SVGSVGElement>("#builder-packet-overlay")!;
@@ -1809,6 +1810,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           el.classList.add("selected");
         });
     });
+  }
+
+  function setDeleteDropZoneActive(active: boolean): void {
+    deleteDropZoneEl.classList.toggle("active", active);
+  }
+
+  function isPointInDeleteDropZone(clientX: number, clientY: number): boolean {
+    const r = deleteDropZoneEl.getBoundingClientRect();
+    return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   }
 
   function applySimTickHighlightsToCanvas(): void {
@@ -3822,6 +3832,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         let lastLayer = rootEnt.layer;
         let lastSegment = rootEnt.segmentIndex;
         const onMove = (mv: MouseEvent): void => {
+          const overDeleteZone = isPointInDeleteDropZone(mv.clientX, mv.clientY);
+          setDeleteDropZoneActive(overDeleteZone);
+          if (overDeleteZone) return;
           const hoveredSection = segmentFromClientPoint(mv.clientX, mv.clientY);
           if (!hoveredSection) return;
           const section = hoveredSection;
@@ -3880,14 +3893,21 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             scheduleWireOverlayRender();
           }
         };
-        const onUp = (): void => {
+        const onUp = (up: MouseEvent): void => {
           window.removeEventListener("mousemove", onMove);
           window.removeEventListener("mouseup", onUp);
+          const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
+          setDeleteDropZoneActive(false);
           if (dragRenderRaf !== null) {
             window.cancelAnimationFrame(dragRenderRaf);
             dragRenderRaf = null;
           }
           clearBuilderDragCursor();
+          if (droppedInDeleteZone) {
+            hideDragGroupBounds();
+            deleteEntityRootIds(movingRootIds);
+            return;
+          }
           if (didModifierCopy && !didMove) {
             state = preCopyState;
             const next = new Set(preCopySelection);
@@ -4115,6 +4135,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     let lastLayer = rootDragEnt.layer;
     let lastSegment = rootDragEnt.segmentIndex;
     const onMove = (mv: MouseEvent): void => {
+      const overDeleteZone = isPointInDeleteDropZone(mv.clientX, mv.clientY);
+      setDeleteDropZoneActive(overDeleteZone);
+      if (overDeleteZone) return;
       const hoveredSection = segmentFromClientPoint(mv.clientX, mv.clientY);
       if (!hoveredSection) return;
       const section = hoveredSection;
@@ -4173,13 +4196,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         scheduleWireOverlayRender();
       }
     };
-    const onUp = (): void => {
+    const onUp = (up: MouseEvent): void => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
+      setDeleteDropZoneActive(false);
       clearBuilderDragCursor();
       if (dragRenderRaf !== null) {
         window.cancelAnimationFrame(dragRenderRaf);
         dragRenderRaf = null;
+      }
+      if (droppedInDeleteZone) {
+        hideDragGroupBounds();
+        deleteEntityRootIds(movingRootIds);
+        return;
       }
       if (didModifierCopy && !didMove) {
         state = preCopyState;
@@ -4862,6 +4892,25 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     } else {
       renderCanvas();
     }
+  };
+
+  const deleteEntityRootIds = (ids: string[]): void => {
+    if (!ids.length) return;
+    let changed = false;
+    ids.forEach((id) => {
+      const ent = state.entities.find((e) => e.id === id);
+      if (ent && !isStaticOuterLeafEndpoint(ent)) {
+        state = removeEntityGroup(state, id);
+        changed = true;
+      }
+    });
+    if (!changed) return;
+    selection = null;
+    selectedEntityRootIds.clear();
+    linkDrag = null;
+    persist();
+    renderInspector();
+    renderCanvas();
   };
 
   deleteBtn.addEventListener("click", deleteSelected);
