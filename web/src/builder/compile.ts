@@ -52,6 +52,33 @@ function uniqueList(values: string[]): string[] {
   return out;
 }
 
+function matchAddressPattern(pattern: string, address: string): boolean {
+  const p = pattern.split(".");
+  const a = address.split(".");
+  if (p.length !== 4 || a.length !== 4) return false;
+  for (let i = 0; i < 4; i += 1) {
+    if (p[i] === "*") continue;
+    if (p[i] !== a[i]) return false;
+  }
+  return true;
+}
+
+function expandAddressTargets(targets: string[], knownAddresses: string[]): string[] {
+  const expanded: string[] = [];
+  for (const target of targets) {
+    if (target.includes("*")) {
+      for (const candidate of knownAddresses) {
+        if (matchAddressPattern(target, candidate)) {
+          expanded.push(candidate);
+        }
+      }
+      continue;
+    }
+    expanded.push(target);
+  }
+  return uniqueList(expanded);
+}
+
 function makeDevice(entity: BuilderEntityInstance): (DeviceBase & Record<string, unknown>) | null {
   if (entity.templateType === "text") {
     return null;
@@ -143,11 +170,17 @@ export function compileBuilderPayload(state: BuilderState): CompiledBuilderPaylo
   const endpointEntities = expanded.entities.filter((e) => e.templateType === "endpoint");
   const sourceEndpointEntities = endpointEntities.filter((e) => !e.isShadow);
   const rowByAddress = new Map<string, EndpointDatasetRow>(endpointData.map((row) => [row.address, row]));
+  const knownEndpointAddresses = uniqueList(
+    endpointData
+      .map((row) => row.address)
+      .filter((address) => address.length > 0)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+  );
   sourceEndpointEntities.forEach((entity) => {
     const addr = entity.settings.address ?? "0.0.0.0";
     const row = rowByAddress.get(addr);
-    const destinations = uniqueList((row?.sends_to ?? []).filter((d) => d !== addr));
-    const replyToSources = uniqueList((row?.replies_to ?? []).filter((d) => d !== addr));
+    const destinations = expandAddressTargets(row?.sends_to ?? [], knownEndpointAddresses).filter((d) => d !== addr);
+    const replyToSources = expandAddressTargets(row?.replies_to ?? [], knownEndpointAddresses).filter((d) => d !== addr);
     const device = devices[entity.instanceId];
     if (!device || device.type !== "endpoint") return;
     const sendRate = Number.isFinite(row?.send_rate) ? Math.max(0, Math.floor(row!.send_rate)) : 0;
