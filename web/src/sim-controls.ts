@@ -25,5 +25,5 @@ export function speedMultiplierFromExponent(exp: number): number {
 
 export function formatSpeedLabel(exp: number): string {
   const m = speedMultiplierFromExponent(exp);
-  return `${m}× (2^${exp})`;
+  return `${m}x`;
 }

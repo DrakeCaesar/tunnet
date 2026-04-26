@@ -1614,17 +1614,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function updateBuilderSimMeta(): void {
+    const formatSimInteger = (value: number): string => {
+      const sign = value < 0 ? "-" : "";
+      const abs = Math.abs(Math.trunc(value));
+      const grouped = String(abs).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+      return `${sign}${grouped}`;
+    };
     simMetaEl.innerHTML = `
       <div class="stats-subtitle">Simulation</div>
       <div class="stats-row">
-        <div class="stat-pill"><span>Tick</span><strong>${simStats.tick}</strong></div>
-        <div class="stat-pill"><span>In-flight</span><strong>${simCurrentOccupancy.length}</strong></div>
-        <div class="stat-pill"><span>Emitted</span><strong>${simStats.emitted}</strong></div>
-        <div class="stat-pill"><span>Delivered</span><strong>${simStats.delivered}</strong></div>
-        <div class="stat-pill"><span>Dropped</span><strong>${simStats.dropped}</strong></div>
-        <div class="stat-pill"><span>Bounced</span><strong>${simStats.bounced}</strong></div>
-        <div class="stat-pill"><span>TTL expired</span><strong>${simStats.ttlExpired}</strong></div>
-        <div class="stat-pill"><span>Collisions</span><strong>${simStats.collisions}</strong></div>
+        <div class="stat-pill"><span>Tick</span><strong>${formatSimInteger(simStats.tick)}</strong></div>
+        <div class="stat-pill"><span>In-flight</span><strong>${formatSimInteger(simCurrentOccupancy.length)}</strong></div>
+        <div class="stat-pill"><span>Emitted</span><strong>${formatSimInteger(simStats.emitted)}</strong></div>
+        <div class="stat-pill"><span>Delivered</span><strong>${formatSimInteger(simStats.delivered)}</strong></div>
+        <div class="stat-pill"><span>Dropped</span><strong>${formatSimInteger(simStats.dropped)}</strong></div>
+        <div class="stat-pill"><span>Bounced</span><strong>${formatSimInteger(simStats.bounced)}</strong></div>
+        <div class="stat-pill"><span>TTL expired</span><strong>${formatSimInteger(simStats.ttlExpired)}</strong></div>
+        <div class="stat-pill"><span>Collisions</span><strong>${formatSimInteger(simStats.collisions)}</strong></div>
         <div class="stat-pill"><span>Delivered/tick</span><strong>${simDeliveredPerTick === null ? "—" : simDeliveredPerTick.toFixed(2)}</strong></div>
         <div class="stat-pill"><span>Delivered avg100</span><strong>${simDeliveredPerTickAvg100 === null ? "—" : simDeliveredPerTickAvg100.toFixed(2)}</strong></div>
         <div class="stat-pill"><span>Drop % tick</span><strong>${simDropPctTick === null ? "—" : `${simDropPctTick.toFixed(1)}%`}</strong></div>
