@@ -1,0 +1,1129 @@
+export type EndpointDatasetRow = {
+  address: string;
+  type: string;
+  hackable: boolean | null;
+  sensitive: boolean;
+  ttl_limited: boolean;
+  send_rate: number;
+  sends_to: string[];
+  replies_to: string[];
+  receives_from: string[];
+};
+
+export const endpointData: EndpointDatasetRow[] = [
+  {
+    "address": "0.0.0.0",
+    "type": "Mainframe (Research Lab)",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.0.*.*",
+      "0.*.0.0"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.1.0",
+      "0.0.3.1",
+      "0.2.0.0"
+    ]
+  },
+  {
+    "address": "0.0.0.1",
+    "type": "Hermit",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.0.3.1",
+      "0.2.0.0"
+    ]
+  },
+  {
+    "address": "0.0.0.2",
+    "type": "School",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.0.3.1",
+      "0.2.0.0",
+      "0.1.0.2",
+      "0.2.0.2",
+      "0.3.0.2"
+    ]
+  },
+  {
+    "address": "0.0.0.3",
+    "type": "Nightclub",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.0.3.1",
+      "0.2.0.0"
+    ]
+  },
+  {
+    "address": "0.0.1.1",
+    "type": "Farm",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1",
+      "0.1.3.2",
+      "0.2.3.2",
+      "0.3.3.2"
+    ]
+  },
+  {
+    "address": "0.0.1.2",
+    "type": "Cabin",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [
+      "0.0.3.1",
+      "*.*.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1"
+    ]
+  },
+  {
+    "address": "0.0.1.3",
+    "type": "Construction Site",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1"
+    ]
+  },
+  {
+    "address": "0.0.3.0",
+    "type": "Cave",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1"
+    ]
+  },
+  {
+    "address": "0.0.3.1",
+    "type": "Supermarket",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 64,
+    "sends_to": [
+      "0.0.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1",
+      "0.0.1.0"
+    ]
+  },
+  {
+    "address": "0.0.3.2",
+    "type": "Shelter",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1"
+    ]
+  },
+  {
+    "address": "0.0.3.3",
+    "type": "Camp",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1",
+      "0.1.3.3",
+      "0.2.3.3",
+      "0.3.3.3"
+    ]
+  },
+  {
+    "address": "0.1.0.0",
+    "type": "Mainframe (Military Base)",
+    "hackable": false,
+    "sensitive": true,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.1.*.*",
+      "0.*.2.2"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.1.1.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.2.2",
+      "0.2.2.2",
+      "0.3.2.2",
+      "0.1.3.3"
+    ]
+  },
+  {
+    "address": "0.1.0.1",
+    "type": "Hermit",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.0.0",
+      "0.1.1.0",
+      "0.1.2.0",
+      "0.1.1.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.1.0",
+      "0.1.2.1",
+      "0.1.3.1"
+    ]
+  },
+  {
+    "address": "0.1.0.2",
+    "type": "School",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.*.0.2",
+      "0.1.1.0"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.1.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.0.2",
+      "0.2.0.2",
+      "0.3.0.2"
+    ]
+  },
+  {
+    "address": "0.1.0.3",
+    "type": "Nightclub",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1"
+    ]
+  },
+  {
+    "address": "0.1.1.1",
+    "type": "Farm",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.1.3.2"
+    ],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.0.1",
+      "0.1.3.2",
+      "0.2.3.2",
+      "0.3.3.2"
+    ]
+  },
+  {
+    "address": "0.1.1.2",
+    "type": "Cabin",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.1.1.0",
+      "0.1.3.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.1.0"
+    ]
+  },
+  {
+    "address": "0.1.1.3",
+    "type": "Construction Site",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1"
+    ]
+  },
+  {
+    "address": "0.1.2.0",
+    "type": "Server Room",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.0.1"
+    ]
+  },
+  {
+    "address": "0.1.2.1",
+    "type": "Workshop",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 128,
+    "sends_to": [
+      "0.1.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.1.0",
+      "0.1.2.2"
+    ]
+  },
+  {
+    "address": "0.1.2.2",
+    "type": "Military Outpost",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.0.0"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1"
+    ]
+  },
+  {
+    "address": "0.1.2.3",
+    "type": "Beach",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1"
+    ]
+  },
+  {
+    "address": "0.1.3.0",
+    "type": "Cave",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.1.3.2"
+    ],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.3.2"
+    ]
+  },
+  {
+    "address": "0.1.3.1",
+    "type": "Supermarket",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 64,
+    "sends_to": [
+      "0.1.1.1",
+      "0.1.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.1.0",
+      "0.1.1.2",
+      "0.1.2.2"
+    ]
+  },
+  {
+    "address": "0.1.3.2",
+    "type": "Shelter",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.1.3.0",
+      "0.*.1.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.3.0",
+      "0.1.1.1"
+    ]
+  },
+  {
+    "address": "0.1.3.3",
+    "type": "Camp",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.1.0.0",
+      "0.*.3.3"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.3.3",
+      "0.2.3.3",
+      "0.3.3.3"
+    ]
+  },
+  {
+    "address": "0.2.0.0",
+    "type": "Mainframe (Monastery)",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": true,
+    "send_rate": 2,
+    "sends_to": [
+      "0.*.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.2.1",
+      "0.*.1.0",
+      "0.1.0.1",
+      "0.2.0.1",
+      "0.2.3.3"
+    ]
+  },
+  {
+    "address": "0.2.0.1",
+    "type": "Hermit",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.0.0",
+      "0.2.1.0",
+      "0.1.2.0",
+      "0.1.1.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.1.0"
+    ]
+  },
+  {
+    "address": "0.2.0.2",
+    "type": "School",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.1.0",
+      "0.*.0.2"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.1.0",
+      "0.1.0.2",
+      "0.2.0.2",
+      "0.3.0.2"
+    ]
+  },
+  {
+    "address": "0.2.0.3",
+    "type": "Nightclub",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.1.2",
+      "0.2.3.3",
+      "0.2.3.1",
+      "0.2.2.3"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1"
+    ]
+  },
+  {
+    "address": "0.2.1.1",
+    "type": "Farm",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.2.3.2"
+    ],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.0.1",
+      "0.1.3.2",
+      "0.2.3.2",
+      "0.3.3.2"
+    ]
+  },
+  {
+    "address": "0.2.1.2",
+    "type": "Cabin",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.1.0",
+      "0.2.3.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.1.0",
+      "0.2.0.3"
+    ]
+  },
+  {
+    "address": "0.2.1.3",
+    "type": "Construction Site",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1"
+    ]
+  },
+  {
+    "address": "0.2.2.0",
+    "type": "Server Room",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.0.1"
+    ]
+  },
+  {
+    "address": "0.2.2.1",
+    "type": "Workshop",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 128,
+    "sends_to": [
+      "0.2.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.1.0",
+      "0.2.2.1",
+      "0.2.2.2"
+    ]
+  },
+  {
+    "address": "0.2.2.2",
+    "type": "Military Outpost",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.2.1",
+      "0.2.3.1",
+      "0.1.0.0"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.1.0.0",
+      "0.2.2.1"
+    ]
+  },
+  {
+    "address": "0.2.2.3",
+    "type": "Beach",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.0.3"
+    ]
+  },
+  {
+    "address": "0.2.3.0",
+    "type": "Cave",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.2.3.2"
+    ],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.3.2"
+    ]
+  },
+  {
+    "address": "0.2.3.1",
+    "type": "Supermarket",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.2.2",
+      "0.2.0.3",
+      "0.2.1.2"
+    ]
+  },
+  {
+    "address": "0.2.3.2",
+    "type": "Shelter",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.3.0",
+      "0.*.1.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.3.0",
+      "0.2.1.1"
+    ]
+  },
+  {
+    "address": "0.2.3.3",
+    "type": "Camp",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.2.0.0",
+      "0.*.3.3"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.0.3",
+      "0.1.3.3",
+      "0.2.3.3",
+      "0.3.3.3"
+    ]
+  },
+  {
+    "address": "0.3.0.0",
+    "type": "Mainframe (Villa)",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 4,
+    "sends_to": [
+      "2.1.2.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.3.3"
+    ]
+  },
+  {
+    "address": "0.3.0.1",
+    "type": "Hermit",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1"
+    ]
+  },
+  {
+    "address": "0.3.0.2",
+    "type": "School",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.3.1.0",
+      "0.*.0.2"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.1.0",
+      "0.1.0.2",
+      "0.2.0.2",
+      "0.3.0.2"
+    ]
+  },
+  {
+    "address": "0.3.0.3",
+    "type": "Nightclub",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.3.1.2",
+      "0.3.3.3",
+      "0.3.3.1",
+      "0.3.2.3"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1"
+    ]
+  },
+  {
+    "address": "0.3.1.1",
+    "type": "Farm",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.3.3.2"
+    ],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.1.3.2",
+      "0.2.3.2",
+      "0.3.3.2"
+    ]
+  },
+  {
+    "address": "0.3.1.2",
+    "type": "Cabin",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.3.1.0",
+      "0.3.3.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.1.0",
+      "0.3.0.3"
+    ]
+  },
+  {
+    "address": "0.3.1.3",
+    "type": "Construction Site",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1"
+    ]
+  },
+  {
+    "address": "0.3.2.0",
+    "type": "Server Room",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1"
+    ]
+  },
+  {
+    "address": "0.3.2.1",
+    "type": "Workshop",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.2.2"
+    ]
+  },
+  {
+    "address": "0.3.2.2",
+    "type": "Military Outpost",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.3.2.1",
+      "0.3.3.1",
+      "0.1.0.0"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.1.0.0",
+      "0.3.3.1"
+    ]
+  },
+  {
+    "address": "0.3.2.3",
+    "type": "Beach",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.0.3"
+    ]
+  },
+  {
+    "address": "0.3.3.0",
+    "type": "Cave",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.3.3.2"
+    ],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.3.2"
+    ]
+  },
+  {
+    "address": "0.3.3.1",
+    "type": "Supermarket",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 64,
+    "sends_to": [
+      "0.3.1.1",
+      "0.3.*.*"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.0.3",
+      "0.3.1.0",
+      "0.3.1.2",
+      "0.3.2.2"
+    ]
+  },
+  {
+    "address": "0.3.3.2",
+    "type": "Shelter",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.3.3.0",
+      "0.*.1.1"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.3.0",
+      "0.3.1.1"
+    ]
+  },
+  {
+    "address": "0.3.3.3",
+    "type": "Camp",
+    "hackable": true,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 2,
+    "sends_to": [
+      "0.3.0.0",
+      "0.*.3.3"
+    ],
+    "replies_to": [],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.0.3",
+      "0.1.3.3",
+      "0.2.3.3",
+      "0.3.3.3"
+    ]
+  },
+  {
+    "address": "1.0.1.0",
+    "type": "Subnetwork Chamber",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1"
+    ],
+    "receives_from": [
+      "0.0.0.0",
+      "0.2.0.0",
+      "0.0.3.1"
+    ]
+  },
+  {
+    "address": "1.1.1.0",
+    "type": "Subnetwork Chamber",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.0.1",
+      "0.1.0.2",
+      "0.1.1.2"
+    ],
+    "receives_from": [
+      "0.1.0.0",
+      "0.2.0.0",
+      "0.1.2.1",
+      "0.1.3.1",
+      "0.1.0.1",
+      "0.1.0.2",
+      "0.1.1.2"
+    ]
+  },
+  {
+    "address": "1.2.1.0",
+    "type": "Subnetwork Chamber",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 0,
+    "sends_to": [],
+    "replies_to": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.0.1",
+      "0.2.0.2",
+      "0.2.1.2"
+    ],
+    "receives_from": [
+      "0.2.0.0",
+      "0.2.2.1",
+      "0.2.0.1",
+      "0.2.0.2",
+      "0.2.1.2"
+    ]
+  },
+  {
+    "address": "1.3.1.0",
+    "type": "Subnetwork Chamber",
+    "hackable": false,
+    "sensitive": false,
+    "ttl_limited": false,
+    "send_rate": 1,
+    "sends_to": [
+      "0.3.1.0"
+    ],
+    "replies_to": [
+      "0.2.0.0",
+      "0.3.3.1",
+      "0.3.0.2",
+      "0.3.1.2"
+    ],
+    "receives_from": [
+      "0.2.0.0",
+      "0.3.1.0",
+      "0.3.3.1",
+      "0.3.0.2",
+      "0.3.1.2"
+    ]
+  }
+] as EndpointDatasetRow[];

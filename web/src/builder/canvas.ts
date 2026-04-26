@@ -43,12 +43,7 @@ import { compileBuilderPayload } from "./compile";
 import type { Device, Packet, PortRef, SimulationStats, SimulatorRuntimeState, Topology } from "../simulation";
 import { buildPortAdjacency, getHubEgressPort, portKey, TunnetSimulator } from "../simulation";
 import {
-  formatSendRateLabel,
   formatSpeedLabel,
-  sendRateMultiplierFromExponent,
-  SEND_RATE_EXP_DEFAULT,
-  SEND_RATE_EXP_MAX,
-  SEND_RATE_EXP_MIN,
   speedMultiplierFromExponent,
   SPEED_EXP_DEFAULT,
   SPEED_EXP_MAX,
@@ -110,7 +105,6 @@ type BuilderPageState = {
   collapsedSections: Partial<Record<BuilderPanelSectionId, boolean>>;
   showPacketIps: boolean;
   simSpeedExponent: number;
-  simSendRateExponent: number;
 };
 
 /** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (17px). */
@@ -708,11 +702,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (!Number.isFinite(n)) return SPEED_EXP_DEFAULT;
       return Math.max(SPEED_EXP_MIN, Math.min(SPEED_EXP_MAX, Math.round(n)));
     };
-    const clampSimSendRateExponent = (value: unknown): number => {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return SEND_RATE_EXP_DEFAULT;
-      return Math.max(SEND_RATE_EXP_MIN, Math.min(SEND_RATE_EXP_MAX, Math.round(n)));
-    };
     try {
       const raw = window.localStorage.getItem(BUILDER_PAGE_STATE_KEY);
       if (!raw) {
@@ -720,7 +709,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           collapsedSections: {},
           showPacketIps: true,
           simSpeedExponent: SPEED_EXP_DEFAULT,
-          simSendRateExponent: SEND_RATE_EXP_DEFAULT,
         };
       }
       const parsed = JSON.parse(raw) as Partial<BuilderPageState>;
@@ -733,14 +721,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         collapsedSections,
         showPacketIps: parsed.showPacketIps !== false,
         simSpeedExponent: clampSimSpeedExponent(parsed.simSpeedExponent),
-        simSendRateExponent: clampSimSendRateExponent(parsed.simSendRateExponent),
       };
     } catch {
       return {
         collapsedSections: {},
         showPacketIps: true,
         simSpeedExponent: SPEED_EXP_DEFAULT,
-        simSendRateExponent: SEND_RATE_EXP_DEFAULT,
       };
     }
   };
@@ -806,11 +792,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               <span>Tick pace</span>
               <input id="builder-sim-speed" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
               <span id="builder-sim-speed-value">${formatSpeedLabel(SPEED_EXP_DEFAULT)}</span>
-            </label>
-            <label class="builder-scale-row" for="builder-sim-send-rate">
-              <span>Send rate</span>
-              <input id="builder-sim-send-rate" type="range" min="${SEND_RATE_EXP_MIN}" max="${SEND_RATE_EXP_MAX}" step="1" value="${SEND_RATE_EXP_DEFAULT}" />
-              <span id="builder-sim-send-rate-value">${formatSendRateLabel(SEND_RATE_EXP_DEFAULT)}</span>
             </label>
             <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
           </div>
@@ -907,10 +888,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const simTogglePacketIpsBtn = root.querySelector<HTMLButtonElement>("#builder-sim-toggle-packet-ips")!;
   const simSpeedEl = root.querySelector<HTMLInputElement>("#builder-sim-speed")!;
   const simSpeedValueEl = root.querySelector<HTMLSpanElement>("#builder-sim-speed-value")!;
-  const simSendRateEl = root.querySelector<HTMLInputElement>("#builder-sim-send-rate")!;
-  const simSendRateValueEl = root.querySelector<HTMLSpanElement>("#builder-sim-send-rate-value")!;
   simSpeedEl.value = String(builderPageState.simSpeedExponent);
-  simSendRateEl.value = String(builderPageState.simSendRateExponent);
   const simMetaEl = root.querySelector<HTMLDivElement>("#builder-sim-meta")!;
   const canvasWrapEl = wireOverlayEl.parentElement as HTMLDivElement | null;
   const boxEl = document.createElement("div");
@@ -1280,10 +1258,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simSpeedExponent = SPEED_EXP_DEFAULT;
   }
   let simSpeed = speedMultiplierFromExponent(simSpeedExponent);
-  let simSendRateExponent = Number(simSendRateEl.value);
-  if (!Number.isFinite(simSendRateExponent)) {
-    simSendRateExponent = SEND_RATE_EXP_DEFAULT;
-  }
   let simStats: SimulationStats = {
     tick: 0,
     emitted: 0,
@@ -1470,7 +1444,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function initBuilderSimulator(topology: Topology): void {
     builderSimulator = new TunnetSimulator(topology, 1337);
-    builderSimulator.setSendRateMultiplier(sendRateMultiplierFromExponent(simSendRateExponent));
     builderSimulatorOccupancy = cloneSimOccupancyWithPackets(builderSimulator.getPortOccupancy());
     applyBuilderSimulatorSnapshot(builderSimulatorOccupancy, {
       tick: 0,
@@ -1529,7 +1502,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function syncBuilderSimSliderLabels(): void {
     simSpeedValueEl.textContent = formatSpeedLabel(simSpeedExponent);
-    simSendRateValueEl.textContent = formatSendRateLabel(simSendRateExponent);
   }
 
   function updateBuilderSimMeta(): void {
@@ -5321,22 +5293,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   };
   simSpeedEl.addEventListener("input", applyBuilderSimSpeedFromSlider);
   simSpeedEl.addEventListener("change", applyBuilderSimSpeedFromSlider);
-
-  const applyBuilderSimSendRateFromSlider = (): void => {
-    simSendRateExponent = Number(simSendRateEl.value);
-    if (!Number.isFinite(simSendRateExponent)) {
-      simSendRateExponent = SEND_RATE_EXP_DEFAULT;
-    }
-    builderPageState.simSendRateExponent = simSendRateExponent;
-    persistBuilderPageState();
-    if (builderSimulator) {
-      builderSimulator.setSendRateMultiplier(sendRateMultiplierFromExponent(simSendRateExponent));
-    }
-    syncBuilderSimSliderLabels();
-    updateBuilderSimMeta();
-  };
-  simSendRateEl.addEventListener("input", applyBuilderSimSendRateFromSlider);
-  simSendRateEl.addEventListener("change", applyBuilderSimSendRateFromSlider);
 
   window.addEventListener("keydown", (ev) => {
     const bv = root.closest(".builder-view");

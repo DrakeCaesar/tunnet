@@ -1,5 +1,6 @@
 import { BuilderEntityInstance, expandBuilderState } from "./clone-engine";
 import { BuilderState } from "./state";
+import { endpointData, type EndpointDatasetRow } from "./endpoint-data";
 
 interface BuilderNode {
   id: string;
@@ -38,6 +39,28 @@ function colorForType(type: string): string {
   if (type === "hub") return "#f9e2af";
   if (type === "filter") return "#f5c2e7";
   return "#cdd6f4";
+}
+
+function matchAddressPattern(pattern: string, address: string): boolean {
+  const p = pattern.split(".");
+  const a = address.split(".");
+  if (p.length !== 4 || a.length !== 4) return false;
+  for (let i = 0; i < 4; i += 1) {
+    if (p[i] === "*") continue;
+    if (p[i] !== a[i]) return false;
+  }
+  return true;
+}
+
+function uniqueList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
 }
 
 function makeDevice(entity: BuilderEntityInstance): (DeviceBase & Record<string, unknown>) | null {
@@ -130,21 +153,35 @@ export function compileBuilderPayload(state: BuilderState): CompiledBuilderPaylo
     }));
   const endpointEntities = expanded.entities.filter((e) => e.templateType === "endpoint");
   const sourceEndpointEntities = endpointEntities.filter((e) => !e.isShadow);
+  const rowByAddress = new Map<string, EndpointDatasetRow>(endpointData.map((row) => [row.address, row]));
   const uniqueAddresses = Array.from(
     new Set(endpointEntities.map((e) => e.settings.address ?? "0.0.0.0")),
   ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   sourceEndpointEntities.forEach((entity) => {
     const addr = entity.settings.address ?? "0.0.0.0";
-    const destinations = uniqueAddresses.filter((d) => d !== addr);
-    if (destinations.length === 0) return;
+    const row = rowByAddress.get(addr);
+    const destinations = uniqueList(
+      uniqueAddresses.filter((d) => {
+        if (d === addr) return false;
+        if (!row || row.sends_to.length === 0) return false;
+        return row.sends_to.some((pattern) => matchAddressPattern(pattern, d));
+      }),
+    );
+    const replyToSources = uniqueList(
+      uniqueAddresses.filter((d) => row?.replies_to.some((pattern) => matchAddressPattern(pattern, d)) ?? false),
+    );
     const device = devices[entity.instanceId];
     if (!device || device.type !== "endpoint") return;
+    const sendRate = Number.isFinite(row?.send_rate) ? Math.max(0, Math.floor(row!.send_rate)) : 0;
+    const hasPeriodic = sendRate > 0 && destinations.length > 0;
+    const hasReplies = replyToSources.length > 0;
+    if (!hasPeriodic && !hasReplies) return;
     (device as Record<string, unknown>).generator = {
-      destinations: [...destinations],
-      replyToSources: [...destinations],
-      minIntervalTicks: 3,
-      maxIntervalTicks: 7,
-      sensitiveChance: 0.1,
+      destinations: hasPeriodic ? [...destinations] : [],
+      replyToSources: [...replyToSources],
+      minIntervalTicks: hasPeriodic ? sendRate : 1,
+      maxIntervalTicks: hasPeriodic ? sendRate : 1,
+      sensitiveChance: row?.sensitive ? 1 : 0,
       subjectPrefix: "BDR-",
     };
   });

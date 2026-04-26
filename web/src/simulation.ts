@@ -157,6 +157,13 @@ function chooseOne<T>(items: readonly T[], rnd: () => number): T {
   return items[index];
 }
 
+function randomIntervalTicks(config: EndpointGeneratorConfig, rnd: () => number): number {
+  const min = Math.max(1, Math.floor(config.minIntervalTicks));
+  const max = Math.max(min, Math.floor(config.maxIntervalTicks));
+  if (max <= min) return min;
+  return min + Math.floor(rnd() * (max - min + 1));
+}
+
 function matchAddress(mask: string, candidate: Address): boolean {
   const m = mask.split(".");
   const c = candidate.split(".");
@@ -313,9 +320,13 @@ export class TunnetSimulator {
     if (!device.generator) return;
     if (receivedAddressedThisTick) return;
     if (repliedThisTick) return;
+    if (ctx.tick < device.state.nextSendTick) return;
     if (ctx.rnd() > this.sendRateMultiplier) return;
     const destinations = device.generator.destinations.filter((d) => d !== device.address);
-    if (destinations.length === 0) return;
+    if (destinations.length === 0) {
+      device.state.nextSendTick = ctx.tick + randomIntervalTicks(device.generator, ctx.rnd);
+      return;
+    }
 
     const packet: Packet = {
       id: ctx.packetIdCounter++,
@@ -327,6 +338,7 @@ export class TunnetSimulator {
     };
     this.enqueueOutbound(ctx, device.id, 0, packet);
     ctx.stats.emitted += 1;
+    device.state.nextSendTick = ctx.tick + randomIntervalTicks(device.generator, ctx.rnd);
   }
 
   private processRelay(device: RelayDevice, ctx: StepContext): void {
