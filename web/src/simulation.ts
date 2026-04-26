@@ -256,9 +256,9 @@ export class TunnetSimulator {
   private emitMove(ctx: StepContext, to: PortRef, packet: Packet): void {
     const targetKey = makePortKey(to);
     if (ctx.nextPortPackets.has(targetKey)) {
-      // Keep the first packet that already claimed this wire endpoint; drop the new one.
+      // Keep the first packet that already claimed this wire endpoint.
+      // The later packet is not sent this tick (collision), but it is not counted as a drop.
       ctx.stats.collisions += 1;
-      ctx.stats.dropped += 1;
       return;
     }
     ctx.nextPortPackets.set(targetKey, packet);
