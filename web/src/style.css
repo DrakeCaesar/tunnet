@@ -966,13 +966,7 @@ textarea {
   height: calc(100% - 14px);
   overflow: hidden;
   background-image:
-    repeating-linear-gradient(
-      to right,
-      rgba(137, 180, 250, 0.09) 0,
-      rgba(137, 180, 250, 0.09) 1px,
-      transparent 1px,
-      transparent var(--builder-grid-step-x)
-    ),
+    linear-gradient(to right, rgba(137, 180, 250, 0.09) 1px, transparent 1px),
     repeating-linear-gradient(
       to bottom,
       rgba(137, 180, 250, 0.09) 0,
@@ -980,6 +974,11 @@ textarea {
       transparent 1px,
       transparent var(--builder-grid-step-y)
     );
+  background-size:
+    var(--builder-grid-step-x) 100%,
+    100% 100%;
+  background-position: 0 0, 0 0;
+  background-repeat: repeat;
 }
 
 .builder-entity {

@@ -1170,7 +1170,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const totalGapPx = Math.max(0, layerCount - 1) * BUILDER_LAYER_GAP_PX;
       const usableHeight = Math.max(120, wrap.clientHeight - totalGapPx);
       const layerBasePx = Math.max(120, usableHeight / Math.max(1, layerCount));
-      const middleColWidthPx = (middleBasePx + BUILDER_LAYER_GAP_PX) * canvasScale.x - BUILDER_LAYER_GAP_PX;
+      const rawMiddleColWidthPx = (middleBasePx + BUILDER_LAYER_GAP_PX) * canvasScale.x - BUILDER_LAYER_GAP_PX;
+      // Snap horizontal segment widths to full grid tiles to avoid subpixel-rendered
+      // background lines appearing thicker/fainter at some slider values.
+      const middleColWidthPx = Math.max(
+        BUILDER_GRID_TILE_SIZE_X_PX,
+        Math.round(rawMiddleColWidthPx / BUILDER_GRID_TILE_SIZE_X_PX) * BUILDER_GRID_TILE_SIZE_X_PX,
+      );
       root.style.setProperty("--builder-middle-col-base-px", `${middleBasePx.toFixed(2)}px`);
       root.style.setProperty("--builder-middle-col-width-px", `${middleColWidthPx.toFixed(2)}px`);
       root.style.setProperty("--builder-layer-base-height-px", `${layerBasePx.toFixed(2)}px`);
