@@ -2305,19 +2305,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return closestPort;
   }
 
-  function portCenterIsInsideGridViewport(portEl: HTMLElement): boolean {
-    const viewport = portEl.closest<HTMLElement>(".builder-segment-entities");
-    if (!viewport) return true;
-    const portRect = portEl.getBoundingClientRect();
-    const viewportRect = viewport.getBoundingClientRect();
-    if (portRect.width <= 0 || portRect.height <= 0 || viewportRect.width <= 0 || viewportRect.height <= 0) {
-      return false;
-    }
-    const cx = portRect.left + portRect.width / 2;
-    const cy = portRect.top + portRect.height / 2;
-    return cx >= viewportRect.left && cx <= viewportRect.right && cy >= viewportRect.top && cy <= viewportRect.bottom;
-  }
-
   function simRestingPortOffset(port: number): { x: number; y: number } {
     const a = (port % 4) * (Math.PI / 2);
     return { x: Math.cos(a) * 6, y: Math.sin(a) * 6 };
@@ -2957,15 +2944,29 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     let lineMarkup = "";
     let resolveCost = 0;
     const tLine0 = performance.now();
-    const portWireCenter = (
+    const portWireEndpoint = (
       portEl: HTMLButtonElement,
-    ): { x: number; y: number; radius: number } | null => {
-      if (!portCenterIsInsideGridViewport(portEl)) return null;
+    ): { x: number; y: number; radius: number; clipped: boolean } | null => {
+      const viewport = portEl.closest<HTMLElement>(".builder-segment-entities");
       const rect = portEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      let clientX = rect.left + rect.width / 2;
+      let clientY = rect.top + rect.height / 2;
+      let clipped = false;
+      if (viewport) {
+        const viewportRect = viewport.getBoundingClientRect();
+        if (viewportRect.width <= 0 || viewportRect.height <= 0) return null;
+        const clampedX = Math.max(viewportRect.left, Math.min(viewportRect.right, clientX));
+        const clampedY = Math.max(viewportRect.top, Math.min(viewportRect.bottom, clientY));
+        clipped = clampedX !== clientX || clampedY !== clientY;
+        clientX = clampedX;
+        clientY = clampedY;
+      }
       return {
-        x: rect.left + rect.width / 2 - wrapRect.left + wrap.scrollLeft,
-        y: rect.top + rect.height / 2 - wrapRect.top + wrap.scrollTop,
-        radius: rect.width / 2,
+        x: clientX - wrapRect.left + wrap.scrollLeft,
+        y: clientY - wrapRect.top + wrap.scrollTop,
+        radius: clipped ? 0 : rect.width / 2,
+        clipped,
       };
     };
     const lineEndpointsAtPortEdges = (
@@ -2999,9 +3000,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const to = resolveBuilderPortForWireOverlay(String(link.toInstanceId), link.toPort);
       resolveCost += performance.now() - tr0;
       if (!from || !to) continue;
-      const fromCenter = portWireCenter(from);
-      const toCenter = portWireCenter(to);
+      const fromCenter = portWireEndpoint(from);
+      const toCenter = portWireEndpoint(to);
       if (!fromCenter || !toCenter) continue;
+      if (fromCenter.clipped && toCenter.clipped) continue;
       const e = lineEndpointsAtPortEdges(
         fromCenter.x,
         fromCenter.y,
@@ -3023,7 +3025,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               `.builder-port[data-root-id="${linkDrag.from.rootId}"][data-port="${linkDrag.from.port}"]`,
             ));
       if (fromPort) {
-        const fromCenter = portWireCenter(fromPort);
+        const fromCenter = portWireEndpoint(fromPort);
         if (fromCenter) {
           const x2 = linkDrag.endClient.x - wrapRect.left + wrap.scrollLeft;
           const y2 = linkDrag.endClient.y - wrapRect.top + wrap.scrollTop;
