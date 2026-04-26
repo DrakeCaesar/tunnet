@@ -1622,7 +1622,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return `${sign}${grouped}`;
     };
     simMetaEl.innerHTML = `
-      <div class="stats-subtitle">Simulation</div>
       <div class="stats-row">
         <div class="stat-pill"><span>Tick</span><strong>${formatSimInteger(simStats.tick)}</strong></div>
         <div class="stat-pill"><span>In-flight</span><strong>${formatSimInteger(simCurrentOccupancy.length)}</strong></div>
