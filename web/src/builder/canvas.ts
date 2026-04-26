@@ -657,7 +657,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (Math.abs(v - 1 / 8) < 1e-9) return "1/8x";
     return `${v.toFixed(2)}x`;
   };
-  const clampCanvasScaleY = (v: number): number => Math.max(0.25, Math.min(3, v));
+  const clampCanvasScaleY = (v: number): number => Math.max(0.25, Math.min(4, v));
   const loadCanvasScale = (): CanvasScale => {
     try {
       const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
@@ -823,23 +823,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                 <span id="builder-scale-x-value">${formatCanvasScaleX(canvasScale.x)}</span>
               </label>
               <label class="builder-scale-row" for="builder-scale-y-outer64">
-                <span>Vertical Outer</span>
-                <input id="builder-scale-y-outer64" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
+                <span>Vertical Octet 4</span>
+                <input id="builder-scale-y-outer64" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
                 <span id="builder-scale-y-outer64-value">${canvasScale.yByLayer.outer64.toFixed(2)}x</span>
               </label>
               <label class="builder-scale-row" for="builder-scale-y-middle16">
-                <span>Vertical Middle</span>
-                <input id="builder-scale-y-middle16" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
+                <span>Vertical Octet 3</span>
+                <input id="builder-scale-y-middle16" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
                 <span id="builder-scale-y-middle16-value">${canvasScale.yByLayer.middle16.toFixed(2)}x</span>
               </label>
               <label class="builder-scale-row" for="builder-scale-y-inner4">
-                <span>Vertical Inner</span>
-                <input id="builder-scale-y-inner4" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
+                <span>Vertical Octet 2</span>
+                <input id="builder-scale-y-inner4" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
                 <span id="builder-scale-y-inner4-value">${canvasScale.yByLayer.inner4.toFixed(2)}x</span>
               </label>
               <label class="builder-scale-row" for="builder-scale-y-core1">
-                <span>Vertical Core</span>
-                <input id="builder-scale-y-core1" type="range" min="0.25" max="3" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
+                <span>Vertical Octet 1</span>
+                <input id="builder-scale-y-core1" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
                 <span id="builder-scale-y-core1-value">${canvasScale.yByLayer.core1.toFixed(2)}x</span>
               </label>
             </div>

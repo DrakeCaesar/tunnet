@@ -394,10 +394,10 @@ export function expandBuilderState(
 }
 
 export function layerTitle(layer: BuilderLayer): string {
-  if (layer === "outer64") return "Outer (64)";
-  if (layer === "middle16") return "Middle (16)";
-  if (layer === "inner4") return "Inner (4)";
-  return "Core (1)";
+  if (layer === "outer64") return "Octet 4 (64)";
+  if (layer === "middle16") return "Octet 3 (16)";
+  if (layer === "inner4") return "Octet 2 (4)";
+  return "Octet 1 (1)";
 }
 
 export function layerColumns(layer: BuilderLayer): number[] {
