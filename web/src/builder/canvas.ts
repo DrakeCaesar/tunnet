@@ -2305,6 +2305,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return closestPort;
   }
 
+  function portCenterIsInsideGridViewport(portEl: HTMLElement): boolean {
+    const viewport = portEl.closest<HTMLElement>(".builder-segment-entities");
+    if (!viewport) return true;
+    const portRect = portEl.getBoundingClientRect();
+    const viewportRect = viewport.getBoundingClientRect();
+    if (portRect.width <= 0 || portRect.height <= 0 || viewportRect.width <= 0 || viewportRect.height <= 0) {
+      return false;
+    }
+    const cx = portRect.left + portRect.width / 2;
+    const cy = portRect.top + portRect.height / 2;
+    return cx >= viewportRect.left && cx <= viewportRect.right && cy >= viewportRect.top && cy <= viewportRect.bottom;
+  }
+
   function simRestingPortOffset(port: number): { x: number; y: number } {
     const a = (port % 4) * (Math.PI / 2);
     return { x: Math.cos(a) * 6, y: Math.sin(a) * 6 };
@@ -2944,6 +2957,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     let lineMarkup = "";
     let resolveCost = 0;
     const tLine0 = performance.now();
+    const portWireCenter = (
+      portEl: HTMLButtonElement,
+    ): { x: number; y: number; radius: number } | null => {
+      if (!portCenterIsInsideGridViewport(portEl)) return null;
+      const rect = portEl.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2 - wrapRect.left + wrap.scrollLeft,
+        y: rect.top + rect.height / 2 - wrapRect.top + wrap.scrollTop,
+        radius: rect.width / 2,
+      };
+    };
     const lineEndpointsAtPortEdges = (
       x1: number,
       y1: number,
@@ -2975,13 +2999,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const to = resolveBuilderPortForWireOverlay(String(link.toInstanceId), link.toPort);
       resolveCost += performance.now() - tr0;
       if (!from || !to) continue;
-      const fromRect = from.getBoundingClientRect();
-      const toRect = to.getBoundingClientRect();
-      const x1 = fromRect.left + fromRect.width / 2 - wrapRect.left + wrap.scrollLeft;
-      const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top + wrap.scrollTop;
-      const x2 = toRect.left + toRect.width / 2 - wrapRect.left + wrap.scrollLeft;
-      const y2 = toRect.top + toRect.height / 2 - wrapRect.top + wrap.scrollTop;
-      const e = lineEndpointsAtPortEdges(x1, y1, fromRect.width / 2, x2, y2, toRect.width / 2);
+      const fromCenter = portWireCenter(from);
+      const toCenter = portWireCenter(to);
+      if (!fromCenter || !toCenter) continue;
+      const e = lineEndpointsAtPortEdges(
+        fromCenter.x,
+        fromCenter.y,
+        fromCenter.radius,
+        toCenter.x,
+        toCenter.y,
+        toCenter.radius,
+      );
       lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="#f9e2af" stroke-opacity="0.9" stroke-width="1.5"></line>`;
     }
     recordPerf("wire.portResolve", resolveCost);
@@ -2995,13 +3023,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               `.builder-port[data-root-id="${linkDrag.from.rootId}"][data-port="${linkDrag.from.port}"]`,
             ));
       if (fromPort) {
-        const fromRect = fromPort.getBoundingClientRect();
-        const x1 = fromRect.left + fromRect.width / 2 - wrapRect.left + wrap.scrollLeft;
-        const y1 = fromRect.top + fromRect.height / 2 - wrapRect.top + wrap.scrollTop;
-        const x2 = linkDrag.endClient.x - wrapRect.left + wrap.scrollLeft;
-        const y2 = linkDrag.endClient.y - wrapRect.top + wrap.scrollTop;
-        const e = lineEndpointsAtPortEdges(x1, y1, fromRect.width / 2, x2, y2, 0);
-        lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" class="builder-wire-drag" pointer-events="none"></line>`;
+        const fromCenter = portWireCenter(fromPort);
+        if (fromCenter) {
+          const x2 = linkDrag.endClient.x - wrapRect.left + wrap.scrollLeft;
+          const y2 = linkDrag.endClient.y - wrapRect.top + wrap.scrollTop;
+          const e = lineEndpointsAtPortEdges(fromCenter.x, fromCenter.y, fromCenter.radius, x2, y2, 0);
+          lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" class="builder-wire-drag" pointer-events="none"></line>`;
+        }
       }
     }
     wireOverlayEl.innerHTML = lineMarkup;
