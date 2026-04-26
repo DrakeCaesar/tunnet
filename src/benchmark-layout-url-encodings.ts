@@ -1,5 +1,8 @@
-import { gzipSync, gunzipSync } from "node:zlib";
+import { brotliCompressSync, constants, gunzipSync, gzipSync } from "node:zlib";
 import { readFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import Table from "cli-table3";
 
 type JsonValue = unknown;
 
@@ -37,6 +40,13 @@ type BenchmarkVariant = {
   payload: JsonValue;
   decode?: (payload: JsonValue) => BuilderState;
 };
+
+function omitNextIdFromPayload<T extends JsonValue>(payload: T): T {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const p = payload as Record<string, JsonValue>;
+  const { n: _n, ...rest } = p;
+  return rest as T;
+}
 
 const DEFAULT_TEMP_PATH = "web/src/builder/temp.txt";
 
@@ -90,13 +100,102 @@ function toBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/g, "");
 }
 
+function toBase58Btc(bytes: Uint8Array): string {
+  if (bytes.length === 0) return "";
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = 0n;
+  for (const b of bytes) value = (value << 8n) + BigInt(b);
+  let out = "";
+  while (value > 0n) {
+    const rem = Number(value % 58n);
+    out = alphabet[rem] + out;
+    value /= 58n;
+  }
+  let leadingZeros = 0;
+  while (leadingZeros < bytes.length && bytes[leadingZeros] === 0) leadingZeros += 1;
+  if (leadingZeros > 0) out = "1".repeat(leadingZeros) + out;
+  return out || "1";
+}
+
+function toBase32HexNoPad(bytes: Uint8Array): string {
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
+  let out = "";
+  let buffer = 0;
+  let bits = 0;
+  for (const b of bytes) {
+    buffer = (buffer << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(buffer >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += alphabet[(buffer << (5 - bits)) & 31];
+  return out;
+}
+
 function fromBase64Url(input: string): Uint8Array {
   const base64 = input.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(input.length / 4) * 4, "=");
   return new Uint8Array(Buffer.from(base64, "base64"));
 }
 
-function gzipTokenFromString(text: string): string {
-  return toBase64Url(gzipSync(text));
+function encodeBaseN(bytes: Uint8Array, alphabet: string): string {
+  if (bytes.length === 0) return "";
+  const base = BigInt(alphabet.length);
+  let value = 0n;
+  for (const b of bytes) value = (value << 8n) + BigInt(b);
+  let out = "";
+  while (value > 0n) {
+    const rem = Number(value % base);
+    out = alphabet[rem] + out;
+    value /= base;
+  }
+  let leadingZeros = 0;
+  while (leadingZeros < bytes.length && bytes[leadingZeros] === 0) leadingZeros += 1;
+  if (leadingZeros > 0) out = alphabet[0]!.repeat(leadingZeros) + out;
+  return out || alphabet[0]!;
+}
+
+// RFC3986 unreserved set (safe in query without percent encoding).
+const BASE66_UNRESERVED = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._~";
+const BASE62_ALNUM = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const BASE85_URI_MIXED = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+const BASE91_PRINTABLE =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\"'";
+
+type TextEncoding = "base64url" | "base58btc" | "base32hex" | "base66u" | "base62" | "base85u" | "base91";
+
+function encodeBytesForUrl(bytes: Uint8Array, encoding: TextEncoding): string {
+  if (encoding === "base91") return encodeBaseN(bytes, BASE91_PRINTABLE);
+  if (encoding === "base85u") return encodeBaseN(bytes, BASE85_URI_MIXED);
+  if (encoding === "base66u") return encodeBaseN(bytes, BASE66_UNRESERVED);
+  if (encoding === "base62") return encodeBaseN(bytes, BASE62_ALNUM);
+  if (encoding === "base58btc") return toBase58Btc(bytes);
+  if (encoding === "base32hex") return toBase32HexNoPad(bytes);
+  return toBase64Url(bytes);
+}
+
+function brotli11Bytes(text: string): Uint8Array {
+  return brotliCompressSync(text, {
+    params: {
+      [constants.BROTLI_PARAM_QUALITY]: 11,
+    },
+  });
+}
+
+function linkLenForPayloadText(linkPrefix: string, payloadText: string): number {
+  return linkPrefix.length + encodeURIComponent(payloadText).length;
+}
+
+function brotliBase66LinkLen(text: string, linkPrefix: string): number {
+  const payload = encodeBytesForUrl(brotli11Bytes(text), "base66u");
+  return linkLenForPayloadText(linkPrefix, payload);
+}
+
+function bestGzipBase64LinkLen(text: string, linkPrefix: string): number {
+  const gzipDefault = encodeBytesForUrl(gzipSync(text), "base64url");
+  const gzip9 = encodeBytesForUrl(gzipSync(text, { level: 9 }), "base64url");
+  return Math.min(linkLenForPayloadText(linkPrefix, gzipDefault), linkLenForPayloadText(linkPrefix, gzip9));
 }
 
 function extractLayoutToken(raw: string): string {
@@ -108,6 +207,15 @@ function extractLayoutToken(raw: string): string {
   } catch {
     return trimmed;
   }
+}
+
+function detectLayoutLinkPrefix(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.includes("layout=")) return "?layout=";
+  const marker = "layout=";
+  const idx = trimmed.indexOf(marker);
+  if (idx < 0) return "?layout=";
+  return trimmed.slice(0, idx + marker.length);
 }
 
 function decodeLayoutTokenToState(token: string): BuilderState {
@@ -237,6 +345,17 @@ function decodeTupleRows(payload: JsonValue): BuilderState {
     ...(l[10] === 1 ? { voidBandInnerOuterCrossLayer: true } : {}),
   }));
   return { version: p.v ?? 1, nextId: p.n ?? entities.length + links.length + 1, entities, links };
+}
+
+function templatePortCountForSchema(templateType: string): number {
+  if (templateType === "text") return 0;
+  if (templateType === "endpoint") return 1;
+  if (templateType === "relay" || templateType === "filter") return 2;
+  return 3;
+}
+
+function isStaticEndpointLikeId(id: string): boolean {
+  return id.startsWith("ol-ep-");
 }
 
 function encodeSettingsWithDict(settings: Record<string, string>, dict: Map<string, number>, arr: string[]): JsonValue {
@@ -520,6 +639,378 @@ function decodeTypedSettingsLinkOpcodes(payload: JsonValue): BuilderState {
   return { version: 1, nextId: p.n ?? entities.length + links.length + 1, entities, links };
 }
 
+function decodeTypedSettingsLinkOpcodesImplicitDefaults(payload: JsonValue): BuilderState {
+  const out = decodeTypedSettingsLinkOpcodes(payload);
+  return applyImplicitDefaultsToTypedState(out);
+}
+
+function applyImplicitDefaultsToTypedState(out: BuilderState): BuilderState {
+  const entities = out.entities.map((e) => {
+    if (e.templateType === "relay") {
+      return { ...e, settings: { angle: "0", ...e.settings } };
+    }
+    if (e.templateType === "hub") {
+      return { ...e, settings: { rotation: "clockwise", faceAngle: "0", ...e.settings } };
+    }
+    if (e.templateType === "text") {
+      return { ...e, settings: { label: "", widthTiles: "2", heightTiles: "2", ...e.settings } };
+    }
+    if (e.templateType === "filter") {
+      return {
+        ...e,
+        settings: {
+          operatingPort: "0",
+          addressField: "destination",
+          operation: "differ",
+          mask: "*.*.*.*",
+          action: "send_back",
+          collisionHandling: "send_back_outbound",
+          ...e.settings,
+        },
+      };
+    }
+    if (e.templateType === "endpoint") {
+      return { ...e, settings: { address: "0.0.0.0", ...e.settings } };
+    }
+    return e;
+  });
+  return { ...out, entities };
+}
+
+function transformTypedOpcodesDropDefaults(payload: JsonValue): JsonValue {
+  const p = payload as any;
+  const strings = (p.s ?? []) as string[];
+  const entities = ((p.e ?? []) as any[]).map((row) => {
+    if (!Array.isArray(row)) return row;
+    const out = [...row];
+    const t = Number(out[0] ?? 0);
+    const settingsPayload = out[5];
+    if (!Array.isArray(settingsPayload)) return out;
+
+    // endpoint: already sparse, keep as-is.
+    if (t === 1) {
+      // relay default angle 0
+      if ((settingsPayload[0] ?? 0) === 0) out[5] = undefined;
+    } else if (t === 2) {
+      // hub defaults rotation clockwise(0), face 0
+      if ((settingsPayload[0] ?? 0) === 0 && (settingsPayload[1] ?? 0) === 0) out[5] = undefined;
+    } else if (t === 4) {
+      // text defaults label "", 2x2
+      const labelIdx = settingsPayload[0];
+      const label = typeof labelIdx === "number" ? (strings[labelIdx] ?? "") : "";
+      if (label === "" && Number(settingsPayload[1] ?? 2) === 2 && Number(settingsPayload[2] ?? 2) === 2) {
+        out[5] = undefined;
+      }
+    } else if (t === 3) {
+      // filter full defaults
+      const af = typeof settingsPayload[1] === "number" ? (strings[settingsPayload[1]] ?? "destination") : "destination";
+      const op = typeof settingsPayload[2] === "number" ? (strings[settingsPayload[2]] ?? "differ") : "differ";
+      const mask = typeof settingsPayload[3] === "number" ? (strings[settingsPayload[3]] ?? "*.*.*.*") : "*.*.*.*";
+      const action = typeof settingsPayload[4] === "number" ? (strings[settingsPayload[4]] ?? "send_back") : "send_back";
+      const coll = typeof settingsPayload[5] === "number"
+        ? (strings[settingsPayload[5]] ?? "send_back_outbound")
+        : "send_back_outbound";
+      if (
+        Number(settingsPayload[0] ?? 0) === 0 &&
+        af === "destination" &&
+        op === "differ" &&
+        mask === "*.*.*.*" &&
+        action === "send_back" &&
+        coll === "send_back_outbound"
+      ) {
+        out[5] = undefined;
+      }
+    }
+    while (out.length > 0 && out[out.length - 1] === undefined) out.pop();
+    return out;
+  });
+  return { ...p, e: entities };
+}
+
+function canonicalizeJsonObjectKeys(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) return value.map((item) => canonicalizeJsonObjectKeys(item));
+  if (!value || typeof value !== "object") return value;
+  const obj = value as Record<string, JsonValue>;
+  const out: Record<string, JsonValue> = {};
+  for (const key of Object.keys(obj).sort((a, b) => a.localeCompare(b))) {
+    out[key] = canonicalizeJsonObjectKeys(obj[key]);
+  }
+  return out;
+}
+
+function remapSettingsStringIndexes(templateTypeCode: number, settingsPayload: unknown, remap: Map<number, number>): unknown {
+  if (!Array.isArray(settingsPayload)) return settingsPayload;
+  const out = [...settingsPayload];
+  const mapIdx = (pos: number): void => {
+    const oldIdx = out[pos];
+    if (typeof oldIdx === "number") out[pos] = remap.get(oldIdx) ?? oldIdx;
+  };
+  if (templateTypeCode === 0) {
+    mapIdx(0);
+  } else if (templateTypeCode === 4) {
+    mapIdx(0);
+  } else if (templateTypeCode === 3) {
+    mapIdx(1);
+    mapIdx(2);
+    mapIdx(3);
+    mapIdx(4);
+    mapIdx(5);
+  }
+  return out;
+}
+
+function reorderTypedStringTableByFrequency(payload: JsonValue): JsonValue {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const p = payload as Record<string, JsonValue>;
+  const strings = Array.isArray(p.s) ? (p.s as string[]) : null;
+  const entities = Array.isArray(p.e) ? (p.e as any[]) : null;
+  if (!strings || !entities || strings.length === 0) return payload;
+
+  const freq = new Map<number, number>();
+  const bump = (idx: unknown, weight = 1): void => {
+    if (typeof idx !== "number") return;
+    freq.set(idx, (freq.get(idx) ?? 0) + weight);
+  };
+
+  const templates = Array.isArray(p.t) ? (p.t as any[]) : null;
+  if (templates) {
+    const tplUse = new Map<number, number>();
+    for (const e of entities) {
+      if (!Array.isArray(e)) continue;
+      const tplIdx = e[5];
+      if (typeof tplIdx === "number") tplUse.set(tplIdx, (tplUse.get(tplIdx) ?? 0) + 1);
+    }
+    templates.forEach((tpl, idx) => {
+      if (!Array.isArray(tpl) || tpl.length < 2) return;
+      const t = Number(tpl[0] ?? 0);
+      const s = tpl[1];
+      const weight = tplUse.get(idx) ?? 0;
+      if (weight <= 0 || !Array.isArray(s)) return;
+      if (t === 0 || t === 4) {
+        bump(s[0], weight);
+      } else if (t === 3) {
+        bump(s[1], weight);
+        bump(s[2], weight);
+        bump(s[3], weight);
+        bump(s[4], weight);
+        bump(s[5], weight);
+      }
+    });
+  } else {
+    for (const e of entities) {
+      if (!Array.isArray(e)) continue;
+      const t = Number(e[0] ?? 0);
+      const s = e[5];
+      if (!Array.isArray(s)) continue;
+      if (t === 0 || t === 4) {
+        bump(s[0]);
+      } else if (t === 3) {
+        bump(s[1]);
+        bump(s[2]);
+        bump(s[3]);
+        bump(s[4]);
+        bump(s[5]);
+      }
+    }
+  }
+
+  const ranked = strings.map((text, idx) => ({ idx, text, f: freq.get(idx) ?? 0 }));
+  ranked.sort((a, b) => b.f - a.f || a.text.localeCompare(b.text) || a.idx - b.idx);
+  const remap = new Map<number, number>();
+  ranked.forEach((r, i) => remap.set(r.idx, i));
+  const reorderedStrings = ranked.map((r) => r.text);
+
+  const out: Record<string, JsonValue> = { ...p, s: reorderedStrings };
+  if (templates) {
+    out.t = templates.map((tpl) => {
+      if (!Array.isArray(tpl) || tpl.length < 2) return tpl;
+      const t = Number(tpl[0] ?? 0);
+      return [tpl[0], remapSettingsStringIndexes(t, tpl[1], remap)];
+    });
+  } else {
+    out.e = entities.map((e) => {
+      if (!Array.isArray(e)) return e;
+      const next = [...e];
+      const t = Number(next[0] ?? 0);
+      next[5] = remapSettingsStringIndexes(t, next[5], remap);
+      return next;
+    });
+  }
+  return out;
+}
+
+function transformTypedSettingsLinkOpcodesWithTemplates(
+  state: BuilderState,
+  opts: { packPorts: boolean },
+): JsonValue {
+  const base = transformTypedSettingsLinkOpcodes(state) as {
+    v: number;
+    n: number;
+    s: string[];
+    e: Array<any[]>;
+    l: Array<any[]>;
+  };
+
+  const templateDict = new Map<string, number>();
+  const templates: JsonValue[] = [];
+  const entities = base.e.map((row) => {
+    const next = [...row];
+    const settingsPayload = next[5];
+    if (Array.isArray(settingsPayload)) {
+      const key = JSON.stringify([next[0], settingsPayload]);
+      let idx = templateDict.get(key);
+      if (idx === undefined) {
+        idx = templates.length;
+        templates.push([next[0], settingsPayload]);
+        templateDict.set(key, idx);
+      }
+      next[5] = idx;
+    }
+    return next;
+  });
+
+  const links = base.l.map((row) => {
+    if (!opts.packPorts) return row;
+    const next = [...row];
+    const fromPort = Number(next[1] ?? 0);
+    const toPort = Number(next[3] ?? 0);
+    const packedPorts = fromPort * 4 + toPort;
+    // [from,to,packedPorts,kind,...args]
+    return [next[0], next[2], packedPorts, next[4], ...next.slice(5)];
+  });
+
+  return {
+    v: opts.packPorts ? 8 : 7,
+    n: base.n,
+    s: base.s,
+    t: templates,
+    e: entities,
+    l: links,
+    ...(opts.packPorts ? { p: 1 } : {}),
+  };
+}
+
+function decodeTypedSettingsLinkOpcodesWithTemplates(payload: JsonValue): BuilderState {
+  const p = payload as any;
+  const templates = (p.t ?? []) as any[];
+  const packedPorts = p.p === 1;
+
+  const expandedEntities = ((p.e ?? []) as any[]).map((row) => {
+    const next = [...row];
+    if (typeof next[5] === "number") {
+      const tpl = templates[next[5]];
+      if (Array.isArray(tpl) && tpl.length >= 2) {
+        next[0] = tpl[0];
+        next[5] = tpl[1];
+      }
+    }
+    return next;
+  });
+
+  const expandedLinks = ((p.l ?? []) as any[]).map((row) => {
+    if (!packedPorts) return row;
+    // row: [from,to,packedPorts,kind,...args] => [from,fromPort,to,toPort,kind,...args]
+    const packed = Number(row[2] ?? 0);
+    const fromPort = Math.floor(packed / 4);
+    const toPort = packed % 4;
+    return [row[0], fromPort, row[1], toPort, row[3], ...row.slice(4)];
+  });
+
+  return decodeTypedSettingsLinkOpcodes({
+    v: 3,
+    n: p.n,
+    s: p.s,
+    e: expandedEntities,
+    l: expandedLinks,
+  });
+}
+
+function transformTypedWithEndpointIdTable(
+  state: BuilderState,
+  opts: { useTemplates: boolean; packPorts: boolean; omitNextId: boolean },
+): JsonValue {
+  let payload: Record<string, JsonValue>;
+  let useTemplates = opts.useTemplates;
+  if (useTemplates) {
+    payload = transformTypedSettingsLinkOpcodesWithTemplates(state, { packPorts: opts.packPorts }) as Record<string, JsonValue>;
+  } else {
+    payload = transformTypedSettingsLinkOpcodes(state) as Record<string, JsonValue>;
+    useTemplates = false;
+  }
+
+  // Replace frequent static endpoint IDs with short table refs.
+  const endpointIds = new Set<string>();
+  const links = (payload.l as any[]).map((row) => {
+    if (!Array.isArray(row) || row.length < 4) return row;
+    const out = [...row];
+    const refs: Array<{ idx: number; value: unknown }> = useTemplates && opts.packPorts
+      ? [
+          { idx: 0, value: out[0] },
+          { idx: 1, value: out[1] },
+        ]
+      : [
+          { idx: 0, value: out[0] },
+          { idx: 2, value: out[2] },
+        ];
+    for (const r of refs) {
+      if (typeof r.value === "string" && r.value.startsWith("ol-ep-")) endpointIds.add(r.value);
+    }
+    return out;
+  });
+
+  const endpointTable = [...endpointIds].sort();
+  const endpointIndex = new Map(endpointTable.map((id, i) => [id, i]));
+  const remappedLinks = links.map((row) => {
+    if (!Array.isArray(row) || row.length < 4) return row;
+    const out = [...row];
+    const positions = useTemplates && opts.packPorts ? [0, 1] : [0, 2];
+    for (const pos of positions) {
+      const v = out[pos];
+      if (typeof v === "string" && endpointIndex.has(v)) {
+        out[pos] = ["@", endpointIndex.get(v)];
+      }
+    }
+    return out;
+  });
+
+  const next: Record<string, JsonValue> = {
+    ...payload,
+    l: remappedLinks,
+    ...(endpointTable.length > 0 ? { q: endpointTable } : {}),
+  };
+  if (opts.omitNextId) {
+    const { n: _n, ...rest } = next;
+    return rest;
+  }
+  return next;
+}
+
+function decodeTypedWithEndpointIdTable(payload: JsonValue): BuilderState {
+  const p = payload as any;
+  const table = (p.q ?? []) as string[];
+  const restoreRef = (v: unknown): unknown => {
+    if (Array.isArray(v) && v.length === 2 && v[0] === "@" && typeof v[1] === "number") {
+      return table[v[1]] ?? v;
+    }
+    return v;
+  };
+  const links = ((p.l ?? []) as any[]).map((row) => {
+    if (!Array.isArray(row) || row.length < 4) return row;
+    const out = [...row];
+    out[0] = restoreRef(out[0]);
+    if (p.p === 1) {
+      out[1] = restoreRef(out[1]);
+    } else {
+      out[2] = restoreRef(out[2]);
+    }
+    return out;
+  });
+
+  const rebuilt = { ...p, l: links };
+  if (p.t !== undefined) return decodeTypedSettingsLinkOpcodesWithTemplates(rebuilt);
+  return decodeTypedSettingsLinkOpcodes(rebuilt);
+}
+
 function semanticSignature(state: BuilderState): string {
   const idToIndex = new Map<string, number>();
   state.entities.forEach((e, i) => idToIndex.set(e.id, i));
@@ -749,7 +1240,8 @@ function transformTypedSettingsUndirectedWires(state: BuilderState): JsonValue {
     return row;
   });
 
-  // [aIdx,aPort,bIdx,bPort,kind,arg1?,arg2?]
+  // [aIdx,aPort,bIdx,bPort,dir,kind,arg1?,arg2?]
+  // dir: 0 => original was a->b, 1 => original was b->a
   const wires = state.links.map((l) => {
     const f = idToIndex.get(l.fromEntityId);
     const t = idToIndex.get(l.toEntityId);
@@ -762,21 +1254,21 @@ function transformTypedSettingsUndirectedWires(state: BuilderState): JsonValue {
     const bRef = shouldSwap ? fromRef : toRef;
     const aPort = shouldSwap ? l.toPort : l.fromPort;
     const bPort = shouldSwap ? l.fromPort : l.toPort;
+    const dir = shouldSwap ? 1 : 0;
     if (l.fromSegmentIndex !== undefined && l.toSegmentIndex !== undefined) {
       const s1 = shouldSwap ? l.toSegmentIndex : l.fromSegmentIndex;
       const s2 = shouldSwap ? l.fromSegmentIndex : l.toSegmentIndex;
-      return [aRef, aPort, bRef, bPort, 1, s1, s2];
+      return [aRef, aPort, bRef, bPort, dir, 1, s1, s2];
     }
     if (l.sameLayerSegmentDelta !== undefined) {
-      return [aRef, aPort, bRef, bPort, 2, shouldSwap ? -l.sameLayerSegmentDelta : l.sameLayerSegmentDelta];
+      return [aRef, aPort, bRef, bPort, dir, 2, shouldSwap ? -l.sameLayerSegmentDelta : l.sameLayerSegmentDelta];
     }
     if (l.crossLayerBlockSlot !== undefined || l.voidBandInnerOuterCrossLayer === true) {
-      return [aRef, aPort, bRef, bPort, 3, l.crossLayerBlockSlot ?? 0, l.voidBandInnerOuterCrossLayer ? 1 : 0];
+      return [aRef, aPort, bRef, bPort, dir, 3, l.crossLayerBlockSlot ?? 0, l.voidBandInnerOuterCrossLayer ? 1 : 0];
     }
-    return [aRef, aPort, bRef, bPort, 0];
+    return [aRef, aPort, bRef, bPort, dir, 0];
   });
 
-  wires.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   return { v: 6, n: state.nextId, s: strings, e: entities, w: wires };
 }
 
@@ -787,28 +1279,42 @@ function decodeTypedSettingsUndirectedWires(payload: JsonValue): BuilderState {
   const links = ((p.w ?? []) as any[]).map((row, i) => {
     const aRef = row[0];
     const bRef = row[2];
-    const fromEntityId = typeof aRef === "number" ? `e${aRef + 1}` : String(aRef);
-    const toEntityId = typeof bRef === "number" ? `e${bRef + 1}` : String(bRef);
-    const kind = row[4] ?? 0;
+    const aId = typeof aRef === "number" ? `e${aRef + 1}` : String(aRef);
+    const bId = typeof bRef === "number" ? `e${bRef + 1}` : String(bRef);
+    const dir = Number(row[4] ?? 0);
+    const kind = Number(row[5] ?? 0);
+    const fromEntityId = dir === 0 ? aId : bId;
+    const toEntityId = dir === 0 ? bId : aId;
+    const fromPort = dir === 0 ? (row[1] ?? 0) : (row[3] ?? 0);
+    const toPort = dir === 0 ? (row[3] ?? 0) : (row[1] ?? 0);
+    const arg1 = row[6];
+    const arg2 = row[7];
     return {
       id: `l${i + 1}`,
       groupId: `l${i + 1}`,
       fromEntityId,
-      fromPort: row[1] ?? 0,
+      fromPort,
       toEntityId,
-      toPort: row[3] ?? 0,
-      ...(kind === 1 ? { fromSegmentIndex: row[5], toSegmentIndex: row[6] } : {}),
-      ...(kind === 2 ? { sameLayerSegmentDelta: row[5] } : {}),
-      ...(kind === 3 ? { crossLayerBlockSlot: row[5], ...(row[6] === 1 ? { voidBandInnerOuterCrossLayer: true } : {}) } : {}),
+      toPort,
+      ...(kind === 1
+        ? dir === 0
+          ? { fromSegmentIndex: arg1, toSegmentIndex: arg2 }
+          : { fromSegmentIndex: arg2, toSegmentIndex: arg1 }
+        : {}),
+      ...(kind === 2 ? { sameLayerSegmentDelta: dir === 0 ? arg1 : -Number(arg1 ?? 0) } : {}),
+      ...(kind === 3 ? { crossLayerBlockSlot: arg1, ...(arg2 === 1 ? { voidBandInnerOuterCrossLayer: true } : {}) } : {}),
     };
   });
   return { ...base, links };
 }
 
-function runBenchmark(token: string, sourceLabel: string): void {
+function runBenchmark(token: string, sourceLabel: string, linkPrefix: string): void {
   const state = decodeLayoutTokenToState(token);
   const baselineJson = JSON.stringify(state);
-  const baselineToken = gzipTokenFromString(baselineJson);
+  const baselineRawB64Len = toBase64Url(new TextEncoder().encode(baselineJson)).length;
+  const baselineBrotliBase66Len = brotliBase66LinkLen(baselineJson, linkPrefix);
+  const baselineGzipBase64Len = bestGzipBase64LinkLen(baselineJson, linkPrefix);
+  const baselineBestLen = Math.min(baselineBrotliBase66Len, baselineGzipBase64Len);
 
   const variants: BenchmarkVariant[] = [
     { name: "baseline.current-shape", payload: state as unknown as JsonValue, decode: (x) => x as BuilderState },
@@ -829,40 +1335,137 @@ function runBenchmark(token: string, sourceLabel: string): void {
       payload: transformIndexedDense(state, { removeDefaults: true, enumInts: true }),
       decode: decodeIndexedDense,
     },
-    {
-      name: "typed-settings+link-opcodes",
-      payload: transformTypedSettingsLinkOpcodes(state),
-      decode: decodeTypedSettingsLinkOpcodes,
-    },
-    {
-      name: "typed+opcodes+quantized-xy",
-      payload: transformTypedSettingsLinkOpcodesAggressive(state, {
-        quantizeXY: true,
-        omitNextId: false,
-        elideStaticOuterEndpoints: false,
-      }),
-      decode: decodeTypedSettingsLinkOpcodes,
-    },
-    {
-      name: "typed+opcodes+quantized-xy+omit-nextId",
-      payload: transformTypedSettingsLinkOpcodesAggressive(state, {
-        quantizeXY: true,
-        omitNextId: true,
-        elideStaticOuterEndpoints: false,
-      }),
-      decode: decodeTypedSettingsLinkOpcodes,
-    },
-    {
-      name: "typed+undirected-wires",
-      payload: transformTypedSettingsUndirectedWires(state),
-      decode: decodeTypedSettingsUndirectedWires,
-    },
   ];
 
+  // Exhaustive compatible crosses for the typed-opcode family.
+  const typedOpcodeVariants: BenchmarkVariant[] = [];
+  for (const quantized of [false, true]) {
+    const sourceState = quantized
+      ? decodeTypedSettingsLinkOpcodes(
+          transformTypedSettingsLinkOpcodesAggressive(state, {
+            quantizeXY: true,
+            omitNextId: false,
+            elideStaticOuterEndpoints: false,
+          }),
+        )
+      : state;
+
+    for (const templates of [false, true]) {
+      const packPortsOptions = templates ? [false, true] : [false];
+      for (const packPorts of packPortsOptions) {
+        for (const omitNextId of [false, true]) {
+          const parts = ["typed", "opcodes"];
+          if (quantized) parts.push("quantized-xy");
+          if (templates) parts.push("settings-templates");
+          if (packPorts) parts.push("port-pack");
+          if (omitNextId) parts.push("omit-nextId");
+          let payload: JsonValue;
+          let decode: BenchmarkVariant["decode"];
+          if (templates) {
+            payload = transformTypedSettingsLinkOpcodesWithTemplates(sourceState, { packPorts });
+            decode = decodeTypedSettingsLinkOpcodesWithTemplates;
+          } else {
+            payload = transformTypedSettingsLinkOpcodes(sourceState);
+            decode = decodeTypedSettingsLinkOpcodes;
+          }
+          if (omitNextId) payload = omitNextIdFromPayload(payload);
+          typedOpcodeVariants.push({
+            name: parts.join("+"),
+            payload,
+            decode,
+          });
+        }
+      }
+    }
+  }
+
+  // Compatible undirected crosses currently available (omit-nextId only).
+  const undirectedPayload = transformTypedSettingsUndirectedWires(state);
+  typedOpcodeVariants.push({
+    name: "typed+undirected-wires",
+    payload: undirectedPayload,
+    decode: decodeTypedSettingsUndirectedWires,
+  });
+  typedOpcodeVariants.push({
+    name: "typed+undirected-wires+omit-nextId",
+    payload: omitNextIdFromPayload(undirectedPayload),
+    decode: decodeTypedSettingsUndirectedWires,
+  });
+
+  variants.push(...typedOpcodeVariants);
+
+  // Additional typed+opcodes focused combinations:
+  const typedBase = transformTypedSettingsLinkOpcodes(state);
+  const typedBaseOmit = omitNextIdFromPayload(typedBase);
+  const typedDropDefaults = transformTypedOpcodesDropDefaults(typedBase);
+  const typedDropDefaultsOmit = omitNextIdFromPayload(typedDropDefaults);
+
+  variants.push(
+    {
+      name: "typed+opcodes+drop-default-settings",
+      payload: typedDropDefaults,
+      decode: decodeTypedSettingsLinkOpcodesImplicitDefaults,
+    },
+    {
+      name: "typed+opcodes+drop-default-settings+omit-nextId",
+      payload: typedDropDefaultsOmit,
+      decode: decodeTypedSettingsLinkOpcodesImplicitDefaults,
+    },
+    {
+      name: "typed+opcodes+omit-nextId+baseline-repeat",
+      payload: typedBaseOmit,
+      decode: decodeTypedSettingsLinkOpcodes,
+    },
+    {
+      name: "typed+opcodes+drop-default-settings+omit-nextId+freq-string-table",
+      payload: reorderTypedStringTableByFrequency(typedDropDefaultsOmit),
+      decode: decodeTypedSettingsLinkOpcodesImplicitDefaults,
+    },
+    {
+      name: "typed+opcodes+drop-default-settings+omit-nextId+stable-keys",
+      payload: canonicalizeJsonObjectKeys(typedDropDefaultsOmit),
+      decode: decodeTypedSettingsLinkOpcodesImplicitDefaults,
+    },
+    {
+      name: "typed+opcodes+drop-default-settings+omit-nextId+freq-string-table+stable-keys",
+      payload: canonicalizeJsonObjectKeys(reorderTypedStringTableByFrequency(typedDropDefaultsOmit)),
+      decode: decodeTypedSettingsLinkOpcodesImplicitDefaults,
+    },
+  );
+
+  // More complex typed crosses: endpoint-id table on top of best typed stacks.
+  variants.push(
+    {
+      name: "typed+opcodes+settings-templates+port-pack+endpoint-id-table",
+      payload: transformTypedWithEndpointIdTable(state, {
+        useTemplates: true,
+        packPorts: true,
+        omitNextId: false,
+      }),
+      decode: decodeTypedWithEndpointIdTable,
+    },
+    {
+      name: "typed+opcodes+settings-templates+port-pack+endpoint-id-table+omit-nextId",
+      payload: transformTypedWithEndpointIdTable(state, {
+        useTemplates: true,
+        packPorts: true,
+        omitNextId: true,
+      }),
+      decode: decodeTypedWithEndpointIdTable,
+    },
+  );
+
   const baselineSignature = semanticSignature(state);
-  const scored = variants.map((v) => {
+  const dumpDir = join("temp", "layout-bench-dumps", "latest");
+  rmSync(dumpDir, { recursive: true, force: true });
+  mkdirSync(dumpDir, { recursive: true });
+
+  const scored = variants.map((v, idx) => {
     const json = JSON.stringify(v.payload);
-    const tok = gzipTokenFromString(json);
+    const rawB64Len = toBase64Url(new TextEncoder().encode(json)).length;
+    const brotli66Len = brotliBase66LinkLen(json, linkPrefix);
+    const gzip64Len = bestGzipBase64LinkLen(json, linkPrefix);
+    const bestComboLen = Math.min(brotli66Len, gzip64Len);
     let roundtrip = "N/A";
     let firstDiff: string | null = null;
     if (v.decode) {
@@ -879,44 +1482,103 @@ function runBenchmark(token: string, sourceLabel: string): void {
         firstDiff = "decoder threw";
       }
     }
+    const safeName = v.name.replace(/[^a-z0-9\-_]+/gi, "_");
+    const dumpId = String(idx + 1).padStart(2, "0");
+    const filename = `${dumpId}-${safeName}.json`;
+    writeFileSync(join(dumpDir, filename), `${JSON.stringify(v.payload, null, 2)}\n`, "utf8");
+
     return {
       name: v.name,
+      namePretty: v.name.replace(/\+/g, " "),
       rawJsonBytes: compactJsonLength(v.payload),
-      tokenLen: tok.length,
-      deltaVsCurrentToken: tok.length - baselineToken.length,
-      percentVsCurrent: ((tok.length / baselineToken.length) * 100).toFixed(2),
+      tokenLen: bestComboLen,
+      deltaVsCurrentToken: bestComboLen - baselineBestLen,
+      percentVsCurrent: ((bestComboLen / baselineBestLen) * 100).toFixed(2),
+      rawB64Len,
+      rawB64Pct: ((rawB64Len / baselineRawB64Len) * 100).toFixed(2),
+      rawPercentVsBaseline: ((compactJsonLength(v.payload) / Buffer.byteLength(baselineJson, "utf8")) * 100).toFixed(2),
       roundtrip,
       firstDiff,
+      dumpId,
+      dumpFile: filename,
+      brotli66Len,
+      gzip64Len,
+      brotli66Pct: ((brotli66Len / baselineBrotliBase66Len) * 100).toFixed(2),
+      gzip64Pct: ((gzip64Len / baselineGzipBase64Len) * 100).toFixed(2),
+      bestCombo: brotli66Len <= gzip64Len ? "br11+b66" : "gz+b64",
     };
   });
 
   scored.sort((a, b) => a.tokenLen - b.tokenLen);
 
   console.log(`\nLayout token benchmark (${sourceLabel})`);
-  console.log(`Current token length: ${token.length}`);
-  console.log(`Baseline re-encoded token length: ${baselineToken.length}`);
+  console.log(`Current link length: ${linkPrefix.length + token.length}`);
+  console.log(`Baseline br11+b66 link length: ${baselineBrotliBase66Len}`);
+  console.log(`Baseline best-gzip+b64 link length: ${baselineGzipBase64Len}`);
   console.log(`Baseline raw JSON bytes: ${Buffer.byteLength(baselineJson, "utf8")}`);
   console.log("\nSorted by shortest final token:\n");
 
+  const table = new Table({
+    head: [
+      "variant",
+      "link",
+      "tok%",
+      "b64 raw",
+      "b64%",
+      "raw",
+      "raw%",
+      "vs",
+      "rt",
+      "br11+b66",
+      "br11%",
+      "best-gzip+b64",
+      "gz%",
+      "best",
+      "dump",
+      "first error",
+    ],
+    style: {
+      head: [],
+      compact: true,
+    },
+    wordWrap: true,
+  });
+
   for (const row of scored) {
     const sign = row.deltaVsCurrentToken <= 0 ? "" : "+";
-    console.log(
-      `${row.name.padEnd(56)} token=${String(row.tokenLen).padStart(5)}  raw=${String(row.rawJsonBytes).padStart(6)}  vsCurrent=${sign}${row.deltaVsCurrentToken} (${row.percentVsCurrent}%)  roundtrip=${row.roundtrip}`,
-    );
-    if (row.roundtrip === "FAIL" && row.firstDiff) {
-      console.log(`  firstDiff: ${row.firstDiff}`);
-    }
+    const deltaText = `${sign}${row.deltaVsCurrentToken} (${row.percentVsCurrent}%)`;
+    table.push([
+      row.namePretty,
+      row.tokenLen,
+      row.percentVsCurrent,
+      row.rawB64Len,
+      row.rawB64Pct,
+      row.rawJsonBytes,
+      row.rawPercentVsBaseline,
+      deltaText,
+      row.roundtrip,
+      row.brotli66Len,
+      row.brotli66Pct,
+      row.gzip64Len,
+      row.gzip64Pct,
+      row.bestCombo,
+      row.dumpId,
+      row.roundtrip === "FAIL" && row.firstDiff ? row.firstDiff : "",
+    ]);
   }
+  console.log(table.toString());
 
   const best = scored[0];
-  console.log(`\nBest variant: ${best.name} (${best.tokenLen} chars)`);
+  console.log(`\nBest variant: ${best.name} (${best.tokenLen} chars link)`);
+  console.log(`Dump directory: ${dumpDir}`);
 }
 
 function main(): void {
   const inputPath = process.argv[2] ?? DEFAULT_TEMP_PATH;
   const raw = readFileSync(inputPath, "utf8");
   const token = extractLayoutToken(raw);
-  runBenchmark(token, inputPath);
+  const linkPrefix = detectLayoutLinkPrefix(raw);
+  runBenchmark(token, inputPath, linkPrefix);
 }
 
 main();

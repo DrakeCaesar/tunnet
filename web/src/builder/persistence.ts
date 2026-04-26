@@ -1,4 +1,9 @@
 import { BuilderState, createEmptyBuilderState, isStaticOuterLeafEndpoint } from "./state";
+import { decodeBuilderShareState, encodeBuilderShareState } from "./share-codec";
+import { ensureLoadedAsync as ensureBrotliEncoderLoaded, type BrotliEncoder } from "brotli-ts/encoder";
+import { ensureLoadedAsync as ensureBrotliDecoderLoaded, type BrotliDecoder } from "brotli-ts/decoder";
+import brotliEncoderWasmUrl from "brotli-ts/wasm/encoder?url";
+import brotliDecoderWasmUrl from "brotli-ts/wasm/decoder?url";
 
 const STORAGE_KEY = "tunnet.builder.v1";
 const EXPORT_GZIP_BASE64_PREFIX = "tunnet-simulator-gz64:";
@@ -70,12 +75,73 @@ function bytesToBase64Url(bytes: Uint8Array): string {
   return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlToBytes(base64Url: string): Uint8Array {
-  const base64 = base64Url
-    .replace(/-/g, "+")
-    .replace(/_/g, "/")
-    .padEnd(Math.ceil(base64Url.length / 4) * 4, "=");
-  return base64ToBytes(base64);
+const BASE66_UNRESERVED = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._~";
+let brotliEncoderPromise: Promise<BrotliEncoder> | null = null;
+let brotliDecoderPromise: Promise<BrotliDecoder> | null = null;
+
+function getBrotliEncoder(): Promise<BrotliEncoder> {
+  if (!brotliEncoderPromise) {
+    brotliEncoderPromise = ensureBrotliEncoderLoaded(() => fetch(brotliEncoderWasmUrl));
+  }
+  return brotliEncoderPromise;
+}
+
+function getBrotliDecoder(): Promise<BrotliDecoder> {
+  if (!brotliDecoderPromise) {
+    brotliDecoderPromise = ensureBrotliDecoderLoaded(() => fetch(brotliDecoderWasmUrl));
+  }
+  return brotliDecoderPromise;
+}
+
+function bytesToBase66Unreserved(bytes: Uint8Array): string {
+  if (bytes.length === 0) return BASE66_UNRESERVED[0]!;
+  const base = BASE66_UNRESERVED.length;
+  const digits: number[] = [0];
+  for (let i = 0; i < bytes.length; i += 1) {
+    let carry = bytes[i] ?? 0;
+    for (let j = 0; j < digits.length; j += 1) {
+      const value = digits[j]! * 256 + carry;
+      digits[j] = value % base;
+      carry = Math.floor(value / base);
+    }
+    while (carry > 0) {
+      digits.push(carry % base);
+      carry = Math.floor(carry / base);
+    }
+  }
+  let out = "";
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    out += BASE66_UNRESERVED[digits[i]!]!;
+  }
+  let leadingZeros = 0;
+  while (leadingZeros < bytes.length && bytes[leadingZeros] === 0) leadingZeros += 1;
+  if (leadingZeros > 0) out = BASE66_UNRESERVED[0]!.repeat(leadingZeros) + out;
+  return out || BASE66_UNRESERVED[0]!;
+}
+
+function base66UnreservedToBytes(input: string): Uint8Array {
+  const text = input.trim();
+  if (!text) return new Uint8Array(0);
+  const base = BASE66_UNRESERVED.length;
+  const bytes: number[] = [0];
+  for (let i = 0; i < text.length; i += 1) {
+    const idx = BASE66_UNRESERVED.indexOf(text[i]!);
+    if (idx < 0) throw new Error("Invalid base66 character");
+    let carry = idx;
+    for (let j = 0; j < bytes.length; j += 1) {
+      const value = bytes[j]! * base + carry;
+      bytes[j] = value & 0xff;
+      carry = value >> 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  bytes.reverse();
+  let leadingZeros = 0;
+  while (leadingZeros < text.length && text[leadingZeros] === BASE66_UNRESERVED[0]) leadingZeros += 1;
+  return new Uint8Array([...Array.from({ length: leadingZeros }, () => 0), ...bytes]);
 }
 
 async function gzipToBase64(text: string): Promise<string> {
@@ -92,18 +158,21 @@ async function gunzipBase64(base64: string): Promise<string> {
   return new TextDecoder().decode(decompressed);
 }
 
-async function gzipToBase64Url(text: string): Promise<string> {
+async function brotliToBase66Url(text: string): Promise<string> {
   const input = new TextEncoder().encode(text);
-  const stream = new Blob([input]).stream().pipeThrough(new CompressionStream("gzip"));
-  const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
-  return bytesToBase64Url(compressed);
+  const encoder = await getBrotliEncoder();
+  const compressed = encoder.compressBuffer(input, { quality: 11 });
+  return bytesToBase66Unreserved(compressed);
 }
 
-async function gunzipBase64Url(base64Url: string): Promise<string> {
-  const bytes = base64UrlToBytes(base64Url);
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const decompressed = await new Response(stream).arrayBuffer();
-  return new TextDecoder().decode(decompressed);
+async function base66UrlToBrotliText(base66: string): Promise<string> {
+  const bytes = base66UnreservedToBytes(base66);
+  const decoder = await getBrotliDecoder();
+  const decompressed = decoder.decompressBuffer(bytes);
+  return new TextDecoder().decode(decompressed.buffer.slice(
+    decompressed.byteOffset,
+    decompressed.byteOffset + decompressed.byteLength,
+  ));
 }
 
 function layoutSlotKey(index: number): string {
@@ -136,16 +205,15 @@ export async function importBuilderStateText(raw: string): Promise<BuilderState 
 }
 
 export async function exportBuilderStateUrlToken(state: BuilderState): Promise<string> {
-  const serialized = JSON.stringify(stateForPersistence(state));
-  return gzipToBase64Url(serialized);
+  const compact = encodeBuilderShareState(stateForPersistence(state));
+  return brotliToBase66Url(JSON.stringify(compact));
 }
 
 export async function importBuilderStateUrlToken(token: string): Promise<BuilderState | null> {
   try {
-    const payloadText = await gunzipBase64Url(token.trim());
+    const payloadText = await base66UrlToBrotliText(token.trim());
     const parsed = JSON.parse(payloadText) as unknown;
-    if (!isBuilderStateLike(parsed)) return null;
-    return parsed;
+    return decodeBuilderShareState(parsed);
   } catch {
     return null;
   }
