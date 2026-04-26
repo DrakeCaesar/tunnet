@@ -428,10 +428,14 @@ export function outerLayerBuilderColumnSlots(): OuterBuilderColumnSlot[] {
 }
 
 export function segmentLabel(layer: BuilderLayer, segment: number): string {
-  if (layer === "outer64") return `${segment}`;
-  if (layer === "middle16") return `${segment * 4}-${segment * 4 + 3}`;
-  if (layer === "inner4") return `${segment * 16}-${segment * 16 + 15}`;
-  return "0-63";
+  if (layer === "outer64") {
+    const third = Math.floor(segment / 4);
+    const fourth = segment % 4;
+    return `0.0.${third}.${fourth}`;
+  }
+  if (layer === "middle16") return `0.0.${segment}.*`;
+  if (layer === "inner4") return `0.${segment}.*.*`;
+  return "0.*.*.*";
 }
 
 export function orderedLayersTopDown(): BuilderLayer[] {
