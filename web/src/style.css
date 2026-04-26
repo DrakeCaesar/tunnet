@@ -1424,6 +1424,11 @@ textarea {
   align-items: stretch;
 }
 
+.builder-row-collision--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .builder-cycle-btn {
   border: 1px solid #3a445a;
   background: #0f131b;

@@ -287,6 +287,7 @@ export class TunnetSimulator {
     }
     const inbound = this.packetAt({ deviceId: device.id, port: 0 });
     let receivedAddressedThisTick = false;
+    let attemptedBounceThisTick = false;
     const repliedThisTick = pendingReply !== undefined;
     if (inbound) {
       if (inbound.dest === device.address) {
@@ -308,6 +309,7 @@ export class TunnetSimulator {
       } else {
         const bounced = decrementTtl(inbound);
         if (bounced) {
+          attemptedBounceThisTick = true;
           ctx.stats.bounced += 1;
           this.enqueueOutbound(ctx, device.id, 0, bounced);
         } else {
@@ -320,6 +322,7 @@ export class TunnetSimulator {
     if (!device.generator) return;
     if (receivedAddressedThisTick) return;
     if (repliedThisTick) return;
+    if (attemptedBounceThisTick) return;
     if (ctx.tick < device.state.nextSendTick) return;
     if (ctx.rnd() > this.sendRateMultiplier) return;
     const destinations = device.generator.destinations.filter((d) => d !== device.address);

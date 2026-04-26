@@ -3267,7 +3267,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         valueEl.innerHTML = filterDisplayValue(key, rootEnt.settings);
       });
       entityEl.querySelectorAll<HTMLElement>("[data-filter-collision-row]").forEach((rowEl) => {
-        rowEl.style.display = (rootEnt.settings.action ?? "send_back") === "send_back" ? "" : "none";
+        rowEl.classList.toggle(
+          "builder-row-collision--hidden",
+          (rootEnt.settings.action ?? "send_back") !== "send_back",
+        );
       });
     });
   }
@@ -4484,7 +4487,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                                       </div>
                                       ${
                                         `
-                                        <div class="builder-row builder-row-collision" data-filter-collision-row style="${(entity.settings.action ?? "send_back") === "send_back" ? "" : "display:none"}">
+                                        <div class="builder-row builder-row-collision ${((entity.settings.action ?? "send_back") === "send_back" ? "" : "builder-row-collision--hidden")}" data-filter-collision-row>
                                           <span class="builder-row-label">Collision<br/>handling:</span>
                                           <div class="builder-cycle builder-cycle--tall">
                                             <button class="builder-cycle-btn" data-setting-cycle="collisionHandling" data-dir="prev" data-root-id="${entity.rootId}" type="button">&lt;</button>
