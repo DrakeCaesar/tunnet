@@ -529,7 +529,7 @@ function transformTypedSettingsLinkOpcodes(state: BuilderState): JsonValue {
       const op = pushDict(strDict, strings, e.settings.operation ?? "differ");
       const mask = pushDict(strDict, strings, e.settings.mask ?? "*.*.*.*");
       const action = pushDict(strDict, strings, e.settings.action ?? "send_back");
-      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "send_back_outbound");
+      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "drop_inbound");
       row.push([opPort, af, op, mask, action, coll]);
     }
 
@@ -603,7 +603,7 @@ function decodeTypedSettingsLinkOpcodes(payload: JsonValue): BuilderState {
         const actionIdx = settingsPayload[4];
         settings.action = typeof actionIdx === "number" ? (strings[actionIdx] ?? "send_back") : "send_back";
         const collIdx = settingsPayload[5];
-        settings.collisionHandling = typeof collIdx === "number" ? (strings[collIdx] ?? "send_back_outbound") : "send_back_outbound";
+        settings.collisionHandling = typeof collIdx === "number" ? (strings[collIdx] ?? "drop_inbound") : "drop_inbound";
       }
     }
     return {
@@ -664,7 +664,7 @@ function applyImplicitDefaultsToTypedState(out: BuilderState): BuilderState {
           operation: "differ",
           mask: "*.*.*.*",
           action: "send_back",
-          collisionHandling: "send_back_outbound",
+          collisionHandling: "drop_inbound",
           ...e.settings,
         },
       };
@@ -708,15 +708,15 @@ function transformTypedOpcodesDropDefaults(payload: JsonValue): JsonValue {
       const mask = typeof settingsPayload[3] === "number" ? (strings[settingsPayload[3]] ?? "*.*.*.*") : "*.*.*.*";
       const action = typeof settingsPayload[4] === "number" ? (strings[settingsPayload[4]] ?? "send_back") : "send_back";
       const coll = typeof settingsPayload[5] === "number"
-        ? (strings[settingsPayload[5]] ?? "send_back_outbound")
-        : "send_back_outbound";
+        ? (strings[settingsPayload[5]] ?? "drop_inbound")
+        : "drop_inbound";
       if (
         Number(settingsPayload[0] ?? 0) === 0 &&
         af === "destination" &&
         op === "differ" &&
         mask === "*.*.*.*" &&
         action === "send_back" &&
-        coll === "send_back_outbound"
+        coll === "drop_inbound"
       ) {
         out[5] = undefined;
       }
@@ -1163,7 +1163,7 @@ function transformTypedSettingsLinkOpcodesAggressive(
       const op = pushDict(strDict, strings, e.settings.operation ?? "differ");
       const mask = pushDict(strDict, strings, e.settings.mask ?? "*.*.*.*");
       const action = pushDict(strDict, strings, e.settings.action ?? "send_back");
-      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "send_back_outbound");
+      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "drop_inbound");
       row.push([opPort, af, op, mask, action, coll]);
     }
 
@@ -1233,7 +1233,7 @@ function transformTypedSettingsUndirectedWires(state: BuilderState): JsonValue {
       const op = pushDict(strDict, strings, e.settings.operation ?? "differ");
       const mask = pushDict(strDict, strings, e.settings.mask ?? "*.*.*.*");
       const action = pushDict(strDict, strings, e.settings.action ?? "send_back");
-      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "send_back_outbound");
+      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "drop_inbound");
       row.push([opPort, af, op, mask, action, coll]);
     }
     if (e.isStatic === true) row.push(1);
