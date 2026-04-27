@@ -408,10 +408,11 @@ textarea {
 }
 
 .builder-sidebar-resizer {
-  cursor: col-resize;
+  cursor: pointer;
   position: relative;
   z-index: 4;
-  touch-action: none;
+  touch-action: manipulation;
+  outline: none;
 }
 
 .builder-sidebar-resizer::before {
@@ -419,13 +420,18 @@ textarea {
   position: absolute;
   inset: 0 4px;
   border-radius: 999px;
-  background: transparent;
-  transition: background 0.12s ease;
+  background: rgba(58, 68, 90, 0.45);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
 }
 
 .builder-sidebar-resizer:hover::before,
 .builder-resizing-sidebar .builder-sidebar-resizer::before {
   background: #3a445a;
+  box-shadow: 0 0 0 1px rgba(137, 180, 250, 0.25);
+}
+
+.builder-sidebar-resizer:focus-visible::before {
+  box-shadow: 0 0 0 1px rgba(137, 180, 250, 0.45);
 }
 
 .builder-sidebar-collapsed .builder-sidebar {
@@ -499,6 +505,13 @@ textarea {
 .builder-panel-note {
   font-size: var(--font-size-12);
   color: #98a4bc;
+}
+
+.builder-controls-sidebar-host {
+  --builder-hud-gap: 8px;
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
 }
 
 .builder-layout-slots-block {
@@ -770,16 +783,17 @@ textarea {
   -webkit-user-select: none;
 }
 
-.builder-floating-tools {
+.builder-controls-floating-host {
   --builder-hud-gap: 8px;
   position: absolute;
   left: 20px;
+  right: 20px;
   bottom: calc(20px + var(--builder-floating-scrollbar-bottom, 0px));
   z-index: 7;
   display: flex;
   align-items: flex-end;
   gap: var(--builder-hud-gap);
-  width: max-content;
+  justify-content: flex-start;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
@@ -833,12 +847,21 @@ textarea {
   gap: var(--builder-hud-gap);
 }
 
+.builder-floating-performance {
+  width: 360px;
+  max-width: 360px;
+  box-sizing: border-box;
+  padding: var(--builder-hud-gap);
+  border: 1px solid #2a3242;
+  border-radius: 10px;
+  background: rgba(15, 19, 27, 0.92);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
 .builder-floating-loadouts-detached {
-  position: absolute;
-  right: calc(20px + var(--builder-floating-scrollbar-right, 0px));
-  bottom: calc(20px + var(--builder-floating-scrollbar-bottom, 0px));
-  z-index: 7;
-  padding: 8px;
+  position: relative;
+  margin-left: auto;
 }
 
 .builder-layout-slots--floating {
@@ -851,6 +874,7 @@ textarea {
   box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
+  grid-template-rows: auto 34px;
   gap: var(--builder-hud-gap);
   align-items: start;
   padding: var(--builder-hud-gap);
@@ -863,18 +887,6 @@ textarea {
   -webkit-user-select: none;
 }
 
-.builder-sim-left {
-  min-width: 0;
-  display: grid;
-  grid-template-rows: auto 34px;
-  gap: var(--builder-hud-gap);
-  align-content: start;
-}
-
-.builder-sim-right {
-  min-width: 0;
-}
-
 .builder-sim-speed-row {
   width: 100%;
   height: 34px;
@@ -882,6 +894,11 @@ textarea {
   justify-self: stretch;
   margin: 0;
   grid-template-columns: 9ch 1fr 4ch;
+}
+
+.builder-floating-simulation .builder-sim-meta {
+  grid-column: 2;
+  grid-row: 1 / span 2;
 }
 
 .builder-floating-templates {
@@ -910,6 +927,39 @@ textarea {
   padding: 0 4px;
   line-height: 1;
   text-align: center;
+}
+
+.builder-controls-in-sidebar .builder-controls-floating-host {
+  position: static;
+  display: block;
+  right: auto;
+  left: auto;
+  bottom: auto;
+  pointer-events: auto;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-loadouts,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-scale,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-tool-stack,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-performance {
+  width: 100%;
+  max-width: none;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-tool-stack {
+  height: auto;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 34px auto;
+  align-content: start;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-meta {
+  grid-column: 1;
+  grid-row: auto;
 }
 
 .builder-delete-drop-zone {

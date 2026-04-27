@@ -61,7 +61,7 @@ const BUILDER_SIDEBAR_WIDTH_KEY = "tunnet.builder.sidebarWidth";
 const BUILDER_LAYER_GAP_PX = 4;
 const BUILDER_GRID_TILE_SIZE_X_PX = 20;
 const BUILDER_GRID_TILE_SIZE_Y_PX = 20;
-const BUILDER_SIDEBAR_DEFAULT_WIDTH_PX = 400;
+const BUILDER_SIDEBAR_DEFAULT_WIDTH_PX = 480;
 const BUILDER_SIDEBAR_MIN_WIDTH_PX = 240;
 const BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX = 16;
 const BUILDER_SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
@@ -77,7 +77,7 @@ const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
 const BUILDER_LAYOUT_SLOT_COUNT = 5;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
 const DEFAULT_LAYER_SCALE_Y = { outer64: 0.5, middle16: 1.5, inner4: 1.5, core1: 0.5 } as const;
-const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "performance"] as const;
+const BUILDER_PANEL_SECTION_IDS = ["performance"] as const;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
@@ -752,7 +752,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (width <= BUILDER_SIDEBAR_COLLAPSE_THRESHOLD_PX) {
       return BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
     }
-    return Math.max(BUILDER_SIDEBAR_MIN_WIDTH_PX, Math.min(maxWidth, width));
+    const expandedWidth = Math.max(
+      BUILDER_SIDEBAR_MIN_WIDTH_PX,
+      Math.min(maxWidth, BUILDER_SIDEBAR_DEFAULT_WIDTH_PX),
+    );
+    return expandedWidth;
   };
   const loadBuilderSidebarWidth = (): number => {
     try {
@@ -784,10 +788,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
   }
   let builderSidebarWidth = loadBuilderSidebarWidth();
-  let builderSidebarExpandedWidth =
-    builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX
-      ? BUILDER_SIDEBAR_DEFAULT_WIDTH_PX
-      : builderSidebarWidth;
   const panelSectionAttrs = (id: BuilderPanelSectionId): string => {
     const collapsed = builderPageState.collapsedSections[id] === true;
     return `class="builder-panel-section${collapsed ? " collapsed" : ""}" data-builder-panel-section="${id}"`;
@@ -800,52 +800,37 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   root.innerHTML = `
     <div class="builder-layout">
       <aside class="builder-sidebar card">
-        <section ${panelSectionAttrs("actions")}>
-          ${panelToggle("actions", "Actions")}
-          <div id="builder-panel-actions-body" class="builder-panel-section-body">
-            <div class="builder-panel-note">Moved to floating controls.</div>
-          </div>
-        </section>
-        <section ${panelSectionAttrs("performance")}>
-          ${panelToggle("performance", "Performance")}
-          <div id="builder-panel-performance-body" class="builder-panel-section-body">
-            <pre id="builder-perf" class="builder-perf">Collecting samples...</pre>
-          </div>
-        </section>
+        <div id="builder-controls-sidebar-host" class="builder-controls-sidebar-host"></div>
       </aside>
-      <div class="builder-sidebar-resizer" role="separator" aria-orientation="vertical" title="Drag to resize side panel"></div>
+      <div class="builder-sidebar-resizer" role="button" tabindex="0" aria-label="Close side panel" title="Close side panel"></div>
       <main class="builder-main card">
         <div class="builder-canvas-wrap">
           <svg id="builder-wire-overlay" class="builder-wire-overlay"></svg>
           <svg id="builder-packet-overlay" class="builder-packet-overlay" aria-hidden="true"></svg>
           <div id="builder-canvas" class="builder-canvas"></div>
         </div>
-        <div class="builder-floating-tools" aria-label="Canvas tools">
-          <div class="builder-floating-tool-stack">
+        <div id="builder-controls-floating-host" class="builder-controls-floating-host" aria-label="Canvas tools">
+          <div id="builder-panel-templates" class="builder-floating-tool-stack">
             <div id="builder-delete-drop-zone" class="builder-delete-drop-zone" aria-label="Drop here to delete">
               Drop to delete
             </div>
             <div id="builder-templates" class="builder-floating-templates"></div>
           </div>
-          <div class="builder-floating-simulation" aria-label="Simulation controls">
-            <div class="builder-sim-left">
-              <div class="builder-sim-toolbar">
-                <button id="builder-sim-play-pause" type="button">Play</button>
-                <button id="builder-sim-step" type="button">Step</button>
-                <button id="builder-sim-reset" type="button">Reset</button>
-                <button id="builder-sim-toggle-packet-ips" type="button">${builderPageState.showPacketIps ? "Hide IPs" : "Show IPs"}</button>
-              </div>
-              <label class="builder-scale-row builder-sim-speed-row" for="builder-sim-speed">
-                <span>Tick pace</span>
-                <input id="builder-sim-speed" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
-                <span id="builder-sim-speed-value">${formatSpeedLabel(SPEED_EXP_DEFAULT)}</span>
-              </label>
+          <div id="builder-panel-simulation" class="builder-floating-simulation" aria-label="Simulation controls">
+            <div class="builder-sim-toolbar">
+              <button id="builder-sim-play-pause" type="button">Play</button>
+              <button id="builder-sim-step" type="button">Step</button>
+              <button id="builder-sim-reset" type="button">Reset</button>
+              <button id="builder-sim-toggle-packet-ips" type="button">${builderPageState.showPacketIps ? "Hide IPs" : "Show IPs"}</button>
             </div>
-            <div class="builder-sim-right">
-              <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
-            </div>
+            <label class="builder-scale-row builder-sim-speed-row" for="builder-sim-speed">
+              <span>Tick pace</span>
+              <input id="builder-sim-speed" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
+              <span id="builder-sim-speed-value">${formatSpeedLabel(SPEED_EXP_DEFAULT)}</span>
+            </label>
+            <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
           </div>
-          <div class="builder-floating-scale-area">
+          <div id="builder-panel-scale" class="builder-floating-scale-area">
             <div class="builder-floating-scale" aria-label="Canvas scale controls">
               <div class="builder-scale-controls">
                 <label class="builder-scale-row" for="builder-scale-x">
@@ -876,9 +861,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               </div>
             </div>
           </div>
-        </div>
-        <div class="builder-floating-loadouts builder-floating-loadouts-detached">
-          <div id="builder-layout-slots" class="builder-layout-slots builder-layout-slots--floating"></div>
+          <div id="builder-panel-layouts" class="builder-floating-loadouts builder-floating-loadouts-detached">
+            <div id="builder-layout-slots" class="builder-layout-slots builder-layout-slots--floating"></div>
+          </div>
+          <div id="builder-panel-performance" class="builder-floating-performance">
+            <pre id="builder-perf" class="builder-perf">Collecting samples...</pre>
+          </div>
         </div>
       </main>
     </div>
@@ -887,6 +875,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const builderLayoutEl = root.querySelector<HTMLDivElement>(".builder-layout")!;
   const builderSidebarEl = root.querySelector<HTMLElement>(".builder-sidebar")!;
   const builderSidebarResizerEl = root.querySelector<HTMLDivElement>(".builder-sidebar-resizer")!;
+  const controlsSidebarHostEl = root.querySelector<HTMLDivElement>("#builder-controls-sidebar-host")!;
+  const controlsFloatingHostEl = root.querySelector<HTMLDivElement>("#builder-controls-floating-host")!;
+  const panelLayoutsEl = root.querySelector<HTMLDivElement>("#builder-panel-layouts")!;
+  const panelScaleEl = root.querySelector<HTMLDivElement>("#builder-panel-scale")!;
+  const panelSimulationEl = root.querySelector<HTMLDivElement>("#builder-panel-simulation")!;
+  const panelTemplatesEl = root.querySelector<HTMLDivElement>("#builder-panel-templates")!;
+  const panelPerformanceEl = root.querySelector<HTMLDivElement>("#builder-panel-performance")!;
   const templatesEl = root.querySelector<HTMLDivElement>("#builder-templates")!;
   const deleteDropZoneEl = root.querySelector<HTMLDivElement>("#builder-delete-drop-zone")!;
   const canvasEl = root.querySelector<HTMLDivElement>("#builder-canvas")!;
@@ -1072,19 +1067,31 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function applyBuilderSidebarWidth(width: number, persistWidth = false): void {
     const layoutWidth = builderLayoutEl.getBoundingClientRect().width || window.innerWidth;
     builderSidebarWidth = clampBuilderSidebarWidth(width, layoutWidth);
-    if (builderSidebarWidth !== BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX) {
-      builderSidebarExpandedWidth = builderSidebarWidth;
-    }
     builderLayoutEl.style.setProperty("--builder-sidebar-width", `${builderSidebarWidth}px`);
     builderLayoutEl.classList.toggle(
       "builder-sidebar-collapsed",
       builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX,
     );
+    const collapsed = builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
+    const actionLabel = collapsed ? "Open side panel" : "Close side panel";
+    builderSidebarResizerEl.setAttribute("aria-label", actionLabel);
+    builderSidebarResizerEl.setAttribute("title", actionLabel);
     if (persistWidth) {
       persistBuilderSidebarWidth();
     }
+    syncBuilderControlPanelPlacement();
     scheduleWireOverlayRender();
     renderBuilderPacketCircles(simPacketProgress);
+  }
+
+  function syncBuilderControlPanelPlacement(): void {
+    const sidebarCollapsed = builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
+    builderLayoutEl.classList.toggle("builder-controls-in-sidebar", !sidebarCollapsed);
+    if (sidebarCollapsed) {
+      controlsFloatingHostEl.append(panelTemplatesEl, panelSimulationEl, panelScaleEl, panelLayoutsEl, panelPerformanceEl);
+      return;
+    }
+    controlsSidebarHostEl.append(panelLayoutsEl, panelScaleEl, panelSimulationEl, panelTemplatesEl, panelPerformanceEl);
   }
 
   function setPanelSectionCollapsed(sectionId: BuilderPanelSectionId, collapsed: boolean): void {
@@ -1139,45 +1146,26 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   builderSidebarResizerEl.addEventListener("pointerdown", (ev) => {
     if (ev.button !== 0) return;
     ev.preventDefault();
-    const startX = ev.clientX;
-    const startWidth = builderSidebarWidth;
-    const startedCollapsed = startWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
-    let dragged = false;
-    builderSidebarResizerEl.setPointerCapture(ev.pointerId);
-    document.body.style.cursor = "col-resize";
-    root.classList.add("builder-resizing-sidebar");
+    if (builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX) {
+      applyBuilderSidebarWidth(BUILDER_SIDEBAR_DEFAULT_WIDTH_PX, true);
+      return;
+    }
+    applyBuilderSidebarWidth(BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX, true);
+  });
 
-    const onMove = (moveEv: PointerEvent): void => {
-      const dx = moveEv.clientX - startX;
-      if (Math.abs(dx) > 3) {
-        dragged = true;
-      }
-      applyBuilderSidebarWidth(startWidth + dx);
-    };
-    const onEnd = (endEv: PointerEvent): void => {
-      if (builderSidebarResizerEl.hasPointerCapture(ev.pointerId)) {
-        builderSidebarResizerEl.releasePointerCapture(ev.pointerId);
-      }
-      builderSidebarResizerEl.removeEventListener("pointermove", onMove);
-      builderSidebarResizerEl.removeEventListener("pointerup", onEnd);
-      builderSidebarResizerEl.removeEventListener("pointercancel", onEnd);
-      document.body.style.removeProperty("cursor");
-      root.classList.remove("builder-resizing-sidebar");
-      if (startedCollapsed && !dragged && endEv.type === "pointerup") {
-        applyBuilderSidebarWidth(builderSidebarExpandedWidth, true);
-      } else {
-        persistBuilderSidebarWidth();
-      }
-    };
-
-    builderSidebarResizerEl.addEventListener("pointermove", onMove);
-    builderSidebarResizerEl.addEventListener("pointerup", onEnd);
-    builderSidebarResizerEl.addEventListener("pointercancel", onEnd);
+  builderSidebarResizerEl.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    if (builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX) {
+      applyBuilderSidebarWidth(BUILDER_SIDEBAR_DEFAULT_WIDTH_PX, true);
+      return;
+    }
+    applyBuilderSidebarWidth(BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX, true);
   });
 
   builderSidebarEl.addEventListener("click", () => {
     if (builderSidebarWidth !== BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX) return;
-    applyBuilderSidebarWidth(builderSidebarExpandedWidth, true);
+    applyBuilderSidebarWidth(BUILDER_SIDEBAR_DEFAULT_WIDTH_PX, true);
   });
 
   function applyCanvasScale(): void {
