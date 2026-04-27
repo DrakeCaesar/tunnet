@@ -788,6 +788,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
   }
   let builderSidebarWidth = loadBuilderSidebarWidth();
+  const builderDevPerfVisible = (() => {
+    const host = window.location.hostname;
+    const localHost =
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host.endsWith(".local");
+    const forced = new URLSearchParams(window.location.search).get("builderPerf");
+    if (forced === "1") return true;
+    if (forced === "0") return false;
+    return localHost;
+  })();
   const panelSectionAttrs = (id: BuilderPanelSectionId): string => {
     const collapsed = builderPageState.collapsedSections[id] === true;
     return `class="builder-panel-section${collapsed ? " collapsed" : ""}" data-builder-panel-section="${id}"`;
@@ -1088,10 +1100,16 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const sidebarCollapsed = builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
     builderLayoutEl.classList.toggle("builder-controls-in-sidebar", !sidebarCollapsed);
     if (sidebarCollapsed) {
-      controlsFloatingHostEl.append(panelTemplatesEl, panelSimulationEl, panelScaleEl, panelLayoutsEl, panelPerformanceEl);
+      controlsFloatingHostEl.append(panelTemplatesEl, panelSimulationEl, panelScaleEl, panelLayoutsEl);
+      if (builderDevPerfVisible) {
+        controlsFloatingHostEl.append(panelPerformanceEl);
+      }
       return;
     }
-    controlsSidebarHostEl.append(panelLayoutsEl, panelScaleEl, panelSimulationEl, panelTemplatesEl, panelPerformanceEl);
+    controlsSidebarHostEl.append(panelLayoutsEl, panelScaleEl, panelSimulationEl, panelTemplatesEl);
+    if (builderDevPerfVisible) {
+      controlsSidebarHostEl.append(panelPerformanceEl);
+    }
   }
 
   function setPanelSectionCollapsed(sectionId: BuilderPanelSectionId, collapsed: boolean): void {
