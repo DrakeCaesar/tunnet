@@ -77,6 +77,7 @@ const PACKET_IP_LABEL_OFFSET_X_PX = -3;
 const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
 const BUILDER_LAYOUT_SLOT_COUNT = 4;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
+const DEFAULT_LAYER_SCALE_Y = { outer64: 0.5, middle16: 1.5, inner4: 1.5, core1: 0.5 } as const;
 const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "inspector", "performance"] as const;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
@@ -672,7 +673,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const loadCanvasScale = (): CanvasScale => {
     try {
       const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
-      if (!rawScale) return { x: 1, yByLayer: { outer64: 1, middle16: 1, inner4: 1, core1: 1 } };
+      if (!rawScale) return { x: 1, yByLayer: { ...DEFAULT_LAYER_SCALE_Y } };
       const parsed = JSON.parse(rawScale) as Partial<CanvasScale> & {
         y?: number;
         yByLayer?: Partial<Record<BuilderLayer, number>>;
@@ -686,22 +687,24 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return {
         x: Number.isFinite(x) ? x : 1,
         yByLayer: {
-          outer64: Number.isFinite(yOuter) ? yOuter : Number.isFinite(legacyY) ? legacyY : 1,
-          middle16: Number.isFinite(yMiddle) ? yMiddle : Number.isFinite(legacyY) ? legacyY : 1,
-          inner4: Number.isFinite(yInner) ? yInner : Number.isFinite(legacyY) ? legacyY : 1,
-          core1: Number.isFinite(yCore) ? yCore : Number.isFinite(legacyY) ? legacyY : 1,
+          outer64: Number.isFinite(yOuter) ? yOuter : Number.isFinite(legacyY) ? legacyY : DEFAULT_LAYER_SCALE_Y.outer64,
+          middle16: Number.isFinite(yMiddle) ? yMiddle : Number.isFinite(legacyY) ? legacyY : DEFAULT_LAYER_SCALE_Y.middle16,
+          inner4: Number.isFinite(yInner) ? yInner : Number.isFinite(legacyY) ? legacyY : DEFAULT_LAYER_SCALE_Y.inner4,
+          core1: Number.isFinite(yCore) ? yCore : Number.isFinite(legacyY) ? legacyY : DEFAULT_LAYER_SCALE_Y.core1,
         },
       };
     } catch {
-      return { x: 1, yByLayer: { outer64: 1, middle16: 1, inner4: 1, core1: 1 } };
+      return { x: 1, yByLayer: { ...DEFAULT_LAYER_SCALE_Y } };
     }
   };
   let canvasScale = loadCanvasScale();
   const loadHidePropertyLabels = (): boolean => {
     try {
-      return window.localStorage.getItem(BUILDER_HIDE_PROP_LABELS_KEY) === "1";
+      const raw = window.localStorage.getItem(BUILDER_HIDE_PROP_LABELS_KEY);
+      if (raw === null) return true;
+      return raw === "1";
     } catch {
-      return false;
+      return true;
     }
   };
   const loadBuilderPageState = (): BuilderPageState => {
