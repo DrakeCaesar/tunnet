@@ -24,6 +24,7 @@
 body {
   margin: 0;
   font-family: "FiraCode Nerd Font", "Fira Code Nerd Font", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: "zero" 1;
   background: var(--bg-main);
   color: var(--text-main);
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
@@ -214,7 +215,6 @@ body {
 .sim-send-rate-value {
   flex-shrink: 0;
   font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--meta-text);
   min-width: 9em;
   text-align: right;
@@ -308,7 +308,6 @@ body {
   width: 100%;
   border-collapse: collapse;
   font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .timings-table th,
@@ -343,7 +342,6 @@ body {
 
 .details {
   white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   background: var(--details-bg);
   border: 1px solid var(--details-border);
@@ -356,12 +354,15 @@ input,
 select,
 textarea {
   font-family: inherit;
+  font-size: inherit;
+  font-feature-settings: inherit;
 }
 
 .builder-view {
   height: 100vh;
   padding: 10px;
   box-sizing: border-box;
+  font-size: 10px;
 }
 
 .builder-layout {
@@ -529,7 +530,6 @@ textarea {
 }
 
 .builder-layout-slot-meta span {
-  font-size: 10px;
   color: #98a4bc;
 }
 
@@ -595,7 +595,6 @@ textarea {
 .builder-sim-meta {
   color: var(--meta-text);
   font-size: 11px;
-  line-height: 1.25;
   margin-top: 6px;
 }
 
@@ -623,21 +622,13 @@ textarea {
   margin: 0;
   white-space: pre;
   overflow: auto;
-  font-size: 10px;
   line-height: 1;
   color: #b9c2d6;
   background: #0f131b;
   border: 1px solid #2a3242;
   border-radius: 8px;
   padding: 8px;
-  font-family:
-    "FiraCode Nerd Font",
-    "Fira Code Nerd Font",
-    "Fira Code",
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  font-family: inherit;
 }
 
 .builder-template {
@@ -820,7 +811,6 @@ textarea {
 }
 
 .builder-packet-label {
-  font-size: 10px;
   line-height: 1;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -955,7 +945,6 @@ textarea {
 }
 
 .builder-segment-label {
-  font-size: 10px;
   color: #7f8aa0;
   text-align: center;
   margin-bottom: 2px;
@@ -985,7 +974,6 @@ textarea {
   border: 1px solid #2a3242;
   border-radius: 4px;
   padding: 4px 2px;
-  font-size: 10px;
   background: #1a2130;
   color: #dbe3f5;
   position: absolute;
@@ -1085,7 +1073,6 @@ textarea {
 }
 
 .builder-endpoint-addr-nib {
-  font-size: 10px;
   color: #c7d0e3;
   line-height: 1;
   text-align: center;
@@ -1147,8 +1134,6 @@ textarea {
   box-sizing: border-box;
   padding: 4px 6px;
   color: #d9e1f3;
-  font-size: 10px;
-  line-height: 1.2;
   white-space: pre-wrap;
   overflow: hidden;
 }
@@ -1162,8 +1147,6 @@ textarea {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 10px;
-  line-height: 1.2;
   resize: none;
   outline: none;
   box-sizing: border-box;
@@ -1454,7 +1437,6 @@ textarea {
 
 .builder-entity-title {
   text-transform: uppercase;
-  font-size: 10px;
   letter-spacing: 0.03em;
   margin-bottom: 2px;
   position: relative;
@@ -1462,7 +1444,6 @@ textarea {
 }
 
 .builder-entity-settings {
-  font-size: 10px;
   line-height: 1;
   color: #b5bfd4;
   margin-bottom: 2px;
@@ -1497,7 +1478,6 @@ textarea {
 }
 
 .builder-row-label {
-  font-size: 10px;
   color: #c7d0e3;
   position: relative;
   top: 1px;
@@ -1555,7 +1535,6 @@ textarea {
   background: #0f131b;
   color: #d9e1f3;
   border-radius: 0;
-  font-size: 10px;
   height: 20px;
   line-height: 1;
   box-sizing: border-box;
@@ -1581,7 +1560,6 @@ textarea {
   border: 1px solid #3a445a;
   background: #0f131b;
   border-radius: 0;
-  font-size: 10px;
   padding: 3px 4px 1px;
   min-height: 20px;
   box-sizing: border-box;
@@ -1607,7 +1585,6 @@ textarea {
   flex: 0 0 auto;
   align-self: center;
   color: #c7d0e3;
-  font-size: 10px;
   line-height: 1;
   padding: 0 2px;
   user-select: none;
@@ -1628,7 +1605,6 @@ textarea {
 }
 
 .builder-mask-cell span {
-  font-size: 10px;
   line-height: 1;
   color: #c7d0e3;
   text-align: center;
@@ -1650,7 +1626,6 @@ textarea {
   border: 0;
   background: #0f131b;
   color: #d9e1f3;
-  font-size: 10px;
   line-height: 1;
   width: 100%;
   height: 16px;
@@ -1682,7 +1657,6 @@ textarea {
   border-radius: 4px;
   background: #0f131b;
   padding: 6px;
-  font-size: 10px;
   line-height: 1;
   white-space: pre-line;
   color: #c7d0e3;
@@ -1702,7 +1676,6 @@ textarea {
   border: 1px solid #4a556d;
   background: #0f131b;
   color: #d9e1f3;
-  font-size: 10px;
   line-height: 1;
   padding: 1px 0 0;
   display: inline-flex;
