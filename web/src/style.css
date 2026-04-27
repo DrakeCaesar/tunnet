@@ -496,6 +496,11 @@ textarea {
   font-size: var(--font-size-12);
 }
 
+.builder-panel-note {
+  font-size: var(--font-size-12);
+  color: #98a4bc;
+}
+
 .builder-layout-slots-block {
   margin-top: 10px;
   display: grid;
@@ -568,6 +573,9 @@ textarea {
   color: var(--text-main);
   border-radius: 6px;
   padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--font-size-11);
   transition:
     background-color 120ms ease,
@@ -587,6 +595,43 @@ textarea {
 }
 
 .builder-layout-slot-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.builder-layout-slot-import {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+}
+
+.builder-layout-slot-import input {
+  min-width: 0;
+  background: #0f131b;
+  border: 1px solid #2a3242;
+  color: #d9e1f3;
+  border-radius: 6px;
+  padding: 4px 6px;
+  height: 34px;
+  box-sizing: border-box;
+  font-size: var(--font-size-11);
+}
+
+.builder-layout-slot-import button {
+  background: #1d2230;
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 4px 10px;
+  height: 34px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-11);
+}
+
+.builder-layout-slot-import button:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -730,7 +775,7 @@ textarea {
   bottom: calc(20px + var(--builder-floating-scrollbar-bottom, 0px));
   z-index: 7;
   display: flex;
-  align-items: stretch;
+  align-items: flex-end;
   gap: var(--builder-hud-gap);
   width: max-content;
   pointer-events: none;
@@ -750,7 +795,7 @@ textarea {
   position: relative;
   width: 380px;
   max-width: 380px;
-  height: 106px;
+  min-height: 136px;
   box-sizing: border-box;
   padding: var(--builder-hud-gap);
   border: 1px solid #2a3242;
@@ -760,6 +805,37 @@ textarea {
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.builder-floating-scale-area {
+  display: grid;
+  grid-template-columns: 380px 480px;
+  gap: var(--builder-hud-gap);
+  align-items: end;
+}
+
+.builder-actions--floating {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.builder-floating-loadouts {
+  width: 480px;
+  max-width: 480px;
+  box-sizing: border-box;
+  padding: var(--builder-hud-gap);
+  border: 1px solid #2a3242;
+  border-radius: 10px;
+  background: rgba(15, 19, 27, 0.92);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  display: grid;
+  gap: var(--builder-hud-gap);
+}
+
+.builder-layout-slots--floating {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .builder-floating-simulation {

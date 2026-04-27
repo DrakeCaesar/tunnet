@@ -75,7 +75,7 @@ const PACKET_DOT_RADIUS_PX = 8;
 const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + 5;
 const PACKET_IP_LABEL_OFFSET_X_PX = -3;
 const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
-const BUILDER_LAYOUT_SLOT_COUNT = 4;
+const BUILDER_LAYOUT_SLOT_COUNT = 5;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
 const DEFAULT_LAYER_SCALE_Y = { outer64: 0.5, middle16: 1.5, inner4: 1.5, core1: 0.5 } as const;
 const BUILDER_PANEL_SECTION_IDS = ["actions", "templates", "simulation", "performance"] as const;
@@ -813,14 +813,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         <section ${panelSectionAttrs("actions")}>
           ${panelToggle("actions", "Actions")}
           <div id="builder-panel-actions-body" class="builder-panel-section-body">
-            <div class="builder-actions">
-              <button id="builder-import" type="button">Import URL</button>
-              <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
-            </div>
-            <div class="builder-layout-slots-block">
-              <div class="builder-layout-slots-title">Loadouts</div>
-              <div id="builder-layout-slots" class="builder-layout-slots"></div>
-            </div>
+            <div class="builder-panel-note">Moved to floating controls.</div>
           </div>
         </section>
         <section ${panelSectionAttrs("performance")}>
@@ -862,33 +855,41 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
             </div>
           </div>
-          <div class="builder-floating-scale" aria-label="Canvas scale controls">
-            <div class="builder-scale-controls">
-              <label class="builder-scale-row" for="builder-scale-x">
-                <span>Horizontal</span>
-                <input id="builder-scale-x" type="range" min="0" max="${CANVAS_SCALE_X_STEPS.length - 1}" step="1" value="${canvasScaleXIndexFromValue(canvasScale.x)}" />
-                <span id="builder-scale-x-value">${formatScaleLabel(canvasScale.x)}</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-outer64">
-                <span>Octet 4</span>
-                <input id="builder-scale-y-outer64" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
-                <span id="builder-scale-y-outer64-value">${formatScaleLabel(canvasScale.yByLayer.outer64)}</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-middle16">
-                <span>Octet 3</span>
-                <input id="builder-scale-y-middle16" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
-                <span id="builder-scale-y-middle16-value">${formatScaleLabel(canvasScale.yByLayer.middle16)}</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-inner4">
-                <span>Octet 2</span>
-                <input id="builder-scale-y-inner4" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
-                <span id="builder-scale-y-inner4-value">${formatScaleLabel(canvasScale.yByLayer.inner4)}</span>
-              </label>
-              <label class="builder-scale-row" for="builder-scale-y-core1">
-                <span>Octet 1</span>
-                <input id="builder-scale-y-core1" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
-                <span id="builder-scale-y-core1-value">${formatScaleLabel(canvasScale.yByLayer.core1)}</span>
-              </label>
+          <div class="builder-floating-scale-area">
+            <div class="builder-floating-scale" aria-label="Canvas scale controls">
+              <div class="builder-scale-controls">
+                <label class="builder-scale-row" for="builder-scale-x">
+                  <span>Horizontal</span>
+                  <input id="builder-scale-x" type="range" min="0" max="${CANVAS_SCALE_X_STEPS.length - 1}" step="1" value="${canvasScaleXIndexFromValue(canvasScale.x)}" />
+                  <span id="builder-scale-x-value">${formatScaleLabel(canvasScale.x)}</span>
+                </label>
+                <label class="builder-scale-row" for="builder-scale-y-outer64">
+                  <span>Octet 4</span>
+                  <input id="builder-scale-y-outer64" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.outer64.toFixed(2)}" />
+                  <span id="builder-scale-y-outer64-value">${formatScaleLabel(canvasScale.yByLayer.outer64)}</span>
+                </label>
+                <label class="builder-scale-row" for="builder-scale-y-middle16">
+                  <span>Octet 3</span>
+                  <input id="builder-scale-y-middle16" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.middle16.toFixed(2)}" />
+                  <span id="builder-scale-y-middle16-value">${formatScaleLabel(canvasScale.yByLayer.middle16)}</span>
+                </label>
+                <label class="builder-scale-row" for="builder-scale-y-inner4">
+                  <span>Octet 2</span>
+                  <input id="builder-scale-y-inner4" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.inner4.toFixed(2)}" />
+                  <span id="builder-scale-y-inner4-value">${formatScaleLabel(canvasScale.yByLayer.inner4)}</span>
+                </label>
+                <label class="builder-scale-row" for="builder-scale-y-core1">
+                  <span>Octet 1</span>
+                  <input id="builder-scale-y-core1" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
+                  <span id="builder-scale-y-core1-value">${formatScaleLabel(canvasScale.yByLayer.core1)}</span>
+                </label>
+                <div class="builder-actions builder-actions--floating">
+                  <button id="builder-toggle-prop-labels" type="button">Hide property labels</button>
+                </div>
+              </div>
+            </div>
+            <div class="builder-floating-loadouts">
+              <div id="builder-layout-slots" class="builder-layout-slots builder-layout-slots--floating"></div>
             </div>
           </div>
         </div>
@@ -916,7 +917,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const scaleYInnerValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-inner4-value")!;
   const scaleYCoreValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-core1-value")!;
   const togglePropLabelsBtn = root.querySelector<HTMLButtonElement>("#builder-toggle-prop-labels")!;
-  const importBtn = root.querySelector<HTMLButtonElement>("#builder-import")!;
   const layoutSlotsEl = root.querySelector<HTMLDivElement>("#builder-layout-slots")!;
   const simPlayPauseBtn = root.querySelector<HTMLButtonElement>("#builder-sim-play-pause")!;
   const simStepBtn = root.querySelector<HTMLButtonElement>("#builder-sim-step")!;
@@ -944,6 +944,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let urlEmbeddedLayoutToken: string | null = null;
   let pendingClearLayoutSlotIndex: number | null = null;
   let pendingSaveCopyLayoutSlotIndex: number | null = null;
+  let layoutImportText = "";
   let activeLayoutTarget: { kind: "slot"; index: number } | { kind: "url" } = {
     kind: "slot",
     index: builderPageState.activeLayoutSlotIndex,
@@ -1003,6 +1004,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function renderLayoutSlots(): void {
     const byIndex = new Map(listBuilderLayoutSlots().map((slot) => [slot.index, slot]));
+    const escapedImportText = layoutImportText
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
     let html = "";
     for (let i = 1; i <= BUILDER_LAYOUT_SLOT_COUNT; i += 1) {
       const slot = byIndex.get(i);
@@ -1013,11 +1019,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       html += `
         <div class="builder-layout-slot ${active ? "builder-layout-slot--active" : ""}">
           <div class="builder-layout-slot-meta">
-            <strong>Slot ${i}</strong>
+            <strong>Layout ${i}</strong>
             <span>${subtitle}</span>
           </div>
           <div class="builder-layout-slot-actions">
-            <button type="button" data-layout-slot-action="select" data-layout-slot="${i}" ${active ? "disabled" : ""}>${active ? "Active" : "Select"}</button>
+            <button type="button" data-layout-slot-action="select" data-layout-slot="${i}" ${active ? "disabled" : ""}>${active ? "Active" : "Load"}</button>
             <button type="button" data-layout-slot-action="save-copy" data-layout-slot="${i}" ${active ? "disabled" : ""}>${saveCopyArmed ? "Confirm" : "Save copy"}</button>
             <button type="button" data-layout-slot-action="clear" data-layout-slot="${i}" ${slot ? "" : "disabled"}>${clearArmed ? "Confirm" : "Clear"}</button>
             <button type="button" data-layout-slot-action="url" data-layout-slot="${i}" ${slot ? "" : "disabled"}>Copy URL</button>
@@ -1035,6 +1041,29 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             <button type="button" data-layout-slot-action="load-url" ${activeLayoutTarget.kind === "url" ? "disabled" : ""}>${activeLayoutTarget.kind === "url" ? "Active" : "Select"}</button>
             <button type="button" data-layout-slot-action="clear-url">Clear</button>
             <button type="button" data-layout-slot-action="url-url">Copy URL</button>
+          </div>
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="builder-layout-slot builder-layout-slot--import">
+          <div class="builder-layout-slot-meta">
+            <strong>Import URL/token</strong>
+          </div>
+          <div class="builder-layout-slot-import">
+            <button
+              type="button"
+              data-layout-slot-action="import-load"
+              ${layoutImportText.trim().length ? "" : "disabled"}
+            >
+              Load
+            </button>
+            <input
+              type="text"
+              value="${escapedImportText}"
+              data-layout-slot-import-input
+              placeholder="Paste URL or token"
+            />
           </div>
         </div>
       `;
@@ -5033,28 +5062,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     persistHidePropertyLabels();
   });
 
-  importBtn.addEventListener("click", async () => {
-    const text = window.prompt("Paste loadout URL or layout token:");
-    if (!text) return;
-    const token = layoutTokenFromInput(text);
-    if (!token) {
-      alert("Invalid layout URL/token.");
-      return;
+  layoutSlotsEl.addEventListener("input", (ev) => {
+    const input = (ev.target as HTMLElement | null)?.closest<HTMLInputElement>("[data-layout-slot-import-input]");
+    if (!input) return;
+    layoutImportText = input.value;
+    const btn = layoutSlotsEl.querySelector<HTMLButtonElement>('[data-layout-slot-action="import-load"]');
+    if (btn) {
+      btn.disabled = layoutImportText.trim().length === 0;
     }
-    const parsed = await importBuilderStateUrlToken(token);
-    if (!parsed) {
-      alert("Invalid layout URL/token.");
-      return;
-    }
-    const nextUrl = new URL(window.location.href);
-    nextUrl.searchParams.set("layout", token);
-    window.history.replaceState(null, "", nextUrl.toString());
-    urlEmbeddedLayoutState = parsed;
-    urlEmbeddedLayoutToken = token;
-    pendingClearLayoutSlotIndex = null;
-    pendingSaveCopyLayoutSlotIndex = null;
-    activeLayoutTarget = { kind: "url" };
-    applyLoadedBuilderState(parsed, false);
   });
 
   layoutSlotsEl.addEventListener("click", async (ev) => {
@@ -5063,6 +5078,28 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const action = btn.dataset.layoutSlotAction ?? "";
     const slotRaw = btn.dataset.layoutSlot;
     const slotIndex = Number(slotRaw);
+    if (action === "import-load") {
+      const token = layoutTokenFromInput(layoutImportText);
+      if (!token) {
+        alert("Invalid layout URL/token.");
+        return;
+      }
+      const parsed = await importBuilderStateUrlToken(token);
+      if (!parsed) {
+        alert("Invalid layout URL/token.");
+        return;
+      }
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("layout", token);
+      window.history.replaceState(null, "", nextUrl.toString());
+      urlEmbeddedLayoutState = parsed;
+      urlEmbeddedLayoutToken = token;
+      pendingClearLayoutSlotIndex = null;
+      pendingSaveCopyLayoutSlotIndex = null;
+      activeLayoutTarget = { kind: "url" };
+      applyLoadedBuilderState(parsed, false);
+      return;
+    }
     if (action === "load-url") {
       pendingClearLayoutSlotIndex = null;
       pendingSaveCopyLayoutSlotIndex = null;
