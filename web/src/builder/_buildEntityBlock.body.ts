@@ -17,7 +17,7 @@
       (entity.settings.action ?? "send_back") === "drop" ? "Drop" : "Send back";
     const displayCollision =
       (() => {
-        const value = entity.settings.collisionHandling ?? "send_back_outbound";
+        const value = entity.settings.collisionHandling ?? "drop_inbound";
         if (value === "drop_inbound") return "Drop<br/>Inbound";
         if (value === "drop_outbound") return "Drop<br/>Outbound";
         return "Send back<br/>Outbound";

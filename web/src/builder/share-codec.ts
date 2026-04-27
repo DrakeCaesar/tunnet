@@ -49,7 +49,7 @@ function applyImplicitDefaults(out: BuilderState): BuilderState {
           operation: "differ",
           mask: "*.*.*.*",
           action: "send_back",
-          collisionHandling: "send_back_outbound",
+        collisionHandling: "drop_inbound",
           ...e.settings,
         },
       };
@@ -98,14 +98,14 @@ export function encodeBuilderShareState(state: BuilderState): unknown {
       const op = pushDict(strDict, strings, e.settings.operation ?? "differ");
       const mask = pushDict(strDict, strings, e.settings.mask ?? "*.*.*.*");
       const action = pushDict(strDict, strings, e.settings.action ?? "send_back");
-      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "send_back_outbound");
+      const coll = pushDict(strDict, strings, e.settings.collisionHandling ?? "drop_inbound");
       const payload = [opPort, af, op, mask, action, coll];
       const afText = strings[af] ?? "destination";
       const opText = strings[op] ?? "differ";
       const maskText = strings[mask] ?? "*.*.*.*";
       const actionText = strings[action] ?? "send_back";
-      const collText = strings[coll] ?? "send_back_outbound";
-      if (!(opPort === 0 && afText === "destination" && opText === "differ" && maskText === "*.*.*.*" && actionText === "send_back" && collText === "send_back_outbound")) {
+      const collText = strings[coll] ?? "drop_inbound";
+      if (!(opPort === 0 && afText === "destination" && opText === "differ" && maskText === "*.*.*.*" && actionText === "send_back" && collText === "drop_inbound")) {
         row.push(payload);
       }
     }
@@ -174,7 +174,7 @@ export function decodeBuilderShareState(payload: unknown): BuilderState | null {
         const actionIdx = settingsPayload[4];
         settings.action = typeof actionIdx === "number" ? (strings[actionIdx] ?? "send_back") : "send_back";
         const collIdx = settingsPayload[5];
-        settings.collisionHandling = typeof collIdx === "number" ? (strings[collIdx] ?? "send_back_outbound") : "send_back_outbound";
+        settings.collisionHandling = typeof collIdx === "number" ? (strings[collIdx] ?? "drop_inbound") : "drop_inbound";
       }
     }
     return {

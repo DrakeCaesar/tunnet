@@ -812,7 +812,7 @@ export function defaultSettings(type: BuilderTemplateType): Record<string, strin
       operation: "differ",
       mask: "*.*.*.*",
       action: "send_back",
-      collisionHandling: "send_back_outbound",
+      collisionHandling: "drop_inbound",
     };
   }
   if (type === "hub") {

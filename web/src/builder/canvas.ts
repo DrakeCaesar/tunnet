@@ -456,7 +456,7 @@ function buildTemplateDragImage(templateType: BuilderTemplateType): HTMLDivEleme
       (settings.action ?? "send_back") === "drop" ? "Drop" : "Send back";
     const displayCollision =
       (() => {
-        const value = settings.collisionHandling ?? "send_back_outbound";
+        const value = settings.collisionHandling ?? "drop_inbound";
         if (value === "drop_inbound") return "Drop<br/>Inbound";
         if (value === "drop_outbound") return "Drop<br/>Outbound";
         return "Send back<br/>Outbound";
@@ -585,7 +585,7 @@ function buildFilterDescription(settings: Record<string, string>): string {
   const collisionHandling =
     settings.collisionHandling === "drop_inbound" || settings.collisionHandling === "drop_outbound"
       ? settings.collisionHandling
-      : "send_back_outbound";
+      : "drop_inbound";
   const mask = settings.mask ?? "*.*.*.*";
 
   const fieldText = addressField === "destination" ? `addressed to ${mask}` : `emitted by ${mask}`;
@@ -3375,7 +3375,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (key === "operation") return (settings.operation ?? "differ") === "match" ? "Match" : "Differ";
     if (key === "action") return (settings.action ?? "send_back") === "drop" ? "Drop" : "Send back";
     if (key === "collisionHandling") {
-      const value = settings.collisionHandling ?? "send_back_outbound";
+      const value = settings.collisionHandling ?? "drop_inbound";
       if (value === "drop_inbound") return "Drop<br/>Inbound";
       if (value === "drop_outbound") return "Drop<br/>Outbound";
       return "Send back<br/>Outbound";
@@ -3412,8 +3412,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (key === "action") next = cycleValue(current || "send_back", ["send_back", "drop"], direction);
     if (key === "collisionHandling") {
       next = cycleValue(
-        current || "send_back_outbound",
-        ["send_back_outbound", "drop_inbound", "drop_outbound"],
+        current || "drop_inbound",
+        ["drop_inbound", "drop_outbound", "send_back_outbound"],
         direction,
       );
     }
@@ -4525,7 +4525,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                               (entity.settings.action ?? "send_back") === "drop" ? "Drop" : "Send back";
                             const displayCollision =
                               (() => {
-                                const value = entity.settings.collisionHandling ?? "send_back_outbound";
+                                const value = entity.settings.collisionHandling ?? "drop_inbound";
                                 if (value === "drop_inbound") return "Drop<br/>Inbound";
                                 if (value === "drop_outbound") return "Drop<br/>Outbound";
                                 return "Send back<br/>Outbound";

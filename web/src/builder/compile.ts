@@ -111,7 +111,7 @@ function makeDevice(entity: BuilderEntityInstance): (DeviceBase & Record<string,
         entity.settings.collisionHandling === "drop_inbound" ||
         entity.settings.collisionHandling === "drop_outbound"
           ? entity.settings.collisionHandling
-          : "send_back_outbound",
+          : "drop_inbound",
     };
   }
   return {
