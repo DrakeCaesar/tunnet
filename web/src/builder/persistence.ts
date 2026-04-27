@@ -9,6 +9,7 @@ const STORAGE_KEY = "tunnet.builder.v1";
 const EXPORT_GZIP_BASE64_PREFIX = "tunnet-simulator-gz64:";
 const LAYOUT_SLOT_COUNT = 5;
 const LAYOUT_SLOT_KEY_PREFIX = "tunnet.builder.layoutSlot.";
+const URL_LAYOUT_SLOT_KEY = "tunnet.builder.layoutSlot.url";
 
 function isBuilderStateLike(value: unknown): value is BuilderState {
   if (!value || typeof value !== "object") return false;
@@ -44,6 +45,12 @@ function stateForPersistence(state: BuilderState): BuilderState {
 
 export interface BuilderLayoutSlotRecord {
   index: number;
+  updatedAtMs: number;
+  state: BuilderState;
+}
+
+export interface BuilderUrlLayoutSlotRecord {
+  token: string;
   updatedAtMs: number;
   state: BuilderState;
 }
@@ -260,4 +267,37 @@ export function listBuilderLayoutSlots(): BuilderLayoutSlotRecord[] {
     if (slot) out.push(slot);
   }
   return out;
+}
+
+export function saveBuilderUrlLayoutSlot(token: string, state: BuilderState): boolean {
+  const trimmedToken = token.trim();
+  if (!trimmedToken) return false;
+  const record: BuilderUrlLayoutSlotRecord = {
+    token: trimmedToken,
+    updatedAtMs: Date.now(),
+    state: stateForPersistence(state),
+  };
+  window.localStorage.setItem(URL_LAYOUT_SLOT_KEY, JSON.stringify(record));
+  return true;
+}
+
+export function clearBuilderUrlLayoutSlot(): void {
+  window.localStorage.removeItem(URL_LAYOUT_SLOT_KEY);
+}
+
+export function loadBuilderUrlLayoutSlot(): BuilderUrlLayoutSlotRecord | null {
+  try {
+    const raw = window.localStorage.getItem(URL_LAYOUT_SLOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<BuilderUrlLayoutSlotRecord> & { state?: unknown };
+    if (!Number.isFinite(parsed.updatedAtMs) || typeof parsed.token !== "string" || !parsed.token.trim()) return null;
+    if (!isBuilderStateLike(parsed.state)) return null;
+    return {
+      token: parsed.token.trim(),
+      updatedAtMs: Math.floor(parsed.updatedAtMs),
+      state: parsed.state,
+    };
+  } catch {
+    return null;
+  }
 }

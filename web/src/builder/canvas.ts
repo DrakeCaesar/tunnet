@@ -36,13 +36,16 @@ import {
 } from "./clone-engine";
 import {
   clearBuilderLayoutSlot,
+  clearBuilderUrlLayoutSlot,
   exportBuilderStateUrlToken,
   importBuilderStateUrlToken,
   listBuilderLayoutSlots,
   loadBuilderState,
   loadBuilderLayoutSlot,
+  loadBuilderUrlLayoutSlot,
   saveBuilderLayoutSlot,
   saveBuilderState,
+  saveBuilderUrlLayoutSlot,
 } from "./persistence";
 import { compileBuilderPayload } from "./compile";
 import type { Device, Packet, PortRef, SimulationStats, SimulatorRuntimeState, Topology } from "../simulation";
@@ -112,6 +115,7 @@ type BuilderPageState = {
   showPacketIps: boolean;
   simSpeedExponent: number;
   activeLayoutSlotIndex: number;
+  activeLayoutKind: "slot" | "url";
 };
 
 /** Equilateral triangle: apex up, base horizontal; `r` matches half of global `.builder-port` (17px). */
@@ -720,6 +724,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           showPacketIps: true,
           simSpeedExponent: SPEED_EXP_DEFAULT,
           activeLayoutSlotIndex: 1,
+          activeLayoutKind: "slot",
         };
       }
       const parsed = JSON.parse(raw) as Partial<BuilderPageState>;
@@ -733,6 +738,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         showPacketIps: parsed.showPacketIps !== false,
         simSpeedExponent: clampSimSpeedExponent(parsed.simSpeedExponent),
         activeLayoutSlotIndex: clampLayoutSlotIndex(parsed.activeLayoutSlotIndex),
+        activeLayoutKind: parsed.activeLayoutKind === "url" ? "url" : "slot",
       };
     } catch {
       return {
@@ -740,6 +746,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         showPacketIps: true,
         simSpeedExponent: SPEED_EXP_DEFAULT,
         activeLayoutSlotIndex: 1,
+        activeLayoutKind: "slot",
       };
     }
   };
@@ -768,19 +775,31 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
   };
   let builderPageState = loadBuilderPageState();
+  const persistedUrlLayout = loadBuilderUrlLayoutSlot();
+  const startupUrlToken = new URLSearchParams(window.location.search).get("layout");
   builderPageState.activeLayoutSlotIndex = Math.max(
     1,
     Math.min(BUILDER_LAYOUT_SLOT_COUNT, Math.round(builderPageState.activeLayoutSlotIndex || 1)),
   );
   {
-    const activeSlot = loadBuilderLayoutSlot(builderPageState.activeLayoutSlotIndex);
-    if (activeSlot) {
-      const rebuilt = rebuildStateWithOuterLeafEndpoints(activeSlot.state);
+    const usePersistedUrlLayout =
+      builderPageState.activeLayoutKind === "url" &&
+      persistedUrlLayout &&
+      !startupUrlToken;
+    const initialState = usePersistedUrlLayout
+      ? persistedUrlLayout.state
+      : (loadBuilderLayoutSlot(builderPageState.activeLayoutSlotIndex)?.state ?? null);
+    if (initialState) {
+      const rebuilt = rebuildStateWithOuterLeafEndpoints(initialState);
       const sanitized = sanitizeDuplicateTypePlacements(rebuilt);
       const compacted = compactBuilderIds(sanitized.state);
       state = compacted.state;
       if (sanitized.changed || compacted.changed) {
-        saveBuilderLayoutSlot(builderPageState.activeLayoutSlotIndex, state);
+        if (usePersistedUrlLayout && persistedUrlLayout) {
+          saveBuilderUrlLayoutSlot(persistedUrlLayout.token, state);
+        } else {
+          saveBuilderLayoutSlot(builderPageState.activeLayoutSlotIndex, state);
+        }
       }
     } else {
       // If the selected loadout slot is empty, start from an empty layout for that slot.
@@ -933,14 +952,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let perfCounts = { expandedEntities: 0, stateLinks: 0, expandedLinks: 0, packetsInFlight: 0 };
   let nextPerfPanelAtMs = 0;
   const hideEntityPropertyLabels = true;
-  let urlEmbeddedLayoutState: BuilderState | null = null;
-  let urlEmbeddedLayoutToken: string | null = null;
+  let urlEmbeddedLayoutState: BuilderState | null = persistedUrlLayout?.state ?? null;
+  let urlEmbeddedLayoutToken: string | null = persistedUrlLayout?.token ?? null;
   let pendingClearLayoutSlotIndex: number | null = null;
   let pendingSaveCopyLayoutSlotIndex: number | null = null;
   let layoutImportText = "";
   let activeLayoutTarget: { kind: "slot"; index: number } | { kind: "url" } = {
-    kind: "slot",
-    index: builderPageState.activeLayoutSlotIndex,
+    ...(builderPageState.activeLayoutKind === "url" && persistedUrlLayout && !startupUrlToken
+      ? { kind: "url" as const }
+      : { kind: "slot" as const, index: builderPageState.activeLayoutSlotIndex }),
   };
   let filterTooltipTimer: number | null = null;
   let filterTooltipRootId: string | null = null;
@@ -1443,7 +1463,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (activeLayoutTarget.kind === "slot") {
       saveBuilderLayoutSlot(activeLayoutTarget.index, state);
     } else {
-      saveBuilderState(state);
+      const token = urlEmbeddedLayoutToken?.trim() ?? "";
+      if (token) {
+        saveBuilderUrlLayoutSlot(token, state);
+        urlEmbeddedLayoutState = state;
+      } else {
+        saveBuilderState(state);
+      }
     }    
     renderLayoutSlots();
     requestBuilderSimulatorRefresh();
@@ -5071,11 +5097,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         alert("Invalid layout URL/token.");
         return;
       }
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set("layout", token);
-      window.history.replaceState(null, "", nextUrl.toString());
       urlEmbeddedLayoutState = parsed;
       urlEmbeddedLayoutToken = token;
+      saveBuilderUrlLayoutSlot(token, parsed);
+      builderPageState.activeLayoutKind = "url";
+      persistBuilderPageState();
       pendingClearLayoutSlotIndex = null;
       pendingSaveCopyLayoutSlotIndex = null;
       activeLayoutTarget = { kind: "url" };
@@ -5086,6 +5112,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       pendingClearLayoutSlotIndex = null;
       pendingSaveCopyLayoutSlotIndex = null;
       if (!urlEmbeddedLayoutState) return;
+      builderPageState.activeLayoutKind = "url";
+      persistBuilderPageState();
       activeLayoutTarget = { kind: "url" };
       applyLoadedBuilderState(urlEmbeddedLayoutState, false);
       return;
@@ -5102,11 +5130,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       pendingSaveCopyLayoutSlotIndex = null;
       urlEmbeddedLayoutState = null;
       urlEmbeddedLayoutToken = null;
+      clearBuilderUrlLayoutSlot();
       const nextUrl = new URL(window.location.href);
       nextUrl.searchParams.delete("layout");
       window.history.replaceState(null, "", nextUrl.toString());
       if (activeLayoutTarget.kind === "url") {
         const fallbackSlotIndex = Math.max(1, Math.min(BUILDER_LAYOUT_SLOT_COUNT, builderPageState.activeLayoutSlotIndex));
+        builderPageState.activeLayoutKind = "slot";
+        persistBuilderPageState();
         activeLayoutTarget = { kind: "slot", index: fallbackSlotIndex };
         const fallbackSlot = loadBuilderLayoutSlot(fallbackSlotIndex);
         if (fallbackSlot) {
@@ -5144,6 +5175,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       pendingSaveCopyLayoutSlotIndex = null;
       activeLayoutTarget = { kind: "slot", index: slotIndex };
       builderPageState.activeLayoutSlotIndex = slotIndex;
+      builderPageState.activeLayoutKind = "slot";
       persistBuilderPageState();
       const slot = loadBuilderLayoutSlot(slotIndex);
       if (slot) {
@@ -5629,14 +5661,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   renderTemplates();
   renderLayoutSlots();
-  const urlToken = new URLSearchParams(window.location.search).get("layout");
+  const urlToken = startupUrlToken;
   if (urlToken) {
     importBuilderStateUrlToken(urlToken).then((parsed) => {
       if (!parsed) return;
       urlEmbeddedLayoutState = parsed;
       urlEmbeddedLayoutToken = urlToken;
+      saveBuilderUrlLayoutSlot(urlToken, parsed);
+      builderPageState.activeLayoutKind = "url";
+      persistBuilderPageState();
       activeLayoutTarget = { kind: "url" };
       applyLoadedBuilderState(parsed, false);
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete("layout");
+      window.history.replaceState(null, "", nextUrl.toString());
     });
   }
   syncBuilderSimSliderLabels();
