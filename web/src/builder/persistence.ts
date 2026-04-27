@@ -7,7 +7,7 @@ import brotliDecoderWasmUrl from "brotli-ts/wasm/decoder?url";
 
 const STORAGE_KEY = "tunnet.builder.v1";
 const EXPORT_GZIP_BASE64_PREFIX = "tunnet-simulator-gz64:";
-const LAYOUT_SLOT_COUNT = 4;
+const LAYOUT_SLOT_COUNT = 5;
 const LAYOUT_SLOT_KEY_PREFIX = "tunnet.builder.layoutSlot.";
 
 function isBuilderStateLike(value: unknown): value is BuilderState {
