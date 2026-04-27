@@ -1099,6 +1099,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function syncBuilderControlPanelPlacement(): void {
     const sidebarCollapsed = builderSidebarWidth === BUILDER_SIDEBAR_COLLAPSED_WIDTH_PX;
     builderLayoutEl.classList.toggle("builder-controls-in-sidebar", !sidebarCollapsed);
+    if (!builderDevPerfVisible) {
+      panelPerformanceEl.remove();
+    }
     if (sidebarCollapsed) {
       controlsFloatingHostEl.append(panelTemplatesEl, panelSimulationEl, panelScaleEl, panelLayoutsEl);
       if (builderDevPerfVisible) {
