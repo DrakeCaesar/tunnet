@@ -103,8 +103,9 @@ const HUB_VIEW = { w: 108 * HUB_SCALE, h: 96 * HUB_SCALE } as const;
 const HUB_PORT_RADIUS = 8.5 * HUB_SCALE;
 const HUB_TOP_PADDING = 18 * HUB_SCALE;
 const HUB_ROTATE_OUTER_BAND_PX = 8 * HUB_SCALE;
-const HUB_REVERSE_BUTTON_SIZE = 16 * HUB_SCALE;
-const HUB_REVERSE_ICON_SIZE = 13 * HUB_SCALE;
+// Keep center reverse button visually aligned with `.builder-port` (17px).
+const HUB_REVERSE_BUTTON_SIZE = 17;
+const HUB_REVERSE_ICON_SIZE = 11;
 
 type HubVec = { x: number; y: number };
 
@@ -647,6 +648,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let selectedEntityRootIds = new Set<string>();
   let boxSelection: BoxSelectionState = null;
   let suppressNextEntityClickToggle = false;
+  let suppressNextControlClick = false;
   let suppressNextPacketClick = false;
   let suppressBoxSelectionUntilMouseUp = false;
   const WIRE_PORT_DROP_ZONE_PX = 5;
@@ -4053,7 +4055,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   const startEntityDragFromElement = (entityEl: HTMLElement, ev: MouseEvent): void => {
     const target = ev.target as HTMLElement;
-    if (target.closest("button")) return;
+    const btn = target.closest<HTMLButtonElement>("button");
+    if (btn) {
+      const isControl = btn.matches(".builder-hub-reverse,.builder-cycle-btn[data-setting-cycle],.builder-mask-arrow");
+      // Never start entity drag from ports; ports are reserved for link dragging.
+      if (!isControl || btn.classList.contains("builder-port")) return;
+    }
     const rootId = entityEl.dataset.rootId!;
     const rootEnt = state.entities.find((e) => e.id === rootId);
     const seg = entityEl.closest<HTMLElement>(".builder-segment");
@@ -5527,6 +5534,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
     if (target.closest(".builder-note-editor")) return;
+    if (suppressNextControlClick) {
+      suppressNextControlClick = false;
+      // If a drag started from a control button, swallow the trailing click that would otherwise activate it.
+      if (target.closest(".builder-hub-reverse,.builder-cycle-btn[data-setting-cycle],.builder-mask-arrow")) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
 
     const portEl = target.closest<HTMLButtonElement>(".builder-port");
     if (portEl) {
@@ -5666,7 +5682,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (!target) return;
     if (ev.button !== 0) return;
     if (target.closest(".builder-note-editor")) return;
-    if (target.closest("button")) return;
+    const downBtn = target.closest<HTMLButtonElement>("button");
+    const downBtnIsControl =
+      !!downBtn &&
+      downBtn.matches(".builder-hub-reverse,.builder-cycle-btn[data-setting-cycle],.builder-mask-arrow");
+    if (downBtn && !downBtnIsControl) return;
+    // Never start entity drag from ports; ports are reserved for link dragging.
+    if (downBtn?.classList.contains("builder-port")) return;
     const entityEl = target.closest<HTMLElement>(".builder-entity");
     if (!entityEl) return;
     const rootId = entityEl.dataset.rootId;
@@ -5689,6 +5711,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       window.removeEventListener("mouseup", onUp);
       // Drag start should not also toggle click-selection on release.
       suppressNextEntityClickToggle = true;
+      // If the drag began on a control button, suppress its trailing click.
+      suppressNextControlClick = downBtnIsControl;
       ev.stopImmediatePropagation();
       startEntityDragFromElement(entityEl, mv);
     };

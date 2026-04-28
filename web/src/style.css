@@ -1336,6 +1336,9 @@ textarea {
 .builder-dragging-grab .builder-entity,
 .builder-dragging-grab .builder-entity--hub,
 .builder-dragging-grab .builder-port,
+.builder-dragging-grab .builder-hub-reverse,
+.builder-dragging-grab .builder-cycle-btn,
+.builder-dragging-grab .builder-mask-arrow,
 .builder-dragging-grab .builder-hub--hover-move,
 .builder-dragging-grab .builder-hub--hover-rotate,
 .builder-dragging-grab .builder-entity--hub.builder-hub--hover-move,
@@ -1349,6 +1352,7 @@ textarea {
   transform: none !important;
   z-index: 2;
   padding-bottom: 2px;
+  cursor: default;
 }
 
 .builder-entity--filter.builder-entity--outer-endpoint {
@@ -1682,10 +1686,10 @@ textarea {
   width: var(--hub-reverse-size, 24px);
   height: var(--hub-reverse-size, 24px);
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(15, 19, 27, 0.92);
-  color: rgba(255, 255, 255, 0.75);
-  font-size: var(--font-size-0);
+  border: 1px solid #4a556d;
+  background: #0f131b;
+  color: #d9e1f3;
+  font-size: inherit;
   line-height: 1;
   padding: 0;
   cursor: pointer;
@@ -1696,15 +1700,13 @@ textarea {
 }
 
 .builder-hub-reverse-icon {
-  font-size: var(--font-size-13);
+  font-size: var(--hub-reverse-icon-size, 11px);
   line-height: 1;
   display: block;
 }
 
 .builder-hub-reverse:hover {
-  border-color: rgba(255, 255, 255, 0.35);
-  color: #fff;
-  background: rgba(20, 26, 40, 0.95);
+  border-color: #6a7896;
 }
 
 .builder-entity.shadow {
@@ -1842,6 +1844,7 @@ textarea {
   border: 1px solid #3a445a;
   background: #0f131b;
   color: #d9e1f3;
+  cursor: pointer;
   border-radius: 0;
   height: 20px;
   line-height: 1;
@@ -2027,6 +2030,7 @@ textarea {
   background: #0f131b;
   color: #d9e1f3;
   line-height: 1;
+  cursor: pointer;
 
   display: inline-flex;
   align-items: center;
