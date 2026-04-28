@@ -5944,7 +5944,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const newDurationMs = Math.max(1, 1000 / Math.max(simSpeed, 0.1));
       simTickAnimStartMs = now - progress * newDurationMs;
       simTickAnimDurationMs = newDurationMs;
-      simNextTickDeadlineMs = simTickAnimStartMs + newDurationMs;
+      // `simNextTickDeadlineMs` tracks the deadline for the *next* tick animation,
+      // not the currently running one. Keep it one full interval after current end.
+      simNextTickDeadlineMs = simTickAnimStartMs + newDurationMs * 2;
       if (simTickTimeoutHandle !== null) {
         window.clearTimeout(simTickTimeoutHandle);
       }
