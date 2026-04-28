@@ -851,10 +851,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           </div>
           <div id="builder-panel-simulation" class="builder-floating-simulation" aria-label="Simulation controls">
             <div class="builder-sim-toolbar">
-              <button id="builder-sim-play-pause" type="button">Play</button>
-              <button id="builder-sim-back" type="button" disabled>Back</button>
-              <button id="builder-sim-step" type="button">Step</button>
-              <button id="builder-sim-reset" type="button">Reset</button>
+              <button id="builder-sim-play-pause" type="button" aria-label="Play/Pause" title="Play/Pause">▶</button>
+              <button id="builder-sim-reset" type="button" aria-label="Stop" title="Stop">⏹</button>
+              <button id="builder-sim-step" type="button" aria-label="Step forward" title="Step forward">
+                <span class="builder-sim-skip builder-sim-skip--forward" aria-hidden="true">
+                  <span class="builder-sim-skip-tri">▶</span><span class="builder-sim-skip-bar">⏹</span>
+                </span>
+              </button>
+              <button id="builder-sim-back" type="button" aria-label="Step back" title="Step back" disabled>
+                <span class="builder-sim-skip builder-sim-skip--back" aria-hidden="true">
+                  <span class="builder-sim-skip-bar">⏹</span><span class="builder-sim-skip-tri">◀</span>
+                </span>
+              </button>
               <button id="builder-sim-toggle-packet-ips" type="button">${builderPageState.showPacketIps ? "Hide IPs" : "Show IPs"}</button>
             </div>
             <label class="builder-scale-row builder-sim-speed-row" for="builder-sim-speed">
@@ -1893,7 +1901,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     cancelBuilderSimTickTimers();
     simNextTickDeadlineMs = null;
     simPlaying = false;
-    simPlayPauseBtn.textContent = "Play";
+    simPlayPauseBtn.textContent = "▶";
     simAnimating = false;
     const payload = compileBuilderPayload(state);
     const topo = payload.topology as unknown as Topology;
@@ -2095,7 +2103,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   function setBuilderSimPlaying(enabled: boolean): void {
     const wasPlaying = simPlaying;
     simPlaying = enabled;
-    simPlayPauseBtn.textContent = simPlaying ? "Pause" : "Play";
+    simPlayPauseBtn.textContent = simPlaying ? "❚❚" : "▶";
     if (simPlaying && !wasPlaying) {
       simEmaAchievedSpeed = null;
       simAchievedStartMs = null;
@@ -5843,7 +5851,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   simStepBtn.addEventListener("click", () => {
     if (simPlaying) {
       simPlaying = false;
-      simPlayPauseBtn.textContent = "Play";
+      simPlayPauseBtn.textContent = "▶";
       updateBuilderSimMeta();
       return;
     }
