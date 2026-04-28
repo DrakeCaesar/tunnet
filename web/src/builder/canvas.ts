@@ -1628,7 +1628,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   applyBuilderSidebarWidth(builderSidebarWidth);
 
   function updateSimBackButtonState(): void {
-    simBackBtn.disabled = simHistory.length === 0 || simAnimating;
+    simBackBtn.disabled = simHistory.length === 0;
+    // Stop is only meaningful once we've advanced at least one tick or while running/animating.
+    const canStop = (simStats.tick ?? 0) > 0 || simPlaying || simAnimating;
+    simResetBtn.disabled = !canStop;
   }
 
   function clearSimHistory(): void {
@@ -1944,6 +1947,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       ttlExpired: 0,
       collisions: 0,
     };
+    updateSimBackButtonState();
     simPreviousStatsTotals = { ...simStats };
     simDeliveredPerTick = null;
     simDeliveredPerTickAvg100 = null;
