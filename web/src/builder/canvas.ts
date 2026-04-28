@@ -1528,6 +1528,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simAnimHandle: number | null = null;
   let simTickTimeoutHandle: number | null = null;
   let simNextTickDeadlineMs: number | null = null;
+  let simTickAnimStartMs: number | null = null;
+  let simTickAnimDurationMs: number | null = null;
+  let simAnimFinishFn: (() => void) | null = null;
   let simSpeedExponent = Number(simSpeedEl.value);
   if (!Number.isFinite(simSpeedExponent)) {
     simSpeedExponent = SPEED_EXP_DEFAULT;
@@ -1668,6 +1671,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     invalidateBuilderPacketRenderCache();
     const animStart = performance.now();
     const durationMs = Math.max(60, 1000 / Math.max(simSpeed, 0.1));
+    simTickAnimStartMs = animStart;
+    simTickAnimDurationMs = durationMs;
     let finished = false;
     simAnimating = true;
     updateSimBackButtonState();
@@ -1677,6 +1682,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       cancelBuilderSimTickTimers();
       simAnimating = false;
       simReverseAnimationMode = false;
+      simTickAnimStartMs = null;
+      simTickAnimDurationMs = null;
+      simAnimFinishFn = null;
       builderSimulator!.importRuntimeState(snapshot.runtime);
       builderSimulatorOccupancy = cloneSimOccupancyWithPackets(builderSimulator!.getPortOccupancy());
       applyBuilderSimulatorSnapshot(builderSimulatorOccupancy, { ...snapshot.runtime.stats });
@@ -1690,9 +1698,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       simAchievedStartTick = simStats.tick;
       updateSimBackButtonState();
     };
+    simAnimFinishFn = finishBackStep;
     const animateBack = (now: number): void => {
       if (finished) return;
-      const t = durationMs <= 0 ? 1 : clamp01((now - animStart) / durationMs);
+      const start = simTickAnimStartMs ?? animStart;
+      const dur = simTickAnimDurationMs ?? durationMs;
+      const t = dur <= 0 ? 1 : clamp01((now - start) / dur);
       simPacketProgress = t;
       renderBuilderPacketCircles(t);
       if (t < 1) {
@@ -2056,14 +2067,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const tickDeadlineMs = simNextTickDeadlineMs;
     simNextTickDeadlineMs = tickDeadlineMs + targetTickIntervalMs;
     updateBuilderSimMeta();
-    const animStart = performance.now();
-    const durationMs = Math.max(0, tickDeadlineMs - animStart);
+    let animStart = performance.now();
+    let durationMs = Math.max(0, tickDeadlineMs - animStart);
+    simTickAnimStartMs = animStart;
+    simTickAnimDurationMs = durationMs;
     let finished = false;
     const finishTick = (): void => {
       if (finished) return;
       const now = performance.now();
       finished = true;
       cancelBuilderSimTickTimers();
+      simTickAnimStartMs = null;
+      simTickAnimDurationMs = null;
+      simAnimFinishFn = null;
       if (simAchievedStartMs !== null) {
         const elapsedMs = now - simAchievedStartMs;
         const completedTicks = simStats.tick - simAchievedStartTick;
@@ -2083,9 +2099,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         simNextTickDeadlineMs = null;
       }
     };
+    simAnimFinishFn = finishTick;
     const animate = (now: number): void => {
       if (finished) return;
-      const t = durationMs <= 0 ? 1 : clamp01((now - animStart) / durationMs);
+      const start = simTickAnimStartMs ?? animStart;
+      const dur = simTickAnimDurationMs ?? durationMs;
+      const t = dur <= 0 ? 1 : clamp01((now - start) / dur);
       simPacketProgress = t;
       renderBuilderPacketCircles(t);
       if (t < 1) {
@@ -5874,7 +5893,24 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simEmaAchievedSpeed = null;
     simAchievedStartMs = null;
     simAchievedStartTick = simStats.tick;
-    if (simPlaying && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
+    // If we're mid-tick animation, retime smoothly instead of cancelling/restarting.
+    if (simAnimating && simTickAnimStartMs !== null && simTickAnimDurationMs !== null) {
+      const now = performance.now();
+      const progress =
+        simTickAnimDurationMs <= 0 ? 1 : clamp01((now - simTickAnimStartMs) / simTickAnimDurationMs);
+      const newDurationMs = Math.max(1, 1000 / Math.max(simSpeed, 0.1));
+      simTickAnimStartMs = now - progress * newDurationMs;
+      simTickAnimDurationMs = newDurationMs;
+      simNextTickDeadlineMs = simTickAnimStartMs + newDurationMs;
+      if (simTickTimeoutHandle !== null) {
+        window.clearTimeout(simTickTimeoutHandle);
+      }
+      const remainingMs = Math.max(0, (1 - progress) * newDurationMs);
+      simTickTimeoutHandle = window.setTimeout(() => {
+        if (!simAnimating) return;
+        simAnimFinishFn?.();
+      }, remainingMs);
+    } else if (simPlaying && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
       cancelBuilderSimTickTimers();
       simNextTickDeadlineMs = null;
       simAnimating = false;
