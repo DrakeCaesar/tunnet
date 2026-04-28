@@ -5910,7 +5910,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   scaleYCoreEl.addEventListener("change", onChangeY);
 
   simPlayPauseBtn.addEventListener("click", () => setBuilderSimPlaying(!simPlaying));
+  const finishRunningSimAnimationNow = (): boolean => {
+    if (!simAnimating) return false;
+    simAnimFinishFn?.();
+    return true;
+  };
   simStepBtn.addEventListener("click", () => {
+    if (finishRunningSimAnimationNow()) return;
     if (simPlaying) {
       simPlaying = false;
       simPlayPauseBtn.textContent = "▶";
@@ -5920,6 +5926,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     runOneBuilderSimTick();
   });
   simBackBtn.addEventListener("click", () => {
+    if (finishRunningSimAnimationNow()) return;
     stepBackBuilderSimulation();
   });
   simResetBtn.addEventListener("click", () => resetBuilderSimulation());
