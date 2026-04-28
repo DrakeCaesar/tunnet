@@ -5912,6 +5912,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   simPlayPauseBtn.addEventListener("click", () => setBuilderSimPlaying(!simPlaying));
   const finishRunningSimAnimationNow = (): boolean => {
     if (!simAnimating) return false;
+    if (simPlaying) {
+      setBuilderSimPlaying(false);
+    }
     simAnimFinishFn?.();
     return true;
   };
