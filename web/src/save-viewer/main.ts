@@ -137,8 +137,7 @@ const WORLD_CHUNK_SIZE = 16;
 const WORLD_CHUNK_RES = 32;
 const WORLD_VOXEL_SIZE = WORLD_CHUNK_SIZE / WORLD_CHUNK_RES;
 const WORLD_CHUNK_Y_SIGN = 1;
-const WORLD_CHUNK_Y_OFFSET = 4;
-const WORLD_LOCAL_Y_INVERT = true;
+const WORLD_CHUNK_Y_OFFSET = -1;
 
 function fitBoxToViewportAspect(box: ViewportBox, viewportWidthPx: number, viewportHeightPx: number): ViewportBox {
   const vw = Math.max(1, viewportWidthPx);
@@ -209,11 +208,8 @@ function mountLayout(): HTMLDivElement {
             <button id="sv-zoom-out" type="button">Zoom out</button>
             <button id="sv-zoom-fit" type="button">Fit</button>
             <button id="sv-view-toggle" type="button">Switch to 3D</button>
-          </div>
-          <label class="sim-send-rate-label" for="sv-block-orientation">Block orientation</label>
-          <div class="sim-send-rate-row">
-            <input id="sv-block-orientation" type="range" min="0" max="5" step="1" value="4" />
-            <span id="sv-block-orientation-value" class="meta">4 (+Z)</span>
+            <button id="sv-fps-toggle" type="button">Pilot mode: off</button>
+            <button id="sv-reset-camera" type="button">Reset camera</button>
           </div>
           <label class="sim-send-rate-label" for="sv-cull-height">3D cull plane (top cut)</label>
           <div class="sim-send-rate-row">
@@ -801,8 +797,10 @@ type Viewer3DState = {
   cullMaxY: number;
   worldMeshes: THREE.Mesh[];
   worldMaterials: THREE.Material[];
-  worldMeshWorker: Worker | null;
+  worldMeshWorkers: Worker[];
+  isFirstPerson: boolean;
   setCullY: (y: number) => void;
+  resetCamera: () => void;
   onKeyDown: (event: KeyboardEvent) => void;
   onKeyUp: (event: KeyboardEvent) => void;
   dispose: () => void;
@@ -811,6 +809,10 @@ type Viewer3DState = {
 type LoadProgressReporter = (phase: string, current: number, total: number) => Promise<void>;
 
 type ChunkPos = { x: number; y: number; z: number };
+type CameraPersistState = {
+  position: [number, number, number];
+  target: [number, number, number];
+};
 
 type WorldMeshWorkerProgressMessage = {
   type: "progress";
@@ -846,20 +848,12 @@ function parseChunkPosition(value: unknown): ChunkPos | null {
   return { x, y, z };
 }
 
-function blockOrientationLabel(mode: number): string {
-  const m = Math.max(0, Math.min(5, Math.floor(mode)));
-  if (m === 0) return "0 (+Y)";
-  if (m === 1) return "1 (-Y)";
-  if (m === 2) return "2 (+X)";
-  if (m === 3) return "3 (-X)";
-  if (m === 4) return "4 (+Z)";
-  return "5 (-Z)";
-}
-
 async function createOrRefresh3DWorld(
   container: HTMLDivElement,
   save: SaveData,
-  blockOrientation: number,
+  firstPersonMode: boolean,
+  initialCameraState: CameraPersistState | null,
+  onCameraStateChange: (state: CameraPersistState) => void,
   previous: Viewer3DState | null,
   reportProgress: LoadProgressReporter,
 ): Promise<Viewer3DState | null> {
@@ -906,17 +900,10 @@ async function createOrRefresh3DWorld(
   const gridDivisions = Math.max(1, Math.round(gridSize / WORLD_CHUNK_SIZE));
   const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x395175, 0x202838);
   grid.position.set(center.x, bounds.min.y, center.z);
-  const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
-  for (const m of gridMaterials) {
-    (m as THREE.Material).clippingPlanes = [clipPlane];
-    (m as THREE.Material).clipIntersection = false;
-  }
   scene.add(grid);
 
   const pointGeom = new THREE.BufferGeometry().setFromPoints(worldPoints);
   const pointMat = new THREE.PointsMaterial({ color: 0x89b4fa, size: 0.9, sizeAttenuation: true });
-  pointMat.clippingPlanes = [clipPlane];
-  pointMat.clipIntersection = false;
   const points = new THREE.Points(pointGeom, pointMat);
   scene.add(points);
 
@@ -932,100 +919,140 @@ async function createOrRefresh3DWorld(
   const edgeGeom = new THREE.BufferGeometry();
   edgeGeom.setAttribute("position", new THREE.Float32BufferAttribute(edgeVerts, 3));
   const edgeMat = new THREE.LineBasicMaterial({ color: 0x3f4d68, transparent: true, opacity: 0.9 });
-  edgeMat.clippingPlanes = [clipPlane];
-  edgeMat.clipIntersection = false;
   const edgeLines = new THREE.LineSegments(edgeGeom, edgeMat);
   scene.add(edgeLines);
 
   const chunkEntries = Array.isArray(save.chunks) ? save.chunks : [];
   const worldMeshes: THREE.Mesh[] = [];
   const worldMaterials: THREE.Material[] = [];
-  let worldMeshWorker: Worker | null = null;
+  const worldMeshWorkers: Worker[] = [];
   if (chunkEntries.length > 0) {
     await reportProgress("Preparing chunks", 0, Math.max(1, chunkEntries.length));
-    // @ts-expect-error Bundled by Vite worker URL transform.
-    worldMeshWorker = new Worker(new URL("./world-mesh.worker.ts", import.meta.url), { type: "module" });
-    await new Promise<void>((resolve, reject) => {
-      if (!worldMeshWorker) {
-        resolve();
-        return;
+    const meshWorkerCount = Math.max(1, Math.min(12, chunkEntries.length));
+    const shardSize = Math.ceil(chunkEntries.length / meshWorkerCount);
+    const decodeProgress = new Array<number>(meshWorkerCount).fill(0);
+    const decodeTotals = new Array<number>(meshWorkerCount).fill(0);
+    const buildProgress = new Array<number>(meshWorkerCount).fill(0);
+    const buildTotals = new Array<number>(meshWorkerCount).fill(0);
+    const chunkEntryByKey = new Map<string, unknown[]>();
+    for (const raw of chunkEntries) {
+      if (!Array.isArray(raw) || raw.length < 2) continue;
+      const pos = parseChunkPosition(raw[0]);
+      if (!pos) continue;
+      const key = `${pos.x},${pos.y},${pos.z}`;
+      chunkEntryByKey.set(key, raw);
+    }
+    const reportCombinedProgress = (): void => {
+      const buildCurrent = buildProgress.reduce((sum, value) => sum + value, 0);
+      const buildTotal = buildTotals.reduce((sum, value) => sum + value, 0);
+      void reportProgress("Processing chunks", buildCurrent, Math.max(1, buildTotal));
+    };
+    const workerTasks: Array<Promise<void>> = [];
+    for (let workerIndex = 0; workerIndex < meshWorkerCount; workerIndex += 1) {
+      const start = workerIndex * shardSize;
+      const end = Math.min(chunkEntries.length, start + shardSize);
+      if (start >= end) continue;
+      const meshShard = chunkEntries.slice(start, end);
+      const requiredKeys = new Set<string>();
+      for (const raw of meshShard) {
+        if (!Array.isArray(raw) || raw.length < 1) continue;
+        const pos = parseChunkPosition(raw[0]);
+        if (!pos) continue;
+        requiredKeys.add(`${pos.x},${pos.y},${pos.z}`);
+        requiredKeys.add(`${pos.x + 1},${pos.y},${pos.z}`);
+        requiredKeys.add(`${pos.x - 1},${pos.y},${pos.z}`);
+        requiredKeys.add(`${pos.x},${pos.y + 1},${pos.z}`);
+        requiredKeys.add(`${pos.x},${pos.y - 1},${pos.z}`);
+        requiredKeys.add(`${pos.x},${pos.y},${pos.z + 1}`);
+        requiredKeys.add(`${pos.x},${pos.y},${pos.z - 1}`);
       }
-      const worker = worldMeshWorker;
-      let done = false;
-      const cleanup = (): void => {
-        worker.removeEventListener("message", onMessage as EventListener);
-        worker.removeEventListener("error", onError as EventListener);
-      };
-      const onError = (event: ErrorEvent): void => {
-        if (done) return;
-        done = true;
-        cleanup();
-        worker.terminate();
-        if (worldMeshWorker === worker) {
-          worldMeshWorker = null;
-        }
-        reject(event.error ?? new Error(event.message || "Chunk meshing worker failed"));
-      };
-      const onMessage = (event: MessageEvent<WorldMeshWorkerOutMessage>): void => {
-        if (done) return;
-        const msg = event.data;
-        if (msg.type === "progress") {
-          void reportProgress(msg.phase, msg.current, msg.total);
-          return;
-        }
-        if (msg.type === "chunkMesh") {
-          if (msg.positions.length === 0) return;
-          const geom = new THREE.BufferGeometry();
-          geom.setAttribute("position", new THREE.BufferAttribute(msg.positions, 3));
-          geom.setAttribute("normal", new THREE.BufferAttribute(msg.normals, 3));
-          geom.setAttribute("color", new THREE.BufferAttribute(msg.colors, 3));
-          const mat = new THREE.MeshPhongMaterial({
-            vertexColors: true,
-            transparent: false,
-            opacity: 1,
-            side: THREE.DoubleSide,
-          });
-          mat.clippingPlanes = [clipPlane];
-          mat.clipIntersection = false;
-          worldMaterials.push(mat);
-          const mesh = new THREE.Mesh(geom, mat);
-          mesh.name = `chunk:${msg.key}`;
-          worldMeshes.push(mesh);
-          scene.add(mesh);
-          const posAttr = geom.getAttribute("position");
-          if (posAttr) {
-            for (let i = 1; i < posAttr.array.length; i += 3) {
-              const y = Number(posAttr.array[i] ?? 0);
-              if (y < worldMinY) worldMinY = y;
-              if (y > worldMaxY) worldMaxY = y;
-            }
-          }
-          return;
-        }
-        if (msg.type === "done") {
+      const requiredChunks: unknown[] = [];
+      const requiredKeyList = Array.from(requiredKeys);
+      for (const key of requiredKeyList) {
+        const raw = chunkEntryByKey.get(key);
+        if (raw) requiredChunks.push(raw);
+      }
+      decodeTotals[workerIndex] = requiredChunks.length;
+      buildTotals[workerIndex] = meshShard.length;
+      // @ts-expect-error Bundled by Vite worker URL transform.
+      const worker = new Worker(new URL("./world-mesh.worker.ts", import.meta.url), { type: "module" });
+      worldMeshWorkers.push(worker);
+      workerTasks.push(new Promise<void>((resolve, reject) => {
+        let done = false;
+        const cleanup = (): void => {
+          worker.removeEventListener("message", onMessage as EventListener);
+          worker.removeEventListener("error", onError as EventListener);
+        };
+        const onError = (event: ErrorEvent): void => {
+          if (done) return;
           done = true;
           cleanup();
           worker.terminate();
-          if (worldMeshWorker === worker) {
-            worldMeshWorker = null;
+          reject(event.error ?? new Error(event.message || "Chunk meshing worker failed"));
+        };
+        const onMessage = (event: MessageEvent<WorldMeshWorkerOutMessage>): void => {
+          if (done) return;
+          const msg = event.data;
+          if (msg.type === "progress") {
+            if (msg.phase.startsWith("Decoding")) {
+              decodeProgress[workerIndex] = msg.current;
+            } else {
+              buildProgress[workerIndex] = msg.current;
+            }
+            reportCombinedProgress();
+            return;
           }
-          resolve();
-        }
-      };
-      worker.addEventListener("message", onMessage as EventListener);
-      worker.addEventListener("error", onError as EventListener);
-      worker.postMessage({
-        type: "init",
-        chunks: chunkEntries,
-        orientation: blockOrientation,
-        chunkSize: WORLD_CHUNK_SIZE,
-        chunkRes: WORLD_CHUNK_RES,
-        voxelSize: WORLD_VOXEL_SIZE,
-        chunkYSign: WORLD_CHUNK_Y_SIGN,
-        chunkYOffset: WORLD_CHUNK_Y_OFFSET,
-        localYInvert: WORLD_LOCAL_Y_INVERT,
-      });
-    });
+          if (msg.type === "chunkMesh") {
+            if (msg.positions.length === 0) return;
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute("position", new THREE.BufferAttribute(msg.positions, 3));
+            geom.setAttribute("normal", new THREE.BufferAttribute(msg.normals, 3));
+            geom.setAttribute("color", new THREE.BufferAttribute(msg.colors, 3));
+            const mat = new THREE.MeshPhongMaterial({
+              vertexColors: true,
+              transparent: false,
+              opacity: 1,
+              side: THREE.DoubleSide,
+            });
+            mat.clippingPlanes = [clipPlane];
+            mat.clipIntersection = false;
+            worldMaterials.push(mat);
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.name = `chunk:${msg.key}`;
+            worldMeshes.push(mesh);
+            scene.add(mesh);
+            const posAttr = geom.getAttribute("position");
+            if (posAttr) {
+              for (let i = 1; i < posAttr.array.length; i += 3) {
+                const y = Number(posAttr.array[i] ?? 0);
+                if (y < worldMinY) worldMinY = y;
+                if (y > worldMaxY) worldMaxY = y;
+              }
+            }
+            return;
+          }
+          if (msg.type === "done") {
+            done = true;
+            cleanup();
+            worker.terminate();
+            resolve();
+          }
+        };
+        worker.addEventListener("message", onMessage as EventListener);
+        worker.addEventListener("error", onError as EventListener);
+        worker.postMessage({
+          type: "init",
+          allChunks: requiredChunks,
+          meshChunks: meshShard,
+          chunkSize: WORLD_CHUNK_SIZE,
+          chunkRes: WORLD_CHUNK_RES,
+          voxelSize: WORLD_VOXEL_SIZE,
+          chunkYSign: WORLD_CHUNK_Y_SIGN,
+          chunkYOffset: WORLD_CHUNK_Y_OFFSET,
+        });
+      }));
+    }
+    await Promise.all(workerTasks);
   }
 
   const chunkTypeEntries = Array.isArray(save.chunk_types) ? save.chunk_types : [];
@@ -1045,8 +1072,6 @@ async function createOrRefresh3DWorld(
   if (chunkTypePoints.length > 0) {
     const ctGeom = new THREE.BufferGeometry().setFromPoints(chunkTypePoints);
     const ctMat = new THREE.PointsMaterial({ color: 0xf9e2af, size: 1.3, sizeAttenuation: true });
-    ctMat.clippingPlanes = [clipPlane];
-    ctMat.clipIntersection = false;
     const ctPoints = new THREE.Points(ctGeom, ctMat);
     scene.add(ctPoints);
   }
@@ -1065,15 +1090,39 @@ async function createOrRefresh3DWorld(
   setCullY(worldMaxY + WORLD_CHUNK_SIZE * 0.5);
 
   const playerPos = save.player?.pos;
-  if (Array.isArray(playerPos) && playerPos.length >= 3) {
-    camera.position.set(playerPos[0] + radius * 0.3, playerPos[1] + radius * 0.2, playerPos[2] + radius * 0.3);
-    controls.target.set(playerPos[0], playerPos[1], playerPos[2]);
+  const playerMarkerGeom = new THREE.SphereGeometry(Math.max(0.8, WORLD_CHUNK_SIZE * 0.12), 20, 16);
+  const playerMarkerMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6 });
+  const playerMarker = new THREE.Mesh(playerMarkerGeom, playerMarkerMat);
+  const useFirstPerson = firstPersonMode && Array.isArray(playerPos) && playerPos.length >= 3;
+  if (useFirstPerson) {
+    playerMarker.position.set(playerPos[0], playerPos[1], playerPos[2]);
+    scene.add(playerMarker);
+    camera.position.set(playerPos[0], playerPos[1] + 1.62, playerPos[2]);
+    controls.target.set(playerPos[0] + 1, playerPos[1] + 1.62, playerPos[2]);
   } else {
     camera.position.set(center.x + radius * 0.8, center.y + radius * 0.6, center.z + radius * 0.8);
     controls.target.copy(center);
   }
+  if (
+    initialCameraState &&
+    Array.isArray(initialCameraState.position) &&
+    initialCameraState.position.length >= 3 &&
+    Array.isArray(initialCameraState.target) &&
+    initialCameraState.target.length >= 3
+  ) {
+    camera.position.set(
+      Number(initialCameraState.position[0] ?? 0),
+      Number(initialCameraState.position[1] ?? 0),
+      Number(initialCameraState.position[2] ?? 0),
+    );
+    controls.target.set(
+      Number(initialCameraState.target[0] ?? 0),
+      Number(initialCameraState.target[1] ?? 0),
+      Number(initialCameraState.target[2] ?? 0),
+    );
+  }
   controls.update();
-  const keyState = { w: false, a: false, s: false, d: false };
+  const keyState = { w: false, a: false, s: false, d: false, jump: false };
   const onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement | null;
     if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
@@ -1083,19 +1132,64 @@ async function createOrRefresh3DWorld(
     else if (event.code === "KeyA") keyState.a = true;
     else if (event.code === "KeyS") keyState.s = true;
     else if (event.code === "KeyD") keyState.d = true;
+    else if (event.code === "Space") keyState.jump = true;
   };
   const onKeyUp = (event: KeyboardEvent): void => {
     if (event.code === "KeyW") keyState.w = false;
     else if (event.code === "KeyA") keyState.a = false;
     else if (event.code === "KeyS") keyState.s = false;
     else if (event.code === "KeyD") keyState.d = false;
+    else if (event.code === "Space") keyState.jump = false;
   };
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  const lookState = { yaw: 0, pitch: 0 };
+  if (useFirstPerson) {
+    const lookDirInit = controls.target.clone().sub(camera.position);
+    if (lookDirInit.lengthSq() > 1e-9) {
+      lookDirInit.normalize();
+      lookState.yaw = Math.atan2(lookDirInit.x, -lookDirInit.z);
+      lookState.pitch = Math.asin(Math.max(-1, Math.min(1, lookDirInit.y)));
+    }
+  }
+  const onMouseMove = (event: MouseEvent): void => {
+    if (!useFirstPerson) return;
+    if (document.pointerLockElement !== renderer.domElement) return;
+    lookState.yaw -= event.movementX * 0.0025;
+    lookState.pitch -= event.movementY * 0.0025;
+    lookState.pitch = Math.max(-Math.PI * 0.48, Math.min(Math.PI * 0.48, lookState.pitch));
+  };
+  const onPointerLockClick = (): void => {
+    if (!useFirstPerson) return;
+    if (document.pointerLockElement !== renderer.domElement) {
+      renderer.domElement.requestPointerLock();
+    }
+  };
+  window.addEventListener("mousemove", onMouseMove);
+  renderer.domElement.addEventListener("click", onPointerLockClick);
   let lastFrameMs = performance.now();
   const forward = new THREE.Vector3();
   const right = new THREE.Vector3();
   const move = new THREE.Vector3();
+  const moveForward = new THREE.Vector3();
+  const moveRight = new THREE.Vector3();
+  const playerFeet = new THREE.Vector3(
+    useFirstPerson ? (playerPos?.[0] ?? center.x) : center.x,
+    useFirstPerson ? (playerPos?.[1] ?? center.y) : center.y,
+    useFirstPerson ? (playerPos?.[2] ?? center.z) : center.z,
+  );
+  let verticalVelocity = 0;
+  let grounded = false;
+  let lastPersistMs = 0;
+  const physics = {
+    eyeHeight: 1.62,
+    moveSpeed: 11,
+    jumpSpeed: 8.5,
+    gravity: 24,
+    radius: 0.34,
+  };
+  const raycaster = new THREE.Raycaster();
+  raycaster.firstHitOnly = true;
 
   let stopped = false;
   const animate = (): void => {
@@ -1104,7 +1198,59 @@ async function createOrRefresh3DWorld(
     const dt = Math.max(0.001, (now - lastFrameMs) / 1000);
     lastFrameMs = now;
     move.set(0, 0, 0);
-    if (keyState.w || keyState.a || keyState.s || keyState.d) {
+    if (useFirstPerson) {
+      controls.enabled = false;
+      const cosPitch = Math.cos(lookState.pitch);
+      const lookDir = new THREE.Vector3(
+        Math.sin(lookState.yaw) * cosPitch,
+        Math.sin(lookState.pitch),
+        -Math.cos(lookState.yaw) * cosPitch,
+      ).normalize();
+      moveForward.set(Math.sin(lookState.yaw), 0, -Math.cos(lookState.yaw)).normalize();
+      moveRight.set(-moveForward.z, 0, moveForward.x).normalize();
+      if (keyState.w) move.add(moveForward);
+      if (keyState.s) move.sub(moveForward);
+      if (keyState.d) move.add(moveRight);
+      if (keyState.a) move.sub(moveRight);
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(physics.moveSpeed * dt);
+        const chest = new THREE.Vector3(playerFeet.x, playerFeet.y + physics.eyeHeight * 0.65, playerFeet.z);
+        raycaster.set(chest, move.clone().normalize());
+        raycaster.far = move.length() + physics.radius;
+        const wallHits = raycaster.intersectObjects(worldMeshes, false);
+        if (wallHits.length === 0) {
+          playerFeet.x += move.x;
+          playerFeet.z += move.z;
+        }
+      }
+      verticalVelocity -= physics.gravity * dt;
+      if (grounded && keyState.jump) {
+        verticalVelocity = physics.jumpSpeed;
+        grounded = false;
+      }
+      playerFeet.y += verticalVelocity * dt;
+      raycaster.set(new THREE.Vector3(playerFeet.x, playerFeet.y + 0.6, playerFeet.z), new THREE.Vector3(0, -1, 0));
+      raycaster.far = 1.4;
+      const groundHits = raycaster.intersectObjects(worldMeshes, false);
+      if (groundHits.length > 0) {
+        const hit = groundHits[0]!;
+        const desiredFeetY = hit.point.y;
+        if (playerFeet.y <= desiredFeetY + 0.08 && verticalVelocity <= 0) {
+          playerFeet.y = desiredFeetY;
+          verticalVelocity = 0;
+          grounded = true;
+        } else {
+          grounded = false;
+        }
+      } else {
+        grounded = false;
+      }
+      camera.position.set(playerFeet.x, playerFeet.y + physics.eyeHeight, playerFeet.z);
+      controls.target.copy(camera.position).add(lookDir);
+      playerMarker.position.set(playerFeet.x, playerFeet.y, playerFeet.z);
+    } else {
+      controls.enabled = true;
+      if (keyState.w || keyState.a || keyState.s || keyState.d) {
       camera.getWorldDirection(forward);
       forward.y = 0;
       if (forward.lengthSq() < 1e-8) {
@@ -1126,8 +1272,17 @@ async function createOrRefresh3DWorld(
         camera.position.add(new THREE.Vector3(dx, dy, dz));
         controls.target.add(new THREE.Vector3(dx, dy, dz));
       }
+      }
     }
     controls.update();
+    const nowMs = performance.now();
+    if (nowMs - lastPersistMs >= 250) {
+      onCameraStateChange({
+        position: [camera.position.x, camera.position.y, camera.position.z],
+        target: [controls.target.x, controls.target.y, controls.target.z],
+      });
+      lastPersistMs = nowMs;
+    }
     renderer.render(scene, camera);
     state.animationFrame = window.requestAnimationFrame(animate);
   };
@@ -1145,22 +1300,46 @@ async function createOrRefresh3DWorld(
     cullMaxY: worldMaxY + WORLD_CHUNK_SIZE * 0.5,
     worldMeshes,
     worldMaterials,
-    worldMeshWorker,
+    worldMeshWorkers,
+    isFirstPerson: useFirstPerson,
     setCullY,
+    resetCamera: () => {
+      if (useFirstPerson && Array.isArray(playerPos) && playerPos.length >= 3) {
+        playerFeet.set(playerPos[0], playerPos[1], playerPos[2]);
+        verticalVelocity = 0;
+        grounded = false;
+        lookState.yaw = 0;
+        lookState.pitch = 0;
+        camera.position.set(playerPos[0], playerPos[1] + physics.eyeHeight, playerPos[2]);
+        controls.target.set(playerPos[0] + 1, playerPos[1] + physics.eyeHeight, playerPos[2]);
+      } else {
+        camera.position.set(center.x + radius * 0.8, center.y + radius * 0.6, center.z + radius * 0.8);
+        controls.target.copy(center);
+      }
+      controls.update();
+      onCameraStateChange({
+        position: [camera.position.x, camera.position.y, camera.position.z],
+        target: [controls.target.x, controls.target.y, controls.target.z],
+      });
+    },
     onKeyDown,
     onKeyUp,
     dispose: () => {
       stopped = true;
-      if (state.worldMeshWorker) {
-        state.worldMeshWorker.postMessage({ type: "cancel" });
-        state.worldMeshWorker.terminate();
-        state.worldMeshWorker = null;
+      for (const worker of state.worldMeshWorkers) {
+        worker.postMessage({ type: "cancel" });
+        worker.terminate();
       }
       if (state.animationFrame) {
         window.cancelAnimationFrame(state.animationFrame);
       }
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("mousemove", onMouseMove);
+      renderer.domElement.removeEventListener("click", onPointerLockClick);
+      if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock();
+      }
       controls.dispose();
       for (const mesh of state.worldMeshes) {
         scene.remove(mesh);
@@ -1169,6 +1348,8 @@ async function createOrRefresh3DWorld(
       for (const material of state.worldMaterials) {
         material.dispose();
       }
+      playerMarkerGeom.dispose();
+      playerMarkerMat.dispose();
       pointGeom.dispose();
       pointMat.dispose();
       edgeGeom.dispose();
@@ -1206,7 +1387,8 @@ async function fetchBundledSlot(index: number): Promise<unknown> {
 
 function main(): void {
   const VIEW_MODE_STORAGE_KEY = "tunnet.saveViewer.viewMode";
-  const BLOCK_ORIENTATION_STORAGE_KEY = "tunnet.saveViewer.blockOrientation";
+  const FIRST_PERSON_MODE_STORAGE_KEY = "tunnet.saveViewer.firstPersonMode";
+  const CAMERA_STATE_STORAGE_KEY = "tunnet.saveViewer.cameraState";
   mountLayout();
   const fileInput = document.querySelector<HTMLInputElement>("#sv-file-input");
   const loadSampleButton = document.querySelector<HTMLButtonElement>("#sv-load-sample");
@@ -1221,8 +1403,8 @@ function main(): void {
   const zoomOutButton = document.querySelector<HTMLButtonElement>("#sv-zoom-out");
   const zoomFitButton = document.querySelector<HTMLButtonElement>("#sv-zoom-fit");
   const viewToggleButton = document.querySelector<HTMLButtonElement>("#sv-view-toggle");
-  const blockOrientationInput = document.querySelector<HTMLInputElement>("#sv-block-orientation");
-  const blockOrientationValue = document.querySelector<HTMLSpanElement>("#sv-block-orientation-value");
+  const fpsToggleButton = document.querySelector<HTMLButtonElement>("#sv-fps-toggle");
+  const resetCameraButton = document.querySelector<HTMLButtonElement>("#sv-reset-camera");
   const cullHeightInput = document.querySelector<HTMLInputElement>("#sv-cull-height");
   const cullHeightValue = document.querySelector<HTMLSpanElement>("#sv-cull-height-value");
   const loadProgressWrap = document.querySelector<HTMLDivElement>("#sv-load-progress-wrap");
@@ -1247,8 +1429,8 @@ function main(): void {
     !zoomOutButton ||
     !zoomFitButton ||
     !viewToggleButton ||
-    !blockOrientationInput ||
-    !blockOrientationValue ||
+    !fpsToggleButton ||
+    !resetCameraButton ||
     !cullHeightInput ||
     !cullHeightValue ||
     !loadProgressWrap ||
@@ -1279,11 +1461,12 @@ function main(): void {
   let panLastY = 0;
   let packetAnimRaf: number | null = null;
   let use3DView = false;
-  let blockOrientation = 4;
+  let firstPersonMode = false;
   let world3D: Viewer3DState | null = null;
   let world3DResizeHandler: (() => void) | null = null;
   let cullHeightT = 1;
   let worldBuildToken = 0;
+  let persistedCameraState: CameraPersistState | null = null;
 
   const renderGraphAndPackets = (progress = 1): void => {
     if (use3DView) {
@@ -1310,7 +1493,18 @@ function main(): void {
     if (!use3DView) return;
     const token = ++worldBuildToken;
     await updateLoadProgress("Starting", 0, 1);
-    const next = await createOrRefresh3DWorld(view3DEl, currentSave, blockOrientation, world3D, updateLoadProgress);
+    const next = await createOrRefresh3DWorld(
+      view3DEl,
+      currentSave,
+      firstPersonMode,
+      persistedCameraState,
+      (state) => {
+        persistedCameraState = state;
+        window.localStorage.setItem(CAMERA_STATE_STORAGE_KEY, JSON.stringify(state));
+      },
+      world3D,
+      updateLoadProgress,
+    );
     if (token !== worldBuildToken) {
       next?.dispose();
       return;
@@ -1330,6 +1524,7 @@ function main(): void {
     packetOverlayEl.classList.toggle("hidden", show3D);
     view3DEl.classList.toggle("hidden", !show3D);
     viewToggleButton.textContent = show3D ? "Switch to 2D" : "Switch to 3D";
+    fpsToggleButton.textContent = `Pilot mode: ${firstPersonMode ? "on" : "off"}`;
     if (show3D) {
       refresh3DWorld();
       if (!world3DResizeHandler) {
@@ -1532,19 +1727,19 @@ function main(): void {
     window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, use3DView ? "3d" : "2d");
     applyViewMode();
   });
-  const savedBlockOrientation = Number.parseInt(window.localStorage.getItem(BLOCK_ORIENTATION_STORAGE_KEY) ?? "", 10);
-  if (Number.isFinite(savedBlockOrientation)) {
-    blockOrientation = Math.max(0, Math.min(5, savedBlockOrientation));
-  }
-  blockOrientationInput.value = String(blockOrientation);
-  blockOrientationInput.addEventListener("input", () => {
-    const n = Number.parseInt(blockOrientationInput.value, 10);
-    blockOrientation = Number.isFinite(n) ? Math.max(0, Math.min(5, n)) : 0;
-    window.localStorage.setItem(BLOCK_ORIENTATION_STORAGE_KEY, String(blockOrientation));
-    blockOrientationValue.textContent = blockOrientationLabel(blockOrientation);
+  fpsToggleButton.addEventListener("click", () => {
+    firstPersonMode = !firstPersonMode;
+    window.localStorage.setItem(FIRST_PERSON_MODE_STORAGE_KEY, firstPersonMode ? "1" : "0");
+    fpsToggleButton.textContent = `Pilot mode: ${firstPersonMode ? "on" : "off"}`;
     if (use3DView) {
       void refresh3DWorld();
     }
+  });
+  resetCameraButton.addEventListener("click", () => {
+    if (!world3D) return;
+    persistedCameraState = null;
+    window.localStorage.removeItem(CAMERA_STATE_STORAGE_KEY);
+    world3D.resetCamera();
   });
   cullHeightInput.addEventListener("input", () => {
     const n = Number.parseInt(cullHeightInput.value, 10);
@@ -1558,7 +1753,28 @@ function main(): void {
       cullHeightValue.textContent = `${Math.round(t * 100)}%`;
     }
   });
-  blockOrientationValue.textContent = blockOrientationLabel(blockOrientation);
+  firstPersonMode = (window.localStorage.getItem(FIRST_PERSON_MODE_STORAGE_KEY) ?? "").trim() === "1";
+  fpsToggleButton.textContent = `Pilot mode: ${firstPersonMode ? "on" : "off"}`;
+  const savedCameraStateRaw = window.localStorage.getItem(CAMERA_STATE_STORAGE_KEY);
+  if (savedCameraStateRaw) {
+    try {
+      const parsed = JSON.parse(savedCameraStateRaw) as CameraPersistState;
+      if (
+        parsed &&
+        Array.isArray(parsed.position) &&
+        parsed.position.length >= 3 &&
+        Array.isArray(parsed.target) &&
+        parsed.target.length >= 3
+      ) {
+        persistedCameraState = {
+          position: [Number(parsed.position[0]), Number(parsed.position[1]), Number(parsed.position[2])],
+          target: [Number(parsed.target[0]), Number(parsed.target[1]), Number(parsed.target[2])],
+        };
+      }
+    } catch {
+      persistedCameraState = null;
+    }
+  }
   cullHeightInput.value = String(Math.round(cullHeightT * 1000));
   cullHeightValue.textContent = "max";
 
