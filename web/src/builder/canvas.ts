@@ -850,6 +850,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           <div id="builder-panel-simulation" class="builder-floating-simulation" aria-label="Simulation controls">
             <div class="builder-sim-toolbar">
               <button id="builder-sim-play-pause" type="button">Play</button>
+              <button id="builder-sim-back" type="button" disabled>Back</button>
               <button id="builder-sim-step" type="button">Step</button>
               <button id="builder-sim-reset" type="button">Reset</button>
               <button id="builder-sim-toggle-packet-ips" type="button">${builderPageState.showPacketIps ? "Hide IPs" : "Show IPs"}</button>
@@ -931,6 +932,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const scaleYCoreValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-core1-value")!;
   const layoutSlotsEl = root.querySelector<HTMLDivElement>("#builder-layout-slots")!;
   const simPlayPauseBtn = root.querySelector<HTMLButtonElement>("#builder-sim-play-pause")!;
+  const simBackBtn = root.querySelector<HTMLButtonElement>("#builder-sim-back")!;
   const simStepBtn = root.querySelector<HTMLButtonElement>("#builder-sim-step")!;
   const simResetBtn = root.querySelector<HTMLButtonElement>("#builder-sim-reset")!;
   const simTogglePacketIpsBtn = root.querySelector<HTMLButtonElement>("#builder-sim-toggle-packet-ips")!;
@@ -1547,6 +1549,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simCurrentOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simPreviousOccupancyByPacketId = new Map<number, { port: PortRef; packet: Packet }>();
   let simPacketProgress = 1;
+  let simReverseAnimationMode = false;
+  let simEndpointGhostPackets: Array<{ packet: Packet; endpointRef: PortRef }> = [];
+  const SIM_HISTORY_LIMIT = 100;
+  type SimHistoryEntry = { runtime: SimulatorRuntimeState };
+  const simHistory: SimHistoryEntry[] = [];
   const builderEndpointIdByAddress = new Map<string, string>();
   let builderSimDevices: Record<string, Device> = {};
   let builderSimAdj: Map<string, PortRef> = new Map();
@@ -1589,6 +1596,106 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simTickCollisionDropEntityInstanceIds = new Set<string>();
   let simTickCollisionDropEntityRootIds = new Set<string>();
   applyBuilderSidebarWidth(builderSidebarWidth);
+
+  function updateSimBackButtonState(): void {
+    simBackBtn.disabled = simHistory.length === 0 || simAnimating;
+  }
+
+  function clearSimHistory(): void {
+    simHistory.length = 0;
+    simEndpointGhostPackets = [];
+    updateSimBackButtonState();
+  }
+
+  function pushSimHistorySnapshot(): void {
+    if (!builderSimulator) return;
+    const runtime = builderSimulator.exportRuntimeState();
+    const snapshot: SimHistoryEntry = {
+      runtime: {
+        ...runtime,
+        occupancy: cloneSimOccupancyWithPackets(runtime.occupancy),
+        stats: { ...runtime.stats },
+        endpointNextSendTickById: { ...runtime.endpointNextSendTickById },
+      },
+    };
+    simHistory.push(snapshot);
+    if (simHistory.length > SIM_HISTORY_LIMIT) {
+      simHistory.splice(0, simHistory.length - SIM_HISTORY_LIMIT);
+    }
+    updateSimBackButtonState();
+  }
+
+  function stepBackBuilderSimulation(): void {
+    if (simAnimating) return;
+    if (simPlaying) {
+      setBuilderSimPlaying(false);
+    }
+    const snapshot = simHistory.pop();
+    if (!snapshot || !builderSimulator) {
+      updateSimBackButtonState();
+      return;
+    }
+    const currentRuntime = builderSimulator.exportRuntimeState();
+    const fromOccupancy = cloneSimOccupancyWithPackets(currentRuntime.occupancy);
+    const toOccupancy = cloneSimOccupancyWithPackets(snapshot.runtime.occupancy);
+    const toIds = new Set(toOccupancy.map((e) => e.packet.id));
+    const boundaryGhosts = fromOccupancy
+      .filter(({ packet }) => !toIds.has(packet.id))
+      .map(({ packet }) => {
+        const endpointId = builderEndpointIdByAddress.get(packet.src);
+        if (!endpointId) return null;
+        return { packet: { ...packet }, endpointRef: { deviceId: endpointId, port: 0 } };
+      })
+      .filter((x): x is { packet: Packet; endpointRef: PortRef } => !!x);
+    simPreviousOccupancy = fromOccupancy;
+    simPreviousOccupancyByPacketId = simOccupancyByPacketId(simPreviousOccupancy);
+    simCurrentOccupancy = toOccupancy;
+    simReverseAnimationMode = true;
+    simTickDeliveredEntityRootIds = new Set();
+    simTickCollisionDropEntityInstanceIds = new Set();
+    simTickCollisionDropEntityRootIds = new Set();
+    applySimTickHighlightsToCanvas();
+    invalidateBuilderPacketRenderCache();
+    const animStart = performance.now();
+    const durationMs = Math.max(60, 1000 / Math.max(simSpeed, 0.1));
+    let finished = false;
+    simAnimating = true;
+    updateSimBackButtonState();
+    const finishBackStep = (): void => {
+      if (finished) return;
+      finished = true;
+      cancelBuilderSimTickTimers();
+      simAnimating = false;
+      simReverseAnimationMode = false;
+      builderSimulator!.importRuntimeState(snapshot.runtime);
+      builderSimulatorOccupancy = cloneSimOccupancyWithPackets(builderSimulator!.getPortOccupancy());
+      applyBuilderSimulatorSnapshot(builderSimulatorOccupancy, { ...snapshot.runtime.stats });
+      simEndpointGhostPackets = boundaryGhosts;
+      invalidateBuilderPacketRenderCache();
+      renderBuilderPacketCircles(1);
+      simDeliveredPerTick = null;
+      simDropPctTick = null;
+      simEmaAchievedSpeed = null;
+      simAchievedStartMs = null;
+      simAchievedStartTick = simStats.tick;
+      updateSimBackButtonState();
+    };
+    const animateBack = (now: number): void => {
+      if (finished) return;
+      const t = durationMs <= 0 ? 1 : clamp01((now - animStart) / durationMs);
+      simPacketProgress = t;
+      renderBuilderPacketCircles(t);
+      if (t < 1) {
+        simAnimHandle = requestAnimationFrame(animateBack);
+        return;
+      }
+      finishBackStep();
+    };
+    simPacketProgress = 0;
+    renderBuilderPacketCircles(0);
+    simTickTimeoutHandle = window.setTimeout(finishBackStep, durationMs);
+    simAnimHandle = requestAnimationFrame(animateBack);
+  }
 
   function cloneSimOccupancy(occ: Array<{ port: PortRef; packet: Packet }>): Array<{ port: PortRef; packet: Packet }> {
     return occ.map((e) => ({ port: { ...e.port }, packet: e.packet }));
@@ -1666,6 +1773,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simTickDeliveredEntityRootIds = new Set();
     simTickCollisionDropEntityInstanceIds = new Set();
     simTickCollisionDropEntityRootIds = new Set();
+    applySimTickHighlightsToCanvas();
     simPacketProgress = 1;
     invalidateBuilderPacketRenderCache();
     if (selection?.kind === "packet") {
@@ -1682,6 +1790,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function initBuilderSimulator(topology: Topology): void {
     builderSimulator = new TunnetSimulator(topology, 1337);
+    clearSimHistory();
     builderSimulatorOccupancy = cloneSimOccupancyWithPackets(builderSimulator.getPortOccupancy());
     applyBuilderSimulatorSnapshot(builderSimulatorOccupancy, {
       tick: 0,
@@ -1699,6 +1808,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       initBuilderSimulator(topology);
       return;
     }
+    clearSimHistory();
     const runtime = builderSimulator.exportRuntimeState();
     const projected = projectRuntimeStateToTopology(runtime, topology);
     const next = new TunnetSimulator(topology, projected.rndState);
@@ -1810,6 +1920,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simTickDeliveredEntityRootIds = new Set();
     simTickCollisionDropEntityInstanceIds = new Set();
     simTickCollisionDropEntityRootIds = new Set();
+    clearSimHistory();
     rebuildBuilderSimEndpointIndex(topo);
     simPreviousOccupancy = [];
     simPreviousOccupancyByPacketId = new Map();
@@ -1842,6 +1953,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const topo = payload.topology as unknown as Topology;
     rebuildBuilderSimTopologyCache(topo);
     rebuildBuilderSimEndpointIndex(topo);
+    clearSimHistory();
 
     const shouldResume = simPlaying;
     cancelBuilderSimTickTimers();
@@ -1857,6 +1969,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function runOneBuilderSimTick(): void {
     if (simAnimating) return;
+    if (simEndpointGhostPackets.length > 0) {
+      simEndpointGhostPackets = [];
+      invalidateBuilderPacketRenderCache();
+    }
+    pushSimHistorySnapshot();
     const tickWallStartMs = performance.now();
     if (simAchievedStartMs === null) {
       simAchievedStartMs = tickWallStartMs;
@@ -1865,6 +1982,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const frame = computeNextBuilderSimFrame();
     if (!frame) return;
     simAnimating = true;
+    updateSimBackButtonState();
     simPreviousOccupancy = frame.prevOccupancy;
     simPreviousOccupancyByPacketId = simOccupancyByPacketId(simPreviousOccupancy);
     const statsBeforeTick = simPreviousStatsTotals;
@@ -1944,6 +2062,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         }
       }
       simAnimating = false;
+      updateSimBackButtonState();
       simPacketProgress = 1;
       renderBuilderPacketCircles(1);
       updateBuilderSimMeta();
@@ -2775,6 +2894,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     targetX: number;
     targetY: number;
     selected: boolean;
+    pathStartT: number;
+    pathEndT: number;
   };
 
   function preparePolyline(points: SimXY[]): SimPreparedPolyline | null {
@@ -3117,7 +3238,83 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         targetX: (pFinal ?? pb).x,
         targetY: (pFinal ?? pb).y,
         selected: false,
+        pathStartT: 0,
+        pathEndT: 1,
       });
+    }
+
+    // Reverse-step animation: also render packets that exist in "from" (newer tick)
+    // but not in "to" (older tick) so they can visually travel back to source endpoint.
+    if (simReverseAnimationMode) {
+      const currentIds = new Set(simCurrentOccupancy.map((e) => e.packet.id));
+      for (const { port, packet } of simPreviousOccupancy) {
+        if (currentIds.has(packet.id)) continue;
+        const sourceEndpointId = builderEndpointIdByAddress.get(packet.src);
+        if (!sourceEndpointId) continue;
+        const fromRef: PortRef = { ...port };
+        const toRef: PortRef = { deviceId: sourceEndpointId, port: 0 };
+        const pa = builderPortCenterInOverlayCoords(fromRef, centerCache);
+        const pb = builderPortCenterInOverlayCoords(toRef, centerCache);
+        if (!pa || !pb) continue;
+        if (pa.clipped && pb.clipped) continue;
+        const routeKey = packetRouteKey(fromRef, toRef);
+        let line = preparedRouteByKey.get(routeKey);
+        if (line === undefined) {
+          line = buildPacketAnimationPolylinePrepared(fromRef, toRef, centerCache);
+          preparedRouteByKey.set(routeKey, line);
+        }
+        if (!line || line.points.length < 2 || line.totalLen < 1) {
+          line = null;
+        }
+        const o = simRestingPortOffset(fromRef.port);
+        const fallback = { x: pa.x + o.x, y: pa.y + o.y };
+        const hue = (packet.id * 47) % 360;
+        prepared.push({
+          packetId: packet.id,
+          src: packet.src,
+          dest: packet.dest,
+          line,
+          fallback,
+          fill: `hsl(${hue} 82% 58%)`,
+          stroke: `hsl(${hue} 82% 38%)`,
+          x: fallback.x,
+          y: fallback.y,
+          targetX: pb.x,
+          targetY: pb.y,
+          selected: false,
+          // Reach endpoint before the end, then stay visible there.
+          pathStartT: 0,
+          pathEndT: 0.82,
+        });
+      }
+    }
+
+    if (!simReverseAnimationMode && simEndpointGhostPackets.length > 0) {
+      const currentIds = new Set(simCurrentOccupancy.map((e) => e.packet.id));
+      for (const ghost of simEndpointGhostPackets) {
+        if (currentIds.has(ghost.packet.id)) continue;
+        const p = builderPortCenterInOverlayCoords(ghost.endpointRef, centerCache);
+        if (!p || p.clipped) continue;
+        const o = simRestingPortOffset(ghost.endpointRef.port);
+        const fallback = { x: p.x + o.x, y: p.y + o.y };
+        const hue = (ghost.packet.id * 47) % 360;
+        prepared.push({
+          packetId: ghost.packet.id,
+          src: ghost.packet.src,
+          dest: ghost.packet.dest,
+          line: null,
+          fallback,
+          fill: `hsl(${hue} 82% 58%)`,
+          stroke: `hsl(${hue} 82% 38%)`,
+          x: fallback.x,
+          y: fallback.y,
+          targetX: fallback.x,
+          targetY: fallback.y,
+          selected: false,
+          pathStartT: 0,
+          pathEndT: 1,
+        });
+      }
     }
 
     simPreparedPacketRenders = prepared;
@@ -3149,8 +3346,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       let x = render.fallback.x;
       let y = render.fallback.y;
       if (render.line) {
+        const denom = Math.max(1e-6, render.pathEndT - render.pathStartT);
+        const pathProgress = clamp01((progress - render.pathStartT) / denom);
         const tInterp0 = performance.now();
-        const p = simPointOnPreparedPolylineAt(render.line, progress);
+        const p = simPointOnPreparedPolylineAt(render.line, pathProgress);
         interpolateMs += performance.now() - tInterp0;
         if (p) {
           x = p.x;
@@ -5639,6 +5838,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return;
     }
     runOneBuilderSimTick();
+  });
+  simBackBtn.addEventListener("click", () => {
+    stepBackBuilderSimulation();
   });
   simResetBtn.addEventListener("click", () => resetBuilderSimulation());
   simTogglePacketIpsBtn.addEventListener("click", () => setPacketIpLabelsVisible(!builderPageState.showPacketIps));
