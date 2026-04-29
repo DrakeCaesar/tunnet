@@ -289,7 +289,8 @@ function mountLayout(): HTMLDivElement {
             <button id="sv-view-toggle" type="button">Switch to 3D</button>
             <button id="sv-fps-toggle" type="button">Pilot mode: off</button>
             <button id="sv-gravity-toggle" type="button">Gravity: on</button>
-            <button id="sv-ao-toggle" type="button">AO: on</button>
+            <button id="sv-ssao-toggle" type="button">SSAO: on</button>
+            <button id="sv-block-ao-toggle" type="button">Block AO: on</button>
             <button id="sv-reset-camera" type="button">Reset camera</button>
           </div>
           <label class="sim-send-rate-label" for="sv-cull-height">3D cull plane (top cut)</label>
@@ -888,6 +889,7 @@ type Viewer3DState = {
   setCullY: (y: number) => void;
   setFirstPersonMode: (enabled: boolean) => void;
   setGravityEnabled: (enabled: boolean) => void;
+  setBlockAoEnabled: (enabled: boolean) => void;
   applyCameraState: (state: CameraPersistState) => void;
   resetCamera: () => void;
   onKeyDown: (event: KeyboardEvent) => void;
@@ -917,6 +919,7 @@ type WorldMeshWorkerChunkMessage = {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  flatColors: Float32Array;
   edges: Float32Array;
 };
 
@@ -944,6 +947,7 @@ async function createOrRefresh3DWorld(
   save: SaveData,
   firstPersonMode: boolean,
   gravityEnabledInitial: boolean,
+  blockAoEnabledInitial: boolean,
   initialCameraState: CameraPersistState | null,
   onCameraStateChange: (state: CameraPersistState, isFirstPerson: boolean) => void,
   initialPilotPosition: PilotPositionPersistState | null,
@@ -1226,6 +1230,11 @@ async function createOrRefresh3DWorld(
   const worldMeshes: THREE.Mesh[] = [];
   const worldBoundaryLines: LineSegments2[] = [];
   const worldMaterials: THREE.Material[] = [];
+  const worldMeshColorSets: Array<{
+    geometry: THREE.BufferGeometry;
+    aoColors: Float32Array;
+    flatColors: Float32Array;
+  }> = [];
   const chunkVisibilityEntries: Array<{ mesh: THREE.Mesh; lines: LineSegments2 | null; center: THREE.Vector3; radius: number }> = [];
   const CHUNK_VIEW_DISTANCE = 8;
   const CHUNK_VISIBILITY_UPDATE_MS = 80;
@@ -1314,7 +1323,12 @@ async function createOrRefresh3DWorld(
             const geom = new THREE.BufferGeometry();
             geom.setAttribute("position", new THREE.BufferAttribute(msg.positions, 3));
             geom.setAttribute("normal", new THREE.BufferAttribute(msg.normals, 3));
-            geom.setAttribute("color", new THREE.BufferAttribute(msg.colors, 3));
+            geom.setAttribute("color", new THREE.BufferAttribute(blockAoEnabledInitial ? msg.colors : msg.flatColors, 3));
+            worldMeshColorSets.push({
+              geometry: geom,
+              aoColors: msg.colors,
+              flatColors: msg.flatColors,
+            });
             (geom as THREE.BufferGeometry & { computeBoundsTree?: () => void }).computeBoundsTree?.();
             const mat = new THREE.MeshPhongMaterial({
               vertexColors: true,
@@ -1534,6 +1548,12 @@ async function createOrRefresh3DWorld(
     jumpSpeed: 8.5,
     gravity: 24,
     radius: 0.34,
+  };
+  const applyBlockAoEnabled = (enabled: boolean): void => {
+    for (const entry of worldMeshColorSets) {
+      entry.geometry.setAttribute("color", new THREE.BufferAttribute(enabled ? entry.aoColors : entry.flatColors, 3));
+      entry.geometry.getAttribute("color").needsUpdate = true;
+    }
   };
   const raycaster = new THREE.Raycaster();
   raycaster.firstHitOnly = true;
@@ -1829,6 +1849,7 @@ async function createOrRefresh3DWorld(
         grounded = false;
       }
     },
+    setBlockAoEnabled: applyBlockAoEnabled,
     applyCameraState: (cameraState: CameraPersistState) => {
       if (
         !cameraState ||
@@ -1960,7 +1981,8 @@ function main(): void {
   const SLOT_INDEX_STORAGE_KEY = "tunnet.saveViewer.slotIndex";
   const FIRST_PERSON_MODE_STORAGE_KEY = "tunnet.saveViewer.firstPersonMode";
   const GRAVITY_ENABLED_STORAGE_KEY = "tunnet.saveViewer.gravityEnabled";
-  const AO_ENABLED_STORAGE_KEY = "tunnet.saveViewer.aoEnabled";
+  const SSAO_ENABLED_STORAGE_KEY = "tunnet.saveViewer.aoEnabled";
+  const BLOCK_AO_ENABLED_STORAGE_KEY = "tunnet.saveViewer.blockAoEnabled";
   const CAMERA_STATE_3D_STORAGE_KEY = "tunnet.saveViewer.cameraState3d";
   const CAMERA_STATE_PILOT_STORAGE_KEY = "tunnet.saveViewer.cameraStatePilot";
   const PLAYER_POSITION_PILOT_STORAGE_KEY = "tunnet.saveViewer.playerPositionPilot";
@@ -1982,7 +2004,8 @@ function main(): void {
   const viewToggleButton = document.querySelector<HTMLButtonElement>("#sv-view-toggle");
   const fpsToggleButton = document.querySelector<HTMLButtonElement>("#sv-fps-toggle");
   const gravityToggleButton = document.querySelector<HTMLButtonElement>("#sv-gravity-toggle");
-  const aoToggleButton = document.querySelector<HTMLButtonElement>("#sv-ao-toggle");
+  const ssaoToggleButton = document.querySelector<HTMLButtonElement>("#sv-ssao-toggle");
+  const blockAoToggleButton = document.querySelector<HTMLButtonElement>("#sv-block-ao-toggle");
   const resetCameraButton = document.querySelector<HTMLButtonElement>("#sv-reset-camera");
   const cullHeightInput = document.querySelector<HTMLInputElement>("#sv-cull-height");
   const cullHeightValue = document.querySelector<HTMLSpanElement>("#sv-cull-height-value");
@@ -2012,7 +2035,8 @@ function main(): void {
     !viewToggleButton ||
     !fpsToggleButton ||
     !gravityToggleButton ||
-    !aoToggleButton ||
+    !ssaoToggleButton ||
+    !blockAoToggleButton ||
     !resetCameraButton ||
     !cullHeightInput ||
     !cullHeightValue ||
@@ -2047,7 +2071,8 @@ function main(): void {
   let slotIndex = 3;
   let firstPersonMode = false;
   let gravityEnabled = true;
-  let aoEnabled = true;
+  let ssaoEnabled = true;
+  let blockAoEnabled = true;
   let world3D: Viewer3DState | null = null;
   let world3DResizeHandler: (() => void) | null = null;
   let cullHeightT = 1;
@@ -2058,7 +2083,7 @@ function main(): void {
   const applyAoForCullState = (): void => {
     if (!world3D?.ssaoPass) return;
     // When top-cut culling is active, disable AO to avoid ghosted shading from clipped-away geometry.
-    world3D.ssaoPass.enabled = aoEnabled && cullHeightT >= 0.999;
+    world3D.ssaoPass.enabled = ssaoEnabled && cullHeightT >= 0.999;
   };
 
   const renderGraphAndPackets = (progress = 1): void => {
@@ -2091,6 +2116,7 @@ function main(): void {
       currentSave,
       firstPersonMode,
       gravityEnabled,
+      blockAoEnabled,
       firstPersonMode ? persistedPilotCameraState : persisted3DCameraState,
       (state, isFirstPerson) => {
         if (isFirstPerson) {
@@ -2374,11 +2400,17 @@ function main(): void {
       world3D.setGravityEnabled(gravityEnabled);
     }
   });
-  aoToggleButton.addEventListener("click", () => {
-    aoEnabled = !aoEnabled;
-    window.localStorage.setItem(AO_ENABLED_STORAGE_KEY, aoEnabled ? "1" : "0");
-    aoToggleButton.textContent = `AO: ${aoEnabled ? "on" : "off"}`;
+  ssaoToggleButton.addEventListener("click", () => {
+    ssaoEnabled = !ssaoEnabled;
+    window.localStorage.setItem(SSAO_ENABLED_STORAGE_KEY, ssaoEnabled ? "1" : "0");
+    ssaoToggleButton.textContent = `SSAO: ${ssaoEnabled ? "on" : "off"}`;
     applyAoForCullState();
+  });
+  blockAoToggleButton.addEventListener("click", () => {
+    blockAoEnabled = !blockAoEnabled;
+    window.localStorage.setItem(BLOCK_AO_ENABLED_STORAGE_KEY, blockAoEnabled ? "1" : "0");
+    blockAoToggleButton.textContent = `Block AO: ${blockAoEnabled ? "on" : "off"}`;
+    world3D?.setBlockAoEnabled(blockAoEnabled);
   });
   resetCameraButton.addEventListener("click", () => {
     if (!world3D) return;
@@ -2410,8 +2442,10 @@ function main(): void {
   fpsToggleButton.textContent = `Pilot mode: ${firstPersonMode ? "on" : "off"}`;
   gravityEnabled = (window.localStorage.getItem(GRAVITY_ENABLED_STORAGE_KEY) ?? "1").trim() !== "0";
   gravityToggleButton.textContent = `Gravity: ${gravityEnabled ? "on" : "off"}`;
-  aoEnabled = (window.localStorage.getItem(AO_ENABLED_STORAGE_KEY) ?? "1").trim() !== "0";
-  aoToggleButton.textContent = `AO: ${aoEnabled ? "on" : "off"}`;
+  ssaoEnabled = (window.localStorage.getItem(SSAO_ENABLED_STORAGE_KEY) ?? "1").trim() !== "0";
+  ssaoToggleButton.textContent = `SSAO: ${ssaoEnabled ? "on" : "off"}`;
+  blockAoEnabled = (window.localStorage.getItem(BLOCK_AO_ENABLED_STORAGE_KEY) ?? "1").trim() !== "0";
+  blockAoToggleButton.textContent = `Block AO: ${blockAoEnabled ? "on" : "off"}`;
   const parseCameraState = (raw: string | null): CameraPersistState | null => {
     if (!raw) return null;
     try {

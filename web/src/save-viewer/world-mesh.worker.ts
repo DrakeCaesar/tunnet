@@ -28,6 +28,7 @@ type ChunkMeshMessage = {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  flatColors: Float32Array;
   edges: Float32Array;
 };
 
@@ -108,7 +109,7 @@ function buildChunkMesh(
     chunkYSign: number;
     chunkYOffset: number;
   },
-): { positions: Float32Array; normals: Float32Array; colors: Float32Array; edges: Float32Array } {
+): { positions: Float32Array; normals: Float32Array; colors: Float32Array; flatColors: Float32Array; edges: Float32Array } {
   const { chunkSize, chunkRes, voxelSize, chunkYSign, chunkYOffset } = opts;
   const voxels = chunksByKey.get(chunkKey);
   if (!voxels) {
@@ -116,6 +117,7 @@ function buildChunkMesh(
       positions: new Float32Array(0),
       normals: new Float32Array(0),
       colors: new Float32Array(0),
+      flatColors: new Float32Array(0),
       edges: new Float32Array(0),
     };
   }
@@ -126,6 +128,7 @@ function buildChunkMesh(
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
+  const flatColors: number[] = [];
   const edges: number[] = [];
 
   const voxelAt = (chunk: Uint8Array, x: number, y: number, z: number): number => {
@@ -198,6 +201,7 @@ function buildChunkMesh(
       positions.push(v[0], v[1], v[2]);
       normals.push(nx, ny, nz);
       colors.push(rgb[0] * shade, rgb[1] * shade, rgb[2] * shade);
+      flatColors.push(rgb[0], rgb[1], rgb[2]);
     }
   };
 
@@ -308,6 +312,7 @@ function buildChunkMesh(
     positions: new Float32Array(positions),
     normals: new Float32Array(normals),
     colors: new Float32Array(colors),
+    flatColors: new Float32Array(flatColors),
     edges: new Float32Array(edges),
   };
 }
@@ -373,9 +378,10 @@ self.onmessage = (event: MessageEvent<InMessage>) => {
         positions: mesh.positions,
         normals: mesh.normals,
         colors: mesh.colors,
+        flatColors: mesh.flatColors,
         edges: mesh.edges,
       },
-      [mesh.positions.buffer, mesh.normals.buffer, mesh.colors.buffer, mesh.edges.buffer],
+      [mesh.positions.buffer, mesh.normals.buffer, mesh.colors.buffer, mesh.flatColors.buffer, mesh.edges.buffer],
     );
     if ((i + 1) % 10 === 0 || i + 1 === meshTotal) {
       post({ type: "progress", phase: "Building mesh", current: i + 1, total: Math.max(1, meshTotal) });
