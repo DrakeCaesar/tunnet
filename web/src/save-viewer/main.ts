@@ -11,14 +11,13 @@ import {
 import { endpointData, type EndpointDatasetRow } from "../builder/endpoint-data";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
-import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+import type { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import type { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
+import type { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
+import { applyWorldVertexAo, type WorldAoColorSet } from "./world-ao-block";
+import { createWorldSsao, setWorldSsaoEnabled } from "./world-ao-ssao";
+import { createWorldGridLines, setWorldGridLineResolution, type WorldGridLines } from "./world-grid-lines";
 
 {
   const meshProto = THREE.Mesh.prototype as THREE.Mesh & { __svBvhPatched?: boolean };
@@ -180,12 +179,6 @@ const SAVE_VIEWER_ENTITY_BOX_COLOR: Record<VisualNode["type"], number> = {
   bridge: 0x94e2d5,
   antenna: 0xa6e3a1,
 };
-const SAVE_VIEWER_ENABLE_SSAO = true;
-const SAVE_VIEWER_SSAO_KERNEL_SIZE = 64;
-const SAVE_VIEWER_SSAO_KERNEL_RADIUS = 24;
-const SAVE_VIEWER_SSAO_MIN_DISTANCE = 0.001;
-const SAVE_VIEWER_SSAO_MAX_DISTANCE = 0.75;
-
 function ensureUv2Attribute(geometry: THREE.BufferGeometry): void {
   const uv = geometry.getAttribute("uv");
   if (!uv || geometry.getAttribute("uv2")) return;
@@ -291,6 +284,7 @@ function mountLayout(): HTMLDivElement {
             <button id="sv-gravity-toggle" type="button">Gravity: on</button>
             <button id="sv-ssao-toggle" type="button">SSAO: on</button>
             <button id="sv-block-ao-toggle" type="button">Block AO: on</button>
+            <button id="sv-hemi-ao-toggle" type="button">Hemi AO: off</button>
             <button id="sv-reset-camera" type="button">Reset camera</button>
           </div>
           <label class="sim-send-rate-label" for="sv-cull-height">3D cull plane (top cut)</label>
@@ -881,7 +875,7 @@ type Viewer3DState = {
   cullMinY: number;
   cullMaxY: number;
   worldMeshes: THREE.Mesh[];
-  worldBoundaryLines: LineSegments2[];
+  worldBoundaryLines: WorldGridLines[];
   worldMaterials: THREE.Material[];
   worldMeshWorkers: Worker[];
   isFirstPerson: boolean;
@@ -889,7 +883,7 @@ type Viewer3DState = {
   setCullY: (y: number) => void;
   setFirstPersonMode: (enabled: boolean) => void;
   setGravityEnabled: (enabled: boolean) => void;
-  setBlockAoEnabled: (enabled: boolean) => void;
+  setVertexAoEnabled: (enabled: { blockAo: boolean; hemisphereAo: boolean }) => void;
   applyCameraState: (state: CameraPersistState) => void;
   resetCamera: () => void;
   onKeyDown: (event: KeyboardEvent) => void;
@@ -948,6 +942,7 @@ async function createOrRefresh3DWorld(
   firstPersonMode: boolean,
   gravityEnabledInitial: boolean,
   blockAoEnabledInitial: boolean,
+  hemisphereAoEnabledInitial: boolean,
   initialCameraState: CameraPersistState | null,
   onCameraStateChange: (state: CameraPersistState, isFirstPerson: boolean) => void,
   initialPilotPosition: PilotPositionPersistState | null,
@@ -1086,21 +1081,10 @@ async function createOrRefresh3DWorld(
   let composer: EffectComposer | null = null;
   let ssaoPass: SSAOPass | null = null;
   let outputPass: OutputPass | null = null;
-  if (SAVE_VIEWER_ENABLE_SSAO) {
-    const composerTarget = new THREE.WebGLRenderTarget(width, height, { samples: 8 });
-    composer = new EffectComposer(renderer, composerTarget);
-    composer.setSize(width, height);
-    const renderPass = new RenderPass(scene, camera);
-    composer.addPass(renderPass);
-    ssaoPass = new SSAOPass(scene, camera, width, height, SAVE_VIEWER_SSAO_KERNEL_SIZE);
-    ssaoPass.kernelRadius = SAVE_VIEWER_SSAO_KERNEL_RADIUS;
-    ssaoPass.minDistance = SAVE_VIEWER_SSAO_MIN_DISTANCE;
-    ssaoPass.maxDistance = SAVE_VIEWER_SSAO_MAX_DISTANCE;
-    ssaoPass.output = SSAOPass.OUTPUT.Default;
-    composer.addPass(ssaoPass);
-    outputPass = new OutputPass();
-    composer.addPass(outputPass);
-  }
+  const ssao = createWorldSsao(renderer, scene, camera, width, height);
+  composer = ssao.composer;
+  ssaoPass = ssao.ssaoPass;
+  outputPass = ssao.outputPass;
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
@@ -1228,14 +1212,10 @@ async function createOrRefresh3DWorld(
 
   const chunkEntries = Array.isArray(save.chunks) ? save.chunks : [];
   const worldMeshes: THREE.Mesh[] = [];
-  const worldBoundaryLines: LineSegments2[] = [];
+  const worldBoundaryLines: WorldGridLines[] = [];
   const worldMaterials: THREE.Material[] = [];
-  const worldMeshColorSets: Array<{
-    geometry: THREE.BufferGeometry;
-    aoColors: Float32Array;
-    flatColors: Float32Array;
-  }> = [];
-  const chunkVisibilityEntries: Array<{ mesh: THREE.Mesh; lines: LineSegments2 | null; center: THREE.Vector3; radius: number }> = [];
+  const worldMeshColorSets: WorldAoColorSet[] = [];
+  const chunkVisibilityEntries: Array<{ mesh: THREE.Mesh; lines: WorldGridLines | null; center: THREE.Vector3; radius: number }> = [];
   const CHUNK_VIEW_DISTANCE = 8;
   const CHUNK_VISIBILITY_UPDATE_MS = 80;
   const visibilityFrustum = new THREE.Frustum();
@@ -1323,11 +1303,16 @@ async function createOrRefresh3DWorld(
             const geom = new THREE.BufferGeometry();
             geom.setAttribute("position", new THREE.BufferAttribute(msg.positions, 3));
             geom.setAttribute("normal", new THREE.BufferAttribute(msg.normals, 3));
-            geom.setAttribute("color", new THREE.BufferAttribute(blockAoEnabledInitial ? msg.colors : msg.flatColors, 3));
-            worldMeshColorSets.push({
+            geom.setAttribute("color", new THREE.BufferAttribute(msg.flatColors, 3));
+            const colorSet: WorldAoColorSet = {
               geometry: geom,
-              aoColors: msg.colors,
+              blockAoColors: msg.colors,
               flatColors: msg.flatColors,
+            };
+            worldMeshColorSets.push(colorSet);
+            applyWorldVertexAo([colorSet], {
+              blockAoEnabled: blockAoEnabledInitial,
+              hemisphereAoEnabled: hemisphereAoEnabledInitial,
             });
             (geom as THREE.BufferGeometry & { computeBoundsTree?: () => void }).computeBoundsTree?.();
             const mat = new THREE.MeshPhongMaterial({
@@ -1345,26 +1330,12 @@ async function createOrRefresh3DWorld(
             mesh.name = `chunk:${msg.key}`;
             worldMeshes.push(mesh);
             scene.add(mesh);
-            let boundaryLines: LineSegments2 | null = null;
+            let boundaryLines: WorldGridLines | null = null;
             if (msg.edges.length > 0) {
-              const lineGeom = new LineSegmentsGeometry();
-              lineGeom.setPositions(msg.edges);
-              const lineMat = new LineMaterial({
-                color: 0x000000,
-                linewidth: 1,
-                transparent: true,
-                opacity: 0.5,
-                depthTest: true,
-                depthWrite: false,
-                alphaToCoverage: true,
-              });
-              lineMat.resolution.set(width, height);
-              lineMat.clippingPlanes = [clipPlane];
-              lineMat.clipIntersection = false;
+              const { lines, material: lineMat } = createWorldGridLines(msg.edges, width, height, clipPlane);
               worldMaterials.push(lineMat);
-              boundaryLines = new LineSegments2(lineGeom, lineMat);
+              boundaryLines = lines;
               boundaryLines.name = `chunk-grid:${msg.key}`;
-              boundaryLines.renderOrder = 2;
               worldBoundaryLines.push(boundaryLines);
               scene.add(boundaryLines);
             }
@@ -1549,11 +1520,11 @@ async function createOrRefresh3DWorld(
     gravity: 24,
     radius: 0.34,
   };
-  const applyBlockAoEnabled = (enabled: boolean): void => {
-    for (const entry of worldMeshColorSets) {
-      entry.geometry.setAttribute("color", new THREE.BufferAttribute(enabled ? entry.aoColors : entry.flatColors, 3));
-      entry.geometry.getAttribute("color").needsUpdate = true;
-    }
+  const applyVertexAoEnabled = (enabled: { blockAo: boolean; hemisphereAo: boolean }): void => {
+    applyWorldVertexAo(worldMeshColorSets, {
+      blockAoEnabled: enabled.blockAo,
+      hemisphereAoEnabled: enabled.hemisphereAo,
+    });
   };
   const raycaster = new THREE.Raycaster();
   raycaster.firstHitOnly = true;
@@ -1849,7 +1820,7 @@ async function createOrRefresh3DWorld(
         grounded = false;
       }
     },
-    setBlockAoEnabled: applyBlockAoEnabled,
+    setVertexAoEnabled: applyVertexAoEnabled,
     applyCameraState: (cameraState: CameraPersistState) => {
       if (
         !cameraState ||
@@ -1983,6 +1954,7 @@ function main(): void {
   const GRAVITY_ENABLED_STORAGE_KEY = "tunnet.saveViewer.gravityEnabled";
   const SSAO_ENABLED_STORAGE_KEY = "tunnet.saveViewer.aoEnabled";
   const BLOCK_AO_ENABLED_STORAGE_KEY = "tunnet.saveViewer.blockAoEnabled";
+  const HEMISPHERE_AO_ENABLED_STORAGE_KEY = "tunnet.saveViewer.hemisphereAoEnabled";
   const CAMERA_STATE_3D_STORAGE_KEY = "tunnet.saveViewer.cameraState3d";
   const CAMERA_STATE_PILOT_STORAGE_KEY = "tunnet.saveViewer.cameraStatePilot";
   const PLAYER_POSITION_PILOT_STORAGE_KEY = "tunnet.saveViewer.playerPositionPilot";
@@ -2006,6 +1978,7 @@ function main(): void {
   const gravityToggleButton = document.querySelector<HTMLButtonElement>("#sv-gravity-toggle");
   const ssaoToggleButton = document.querySelector<HTMLButtonElement>("#sv-ssao-toggle");
   const blockAoToggleButton = document.querySelector<HTMLButtonElement>("#sv-block-ao-toggle");
+  const hemiAoToggleButton = document.querySelector<HTMLButtonElement>("#sv-hemi-ao-toggle");
   const resetCameraButton = document.querySelector<HTMLButtonElement>("#sv-reset-camera");
   const cullHeightInput = document.querySelector<HTMLInputElement>("#sv-cull-height");
   const cullHeightValue = document.querySelector<HTMLSpanElement>("#sv-cull-height-value");
@@ -2037,6 +2010,7 @@ function main(): void {
     !gravityToggleButton ||
     !ssaoToggleButton ||
     !blockAoToggleButton ||
+    !hemiAoToggleButton ||
     !resetCameraButton ||
     !cullHeightInput ||
     !cullHeightValue ||
@@ -2073,6 +2047,7 @@ function main(): void {
   let gravityEnabled = true;
   let ssaoEnabled = true;
   let blockAoEnabled = true;
+  let hemisphereAoEnabled = false;
   let world3D: Viewer3DState | null = null;
   let world3DResizeHandler: (() => void) | null = null;
   let cullHeightT = 1;
@@ -2081,9 +2056,10 @@ function main(): void {
   let persistedPilotCameraState: CameraPersistState | null = null;
   let persistedPilotPosition: PilotPositionPersistState | null = null;
   const applyAoForCullState = (): void => {
-    if (!world3D?.ssaoPass) return;
-    // When top-cut culling is active, disable AO to avoid ghosted shading from clipped-away geometry.
-    world3D.ssaoPass.enabled = ssaoEnabled && cullHeightT >= 0.999;
+    setWorldSsaoEnabled(world3D?.ssaoPass ?? null, ssaoEnabled, cullHeightT);
+  };
+  const applyVertexAoState = (): void => {
+    world3D?.setVertexAoEnabled({ blockAo: blockAoEnabled, hemisphereAo: hemisphereAoEnabled });
   };
 
   const renderGraphAndPackets = (progress = 1): void => {
@@ -2117,6 +2093,7 @@ function main(): void {
       firstPersonMode,
       gravityEnabled,
       blockAoEnabled,
+      hemisphereAoEnabled,
       firstPersonMode ? persistedPilotCameraState : persisted3DCameraState,
       (state, isFirstPerson) => {
         if (isFirstPerson) {
@@ -2169,10 +2146,7 @@ function main(): void {
           world3D.renderer.setSize(w, h);
           world3D.composer?.setSize(w, h);
           for (const lines of world3D.worldBoundaryLines) {
-            const material = lines.material;
-            if (material instanceof LineMaterial) {
-              material.resolution.set(w, h);
-            }
+            setWorldGridLineResolution(lines, w, h);
           }
         };
         window.addEventListener("resize", world3DResizeHandler);
@@ -2410,7 +2384,13 @@ function main(): void {
     blockAoEnabled = !blockAoEnabled;
     window.localStorage.setItem(BLOCK_AO_ENABLED_STORAGE_KEY, blockAoEnabled ? "1" : "0");
     blockAoToggleButton.textContent = `Block AO: ${blockAoEnabled ? "on" : "off"}`;
-    world3D?.setBlockAoEnabled(blockAoEnabled);
+    applyVertexAoState();
+  });
+  hemiAoToggleButton.addEventListener("click", () => {
+    hemisphereAoEnabled = !hemisphereAoEnabled;
+    window.localStorage.setItem(HEMISPHERE_AO_ENABLED_STORAGE_KEY, hemisphereAoEnabled ? "1" : "0");
+    hemiAoToggleButton.textContent = `Hemi AO: ${hemisphereAoEnabled ? "on" : "off"}`;
+    applyVertexAoState();
   });
   resetCameraButton.addEventListener("click", () => {
     if (!world3D) return;
@@ -2446,6 +2426,8 @@ function main(): void {
   ssaoToggleButton.textContent = `SSAO: ${ssaoEnabled ? "on" : "off"}`;
   blockAoEnabled = (window.localStorage.getItem(BLOCK_AO_ENABLED_STORAGE_KEY) ?? "1").trim() !== "0";
   blockAoToggleButton.textContent = `Block AO: ${blockAoEnabled ? "on" : "off"}`;
+  hemisphereAoEnabled = (window.localStorage.getItem(HEMISPHERE_AO_ENABLED_STORAGE_KEY) ?? "0").trim() === "1";
+  hemiAoToggleButton.textContent = `Hemi AO: ${hemisphereAoEnabled ? "on" : "off"}`;
   const parseCameraState = (raw: string | null): CameraPersistState | null => {
     if (!raw) return null;
     try {
