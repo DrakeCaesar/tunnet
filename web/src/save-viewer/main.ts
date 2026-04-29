@@ -185,6 +185,27 @@ const SAVE_VIEWER_ENTITY_BOX_COLOR: Record<VisualNode["type"], number> = {
   bridge: 0x94e2d5,
   antenna: 0xa6e3a1,
 };
+const SAVE_VIEWER_ENTITY_NON_WORLD_UP_COLOR = 0xff7a18;
+const SAVE_VIEWER_ENTITY_LOCAL_UP = new THREE.Vector3(0, 1, 0);
+
+function nodeUpVector(node: SaveNode | undefined): THREE.Vector3 {
+  const up = node?.up;
+  if (!Array.isArray(up) || up.length < 3) return SAVE_VIEWER_ENTITY_LOCAL_UP.clone();
+  const v = new THREE.Vector3(Number(up[0] ?? 0), Number(up[1] ?? 0), Number(up[2] ?? 0));
+  if (v.lengthSq() < 1e-10) return SAVE_VIEWER_ENTITY_LOCAL_UP.clone();
+  return v.normalize();
+}
+
+function nodeHasNonWorldUp(node: SaveNode | undefined): boolean {
+  const up = nodeUpVector(node);
+  const epsilon = 1e-4;
+  return (
+    Math.abs(up.x) > epsilon ||
+    Math.abs(up.y - 1) > epsilon ||
+    Math.abs(up.z) > epsilon
+  );
+}
+
 function ensureUv2Attribute(geometry: THREE.BufferGeometry): void {
   const uv = geometry.getAttribute("uv");
   if (!uv || geometry.getAttribute("uv2")) return;
@@ -1176,7 +1197,7 @@ async function createOrRefresh3DWorld(
     const boxGeom = new THREE.BoxGeometry(bx, by, bz);
     ensureUv2Attribute(boxGeom);
     const boxMat = new THREE.MeshStandardMaterial({
-      color: SAVE_VIEWER_ENTITY_BOX_COLOR[kind],
+      color: 0xffffff,
       aoMap: entityAoTexture,
       aoMapIntensity: 1,
       roughness: 0.88,
@@ -1187,6 +1208,11 @@ async function createOrRefresh3DWorld(
     const inst = new THREE.InstancedMesh(boxGeom, boxMat, nodeIndices.length);
     inst.name = `sv-entity-boxes-${kind}`;
     let instance = 0;
+    const baseColor = new THREE.Color(SAVE_VIEWER_ENTITY_BOX_COLOR[kind]);
+    const nonWorldUpColor = new THREE.Color(SAVE_VIEWER_ENTITY_NON_WORLD_UP_COLOR);
+    const alignQuat = new THREE.Quaternion();
+    const yawQuat = new THREE.Quaternion();
+    const surfaceOffset = new THREE.Vector3();
     for (const nodeIndex of nodeIndices) {
       const node = save.nodes[nodeIndex];
       if (!node?.pos) continue;
@@ -1195,14 +1221,20 @@ async function createOrRefresh3DWorld(
       const pz = node.pos[2] ?? 0;
       const ang = node.angle;
       const yaw = typeof ang === "number" && Number.isFinite(ang) ? ang : 0;
-      instanceDummy.position.set(px, py + by * 0.5, pz);
-      instanceDummy.rotation.set(0, yaw, 0);
+      const up = nodeUpVector(node);
+      surfaceOffset.copy(up).multiplyScalar(by * 0.5);
+      instanceDummy.position.set(px + surfaceOffset.x, py + surfaceOffset.y, pz + surfaceOffset.z);
+      alignQuat.setFromUnitVectors(SAVE_VIEWER_ENTITY_LOCAL_UP, up);
+      yawQuat.setFromAxisAngle(up, yaw);
+      instanceDummy.quaternion.copy(yawQuat).multiply(alignQuat);
       instanceDummy.updateMatrix();
       inst.setMatrixAt(instance, instanceDummy.matrix);
+      inst.setColorAt(instance, nodeHasNonWorldUp(node) ? nonWorldUpColor : baseColor);
       instance += 1;
     }
     inst.count = instance;
     inst.instanceMatrix.needsUpdate = true;
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
     entityInstancedMeshes.push(inst);
   }
 
