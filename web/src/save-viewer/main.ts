@@ -11,6 +11,21 @@ import {
 import { endpointData, type EndpointDatasetRow } from "../builder/endpoint-data";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
+
+{
+  const meshProto = THREE.Mesh.prototype as THREE.Mesh & { __svBvhPatched?: boolean };
+  if (!meshProto.__svBvhPatched) {
+    (THREE.BufferGeometry.prototype as THREE.BufferGeometry & { computeBoundsTree?: typeof computeBoundsTree }).computeBoundsTree = computeBoundsTree;
+    (THREE.BufferGeometry.prototype as THREE.BufferGeometry & { disposeBoundsTree?: typeof disposeBoundsTree }).disposeBoundsTree = disposeBoundsTree;
+    (THREE.Mesh.prototype as THREE.Mesh).raycast = acceleratedRaycast;
+    meshProto.__svBvhPatched = true;
+  }
+}
 
 type SaveAddressElement =
   | "Zero"
@@ -162,6 +177,11 @@ const SAVE_VIEWER_ENTITY_BOX_COLOR: Record<VisualNode["type"], number> = {
   bridge: 0x94e2d5,
   antenna: 0xa6e3a1,
 };
+const SAVE_VIEWER_ENABLE_SSAO = true;
+const SAVE_VIEWER_SSAO_KERNEL_SIZE = 64;
+const SAVE_VIEWER_SSAO_KERNEL_RADIUS = 24;
+const SAVE_VIEWER_SSAO_MIN_DISTANCE = 0.001;
+const SAVE_VIEWER_SSAO_MAX_DISTANCE = 0.75;
 
 function ensureUv2Attribute(geometry: THREE.BufferGeometry): void {
   const uv = geometry.getAttribute("uv");
@@ -842,6 +862,9 @@ function formatStats(stats: SimulationStats, inFlightPackets: number): string {
 
 type Viewer3DState = {
   renderer: THREE.WebGLRenderer;
+  composer: EffectComposer | null;
+  ssaoPass: SSAOPass | null;
+  outputPass: OutputPass | null;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -938,9 +961,135 @@ async function createOrRefresh3DWorld(
   renderer.localClippingEnabled = true;
   container.innerHTML = "";
   container.appendChild(renderer.domElement);
+  const perfOverlay = document.createElement("div");
+  perfOverlay.style.position = "absolute";
+  perfOverlay.style.top = "10px";
+  perfOverlay.style.right = "10px";
+  perfOverlay.style.width = "280px";
+  perfOverlay.style.padding = "12px";
+  perfOverlay.style.borderRadius = "8px";
+  perfOverlay.style.background = "rgba(10, 14, 24, 0.78)";
+  perfOverlay.style.color = "#cdd6f4";
+  perfOverlay.style.font = "14px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+  perfOverlay.style.pointerEvents = "none";
+  perfOverlay.style.zIndex = "5";
+  perfOverlay.style.border = "1px solid rgba(137, 180, 250, 0.25)";
+  const perfSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  perfSvg.setAttribute("viewBox", "0 0 120 120");
+  perfSvg.style.width = "138px";
+  perfSvg.style.height = "138px";
+  perfSvg.style.display = "block";
+  perfSvg.style.margin = "0 auto 8px auto";
+  const perfLegend = document.createElement("div");
+  perfLegend.style.display = "grid";
+  perfLegend.style.gridTemplateColumns = "1fr";
+  perfLegend.style.gap = "2px";
+  const perfFrameLabel = document.createElement("div");
+  perfFrameLabel.style.opacity = "0.9";
+  perfFrameLabel.style.marginBottom = "6px";
+  perfFrameLabel.style.fontSize = "13px";
+  perfOverlay.append(perfSvg, perfFrameLabel, perfLegend);
+  container.appendChild(perfOverlay);
+
+  const perfSlices = [
+    { key: "visibility", label: "visibility", color: "#89b4fa" },
+    { key: "sim_input", label: "sim input", color: "#f38ba8" },
+    { key: "sim_collision", label: "sim collide", color: "#eba0ac" },
+    { key: "sim_vertical", label: "sim vertical", color: "#fab387" },
+    { key: "sim_sync", label: "sim sync", color: "#f9e2af" },
+    { key: "update", label: "update", color: "#94e2d5" },
+    { key: "render", label: "render", color: "#a6e3a1" },
+    { key: "other", label: "other", color: "#7f849c" },
+  ] as const;
+  type PerfSliceKey = (typeof perfSlices)[number]["key"];
+  const perfEma: Record<PerfSliceKey, number> = {
+    visibility: 0,
+    sim_input: 0,
+    sim_collision: 0,
+    sim_vertical: 0,
+    sim_sync: 0,
+    update: 0,
+    render: 0,
+    other: 0,
+  };
+  let perfFrameEma = 0;
+  let lastPerfUiMs = 0;
+  const PERF_UI_INTERVAL_MS = 250;
+  const PERF_EMA_ALPHA = 0.22;
+  const mkWedgePath = (cx: number, cy: number, r: number, start: number, end: number): string => {
+    const x0 = cx + r * Math.cos(start);
+    const y0 = cy + r * Math.sin(start);
+    const x1 = cx + r * Math.cos(end);
+    const y1 = cy + r * Math.sin(end);
+    const largeArc = end - start > Math.PI ? 1 : 0;
+    return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1} Z`;
+  };
+  const drawPerfPie = (frameMs: number): void => {
+    const total = Math.max(0.0001, perfSlices.reduce((s, p) => s + perfEma[p.key], 0));
+    perfSvg.innerHTML = "";
+    let angle = -Math.PI * 0.5;
+    for (const slice of perfSlices) {
+      const value = perfEma[slice.key];
+      const span = (value / total) * Math.PI * 2;
+      if (span <= 1e-5) continue;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", mkWedgePath(60, 60, 54, angle, angle + span));
+      path.setAttribute("fill", slice.color);
+      path.setAttribute("opacity", "0.92");
+      perfSvg.appendChild(path);
+      angle += span;
+    }
+    const inner = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    inner.setAttribute("cx", "60");
+    inner.setAttribute("cy", "60");
+    inner.setAttribute("r", "30");
+    inner.setAttribute("fill", "rgba(9, 12, 19, 0.95)");
+    inner.setAttribute("stroke", "rgba(255,255,255,0.18)");
+    inner.setAttribute("stroke-width", "1");
+    perfSvg.appendChild(inner);
+    const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    txt.setAttribute("x", "60");
+    txt.setAttribute("y", "57");
+    txt.setAttribute("fill", "#cdd6f4");
+    txt.setAttribute("font-size", "15");
+    txt.setAttribute("text-anchor", "middle");
+    txt.textContent = `${frameMs.toFixed(1)}ms`;
+    perfSvg.appendChild(txt);
+    const txt2 = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    txt2.setAttribute("x", "60");
+    txt2.setAttribute("y", "70");
+    txt2.setAttribute("fill", "#a6adc8");
+    txt2.setAttribute("font-size", "12");
+    txt2.setAttribute("text-anchor", "middle");
+    txt2.textContent = `${(1000 / Math.max(0.001, frameMs)).toFixed(0)} fps`;
+    perfSvg.appendChild(txt2);
+    perfFrameLabel.textContent = "Frame cost breakdown";
+    perfLegend.innerHTML = perfSlices.map((slice) => {
+      const v = perfEma[slice.key];
+      const pct = (v / total) * 100;
+      return `<div><span style="display:inline-block;width:8px;height:8px;background:${slice.color};margin-right:6px;border-radius:2px;"></span>${slice.label.padEnd(10, " ")} ${v.toFixed(2)}ms (${pct.toFixed(0)}%)</div>`;
+    }).join("");
+  };
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 5000);
+  let composer: EffectComposer | null = null;
+  let ssaoPass: SSAOPass | null = null;
+  let outputPass: OutputPass | null = null;
+  if (SAVE_VIEWER_ENABLE_SSAO) {
+    composer = new EffectComposer(renderer);
+    composer.setSize(width, height);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+    ssaoPass = new SSAOPass(scene, camera, width, height, SAVE_VIEWER_SSAO_KERNEL_SIZE);
+    ssaoPass.kernelRadius = SAVE_VIEWER_SSAO_KERNEL_RADIUS;
+    ssaoPass.minDistance = SAVE_VIEWER_SSAO_MIN_DISTANCE;
+    ssaoPass.maxDistance = SAVE_VIEWER_SSAO_MAX_DISTANCE;
+    ssaoPass.output = SSAOPass.OUTPUT.Default;
+    composer.addPass(ssaoPass);
+    outputPass = new OutputPass();
+    composer.addPass(outputPass);
+  }
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
@@ -1158,6 +1307,7 @@ async function createOrRefresh3DWorld(
             geom.setAttribute("position", new THREE.BufferAttribute(msg.positions, 3));
             geom.setAttribute("normal", new THREE.BufferAttribute(msg.normals, 3));
             geom.setAttribute("color", new THREE.BufferAttribute(msg.colors, 3));
+            (geom as THREE.BufferGeometry & { computeBoundsTree?: () => void }).computeBoundsTree?.();
             const mat = new THREE.MeshPhongMaterial({
               vertexColors: true,
               transparent: false,
@@ -1353,6 +1503,8 @@ async function createOrRefresh3DWorld(
   };
   const raycaster = new THREE.Raycaster();
   raycaster.firstHitOnly = true;
+  // Ray tests against nearby visible chunks are much cheaper than the full world mesh list.
+  let collisionMeshes: THREE.Mesh[] = worldMeshes;
   const updateChunkVisibility = (nowMs: number): void => {
     if (chunkVisibilityEntries.length === 0) return;
     if (nowMs - lastChunkVisibilityUpdateMs < CHUNK_VISIBILITY_UPDATE_MS) return;
@@ -1360,6 +1512,7 @@ async function createOrRefresh3DWorld(
     const maxWorldDist = CHUNK_VIEW_DISTANCE * WORLD_CHUNK_SIZE;
     visibilityProjMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     visibilityFrustum.setFromProjectionMatrix(visibilityProjMatrix);
+    const visibleCollisionMeshes: THREE.Mesh[] = [];
     for (const entry of chunkVisibilityEntries) {
       const dist = camera.position.distanceTo(entry.center);
       if (dist > maxWorldDist) {
@@ -1371,6 +1524,10 @@ async function createOrRefresh3DWorld(
         continue;
       }
       entry.mesh.visible = true;
+      visibleCollisionMeshes.push(entry.mesh);
+    }
+    if (visibleCollisionMeshes.length > 0) {
+      collisionMeshes = visibleCollisionMeshes;
     }
   };
   const capsuleSampleHeights = (): number[] => {
@@ -1394,7 +1551,7 @@ async function createOrRefresh3DWorld(
       for (const start of probeStarts) {
         raycaster.set(start, dir);
         raycaster.far = len + physics.radius;
-        if (raycaster.intersectObjects(worldMeshes, false).length > 0) return true;
+        if (raycaster.intersectObjects(collisionMeshes, false).length > 0) return true;
       }
     }
     return false;
@@ -1403,15 +1560,22 @@ async function createOrRefresh3DWorld(
   let stopped = false;
   const animate = (): void => {
     if (stopped) return;
-    const now = performance.now();
-    const dt = Math.max(0.001, (now - lastFrameMs) / 1000);
-    lastFrameMs = now;
+    const frameStartMs = performance.now();
+    const dt = Math.max(0.001, (frameStartMs - lastFrameMs) / 1000);
+    lastFrameMs = frameStartMs;
     // Large frame gaps (tab switch, GC, heavy load) cause tunneling through thin collision.
     const pilotDt = Math.min(dt, 0.05);
     const PHYS_SUBSTEP = 1 / 120;
-    updateChunkVisibility(now);
+    const tVis = performance.now();
+    updateChunkVisibility(frameStartMs);
+    const visibilityMs = performance.now() - tVis;
     move.set(0, 0, 0);
+    let simInputMs = 0;
+    let simCollisionMs = 0;
+    let simVerticalMs = 0;
+    let simSyncMs = 0;
     if (firstPersonActive) {
+      const tSimInput = performance.now();
       controls.enabled = false;
       const cosPitch = Math.cos(lookState.pitch);
       const lookDir = new THREE.Vector3(
@@ -1425,6 +1589,8 @@ async function createOrRefresh3DWorld(
       if (keyState.s) move.sub(moveForward);
       if (keyState.d) move.add(moveRight);
       if (keyState.a) move.sub(moveRight);
+      simInputMs += performance.now() - tSimInput;
+      const tSimCollision = performance.now();
       if (move.lengthSq() > 0) {
         move.normalize().multiplyScalar(physics.moveSpeed * pilotDt);
         const maxStep = Math.max(0.08, physics.radius * 0.5);
@@ -1441,6 +1607,8 @@ async function createOrRefresh3DWorld(
           }
         }
       }
+      simCollisionMs += performance.now() - tSimCollision;
+      const tSimVertical = performance.now();
       if (gravityEnabled) {
         if (grounded && keyState.jump) {
           verticalVelocity = physics.jumpSpeed;
@@ -1467,7 +1635,7 @@ async function createOrRefresh3DWorld(
             for (const start of headProbeStarts) {
               raycaster.set(start, new THREE.Vector3(0, 1, 0));
               raycaster.far = rise + physics.radius;
-              if (raycaster.intersectObjects(worldMeshes, false).length > 0) {
+              if (raycaster.intersectObjects(collisionMeshes, false).length > 0) {
                 hitCeiling = true;
                 break;
               }
@@ -1480,7 +1648,7 @@ async function createOrRefresh3DWorld(
           const probeY = Math.max(playerFeet.y + 0.6, prevFeetY + 0.6);
           raycaster.set(new THREE.Vector3(playerFeet.x, probeY, playerFeet.z), new THREE.Vector3(0, -1, 0));
           raycaster.far = Math.max(2.5, Math.abs(playerFeet.y - prevFeetY) + Math.abs(verticalVelocity * h) + 1.5);
-          const groundHits = raycaster.intersectObjects(worldMeshes, false);
+          const groundHits = raycaster.intersectObjects(collisionMeshes, false);
           if (groundHits.length > 0) {
             const hit = groundHits[0]!;
             const desiredFeetY = hit.point.y;
@@ -1499,10 +1667,14 @@ async function createOrRefresh3DWorld(
         verticalVelocity = 0;
         grounded = false;
       }
+      simVerticalMs += performance.now() - tSimVertical;
+      const tSimSync = performance.now();
       camera.position.set(playerFeet.x, playerFeet.y + physics.eyeHeight, playerFeet.z);
       controls.target.copy(camera.position).add(lookDir);
       playerMarker.position.set(playerFeet.x, playerFeet.y, playerFeet.z);
+      simSyncMs += performance.now() - tSimSync;
     } else {
+      const tSimInput = performance.now();
       controls.enabled = true;
       if (keyState.w || keyState.a || keyState.s || keyState.d) {
       camera.getWorldDirection(forward);
@@ -1527,7 +1699,10 @@ async function createOrRefresh3DWorld(
         controls.target.add(new THREE.Vector3(dx, dy, dz));
       }
       }
+      simInputMs += performance.now() - tSimInput;
     }
+    const simulationMs = simInputMs + simCollisionMs + simVerticalMs + simSyncMs;
+    const tUpdate = performance.now();
     controls.update();
     const nowMs = performance.now();
     if (nowMs - lastPersistMs >= 250) {
@@ -1543,11 +1718,32 @@ async function createOrRefresh3DWorld(
       );
       lastPersistMs = nowMs;
     }
-    renderer.render(scene, camera);
+    const updateMs = performance.now() - tUpdate;
+    const tRender = performance.now();
+    composer!.render();
+    const renderMs = performance.now() - tRender;
+    const frameMs = performance.now() - frameStartMs;
+    const otherMs = Math.max(0, frameMs - visibilityMs - simulationMs - updateMs - renderMs);
+    perfEma.visibility = perfEma.visibility * (1 - PERF_EMA_ALPHA) + visibilityMs * PERF_EMA_ALPHA;
+    perfEma.sim_input = perfEma.sim_input * (1 - PERF_EMA_ALPHA) + simInputMs * PERF_EMA_ALPHA;
+    perfEma.sim_collision = perfEma.sim_collision * (1 - PERF_EMA_ALPHA) + simCollisionMs * PERF_EMA_ALPHA;
+    perfEma.sim_vertical = perfEma.sim_vertical * (1 - PERF_EMA_ALPHA) + simVerticalMs * PERF_EMA_ALPHA;
+    perfEma.sim_sync = perfEma.sim_sync * (1 - PERF_EMA_ALPHA) + simSyncMs * PERF_EMA_ALPHA;
+    perfEma.update = perfEma.update * (1 - PERF_EMA_ALPHA) + updateMs * PERF_EMA_ALPHA;
+    perfEma.render = perfEma.render * (1 - PERF_EMA_ALPHA) + renderMs * PERF_EMA_ALPHA;
+    perfEma.other = perfEma.other * (1 - PERF_EMA_ALPHA) + otherMs * PERF_EMA_ALPHA;
+    perfFrameEma = perfFrameEma * (1 - PERF_EMA_ALPHA) + frameMs * PERF_EMA_ALPHA;
+    if (nowMs - lastPerfUiMs >= PERF_UI_INTERVAL_MS) {
+      drawPerfPie(perfFrameEma > 0 ? perfFrameEma : frameMs);
+      lastPerfUiMs = nowMs;
+    }
     state.animationFrame = window.requestAnimationFrame(animate);
   };
   const state: Viewer3DState = {
     renderer,
+    composer,
+    ssaoPass,
+    outputPass,
     scene,
     camera,
     controls,
@@ -1678,6 +1874,7 @@ async function createOrRefresh3DWorld(
       scene.remove(entityGraphGroup);
       for (const mesh of state.worldMeshes) {
         scene.remove(mesh);
+        (mesh.geometry as THREE.BufferGeometry & { disposeBoundsTree?: () => void }).disposeBoundsTree?.();
         mesh.geometry.dispose();
       }
       for (const material of state.worldMaterials) {
@@ -1689,6 +1886,10 @@ async function createOrRefresh3DWorld(
       if (pointMat) pointMat.dispose();
       edgeGeom.dispose();
       edgeMat.dispose();
+      outputPass?.dispose();
+      ssaoPass?.dispose();
+      composer?.dispose();
+      perfOverlay.remove();
       renderer.dispose();
       container.innerHTML = "";
     },
@@ -1888,6 +2089,7 @@ function main(): void {
           world3D.camera.aspect = w / h;
           world3D.camera.updateProjectionMatrix();
           world3D.renderer.setSize(w, h);
+          world3D.composer?.setSize(w, h);
         };
         window.addEventListener("resize", world3DResizeHandler);
       }
