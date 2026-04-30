@@ -22,6 +22,7 @@ import {
 import { renderGraph, renderPacketOverlay } from "./view-2d";
 import {
   createOrRefresh3DWorld,
+  isViewEffectAllowedInMode,
   type Viewer3DState,
   type CameraPersistState,
   type PilotPositionPersistState,
@@ -118,10 +119,18 @@ export function startSaveViewerController(): void {
   let persistedPilotPosition: PilotPositionPersistState | null = null;
   let pendingTeleportPosition: [number, number, number] | null = null;
   const applyAoForCullState = (): void => {
-    setWorldSsaoEnabled(world3D?.ssaoPass ?? null, ssaoEnabled, cullHeightT);
+    const modeIsPilot = world3D?.isFirstPerson ?? firstPersonMode;
+    const ssaoAllowedByMode = isViewEffectAllowedInMode("ssao", modeIsPilot);
+    setWorldSsaoEnabled(world3D?.ssaoPass ?? null, ssaoEnabled && ssaoAllowedByMode, cullHeightT);
   };
   const applyVertexAoState = (): void => {
-    world3D?.setVertexAoEnabled({ blockAo: blockAoEnabled, hemisphereAo: hemisphereAoEnabled });
+    const modeIsPilot = world3D?.isFirstPerson ?? firstPersonMode;
+    const blockAoAllowedByMode = isViewEffectAllowedInMode("blockAo", modeIsPilot);
+    const hemiAoAllowedByMode = isViewEffectAllowedInMode("hemisphereAo", modeIsPilot);
+    world3D?.setVertexAoEnabled({
+      blockAo: blockAoEnabled && blockAoAllowedByMode,
+      hemisphereAo: hemisphereAoEnabled && hemiAoAllowedByMode,
+    });
   };
 
   const normalizeEndpointAddressInput = (value: string): string | null => {
@@ -208,6 +217,7 @@ export function startSaveViewerController(): void {
       world3D.setCullY(y);
       cullHeightValue.textContent = y.toFixed(1);
       applyAoForCullState();
+      applyVertexAoState();
       if (pendingTeleportPosition) applyTeleportPosition(pendingTeleportPosition);
     }
     hideLoadProgress();
@@ -420,6 +430,8 @@ export function startSaveViewerController(): void {
     fpsToggleButton.textContent = `Pilot mode: ${firstPersonMode ? "on" : "off"}`;
     if (use3DView && world3D) {
       world3D.setFirstPersonMode(firstPersonMode);
+      applyAoForCullState();
+      applyVertexAoState();
       const restore = firstPersonMode ? persistedPilotCameraState : persisted3DCameraState;
       if (restore) world3D.applyCameraState(restore);
     }

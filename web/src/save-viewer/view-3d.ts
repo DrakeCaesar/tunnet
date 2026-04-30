@@ -52,6 +52,54 @@ const SAVE_VIEWER_ENTITY_BOX_COLOR: Record<VisualNode["type"], number> = {
 const SAVE_VIEWER_ENTITY_NON_WORLD_UP_COLOR = 0xff7a18;
 const SAVE_VIEWER_ENTITY_LOCAL_UP = new THREE.Vector3(0, 1, 0);
 
+type ViewLayerId =
+  | "groundGrid"
+  | "entityGraph"
+  | "chunkWorld"
+  | "blockGrid"
+  | "cullCap"
+  | "playerMarker"
+  | "perfOverlay";
+
+type ViewEffectId = "minimap" | "ssao" | "blockAo" | "hemisphereAo";
+type ViewModePolicy = {
+  pilot: boolean;
+  orbit: boolean;
+};
+type ViewModeSettings = {
+  layers: Record<ViewLayerId, ViewModePolicy>;
+  effects: Record<ViewEffectId, ViewModePolicy>;
+};
+
+// Centralized 3D mode settings matrix (layers + effects together).
+const VIEW_MODE_SETTINGS: ViewModeSettings = {
+  layers: {
+    groundGrid: { pilot: false, orbit: true },
+    entityGraph: { pilot: true, orbit: true },
+    chunkWorld: { pilot: true, orbit: true },
+    blockGrid: { pilot: true, orbit: false },
+    cullCap: { pilot: false, orbit: true },
+    playerMarker: { pilot: true, orbit: true },
+    perfOverlay: { pilot: true, orbit: true },
+  },
+  effects: {
+    minimap: { pilot: true, orbit: false },
+    ssao: { pilot: true, orbit: true },
+    blockAo: { pilot: true, orbit: true },
+    hemisphereAo: { pilot: true, orbit: true },
+  },
+};
+
+export function isViewEffectAllowedInMode(effectId: ViewEffectId, isFirstPerson: boolean): boolean {
+  const policy = VIEW_MODE_SETTINGS.effects[effectId];
+  return isFirstPerson ? policy.pilot : policy.orbit;
+}
+
+function isViewLayerAllowedInMode(layerId: ViewLayerId, isFirstPerson: boolean): boolean {
+  const policy = VIEW_MODE_SETTINGS.layers[layerId];
+  return isFirstPerson ? policy.pilot : policy.orbit;
+}
+
 function nodeUpVector(node: SaveNode | undefined): THREE.Vector3 {
   const up = node?.up;
   if (!Array.isArray(up) || up.length < 3) return SAVE_VIEWER_ENTITY_LOCAL_UP.clone();
@@ -376,7 +424,9 @@ export async function createOrRefresh3DWorld(
   const gridSize = Math.max(WORLD_CHUNK_SIZE, Math.ceil((radius * 2) / WORLD_CHUNK_SIZE) * WORLD_CHUNK_SIZE);
   const gridDivisions = Math.max(1, Math.round(gridSize / WORLD_CHUNK_SIZE));
   const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x395175, 0x202838);
-  grid.position.set(center.x, bounds.min.y, center.z);
+  const halfChunk = WORLD_CHUNK_SIZE * 0.5;
+  // GridHelper draws lines around its origin; half-chunk phase shift aligns lines to chunk boundaries.
+  grid.position.set(center.x + halfChunk, bounds.min.y, center.z + halfChunk);
   scene.add(grid);
 
   const deviceNodeIndexSet = new Set<number>();
@@ -672,7 +722,9 @@ export async function createOrRefresh3DWorld(
       return;
     }
     cullCapMesh.geometry = buildWorldCullCapGeometry(worldMeshes, y);
-    cullCapMesh.visible = cullCapMesh.geometry.getAttribute("position")?.count > 0;
+    cullCapMesh.visible =
+      layerEnabledInCurrentMode("cullCap") &&
+      cullCapMesh.geometry.getAttribute("position")?.count > 0;
   };
   const setCullY = (y: number): void => {
     const yy = Math.max(worldMinY, Math.min(worldMaxY + WORLD_CHUNK_SIZE * 0.5, y));
@@ -703,6 +755,11 @@ export async function createOrRefresh3DWorld(
     ? [Number(initialPilotPosition[0] ?? 0), Number(initialPilotPosition[1] ?? 0), Number(initialPilotPosition[2] ?? 0)]
     : [Number(playerPos?.[0] ?? center.x), Number(playerPos?.[1] ?? center.y), Number(playerPos?.[2] ?? center.z)];
   let firstPersonActive = firstPersonMode && canFirstPerson;
+  const layerEnabledInCurrentMode = (layerId: ViewLayerId): boolean => {
+    return isViewLayerAllowedInMode(layerId, firstPersonActive);
+  };
+  const effectEnabledInCurrentMode = (effectId: ViewEffectId): boolean =>
+    isViewEffectAllowedInMode(effectId, firstPersonActive);
   let gravityEnabled = gravityEnabledInitial;
   if (firstPersonActive) {
     playerMarker.position.set(initialPilotFeetPos[0], initialPilotFeetPos[1], initialPilotFeetPos[2]);
@@ -854,10 +911,34 @@ export async function createOrRefresh3DWorld(
   const raycaster = new THREE.Raycaster();
   raycaster.firstHitOnly = true;
   let collisionMeshes: THREE.Mesh[] = worldMeshes;
+  const applyLayerVisibilityForMode = (): void => {
+    grid.visible = layerEnabledInCurrentMode("groundGrid");
+    entityGraphGroup.visible = layerEnabledInCurrentMode("entityGraph");
+    cullCapMesh.visible = cullCapMesh.visible && layerEnabledInCurrentMode("cullCap");
+    playerMarker.visible = layerEnabledInCurrentMode("playerMarker");
+    perfOverlay.style.display = layerEnabledInCurrentMode("perfOverlay") ? "block" : "none";
+    for (const entry of chunkVisibilityEntries) {
+      if (!layerEnabledInCurrentMode("chunkWorld")) {
+        entry.mesh.visible = false;
+      }
+      if (entry.lines && !layerEnabledInCurrentMode("blockGrid")) {
+        entry.lines.visible = false;
+      }
+    }
+  };
   const updateChunkVisibility = (nowMs: number): void => {
     if (chunkVisibilityEntries.length === 0) return;
     if (nowMs - lastChunkVisibilityUpdateMs < CHUNK_VISIBILITY_UPDATE_MS) return;
     lastChunkVisibilityUpdateMs = nowMs;
+    const chunkWorldAllowed = layerEnabledInCurrentMode("chunkWorld");
+    const chunkBoundaryAllowed = layerEnabledInCurrentMode("blockGrid");
+    if (!chunkWorldAllowed) {
+      for (const entry of chunkVisibilityEntries) {
+        entry.mesh.visible = false;
+        if (entry.lines) entry.lines.visible = false;
+      }
+      return;
+    }
     const useDistanceCulling = firstPersonActive;
     const maxWorldDist = CHUNK_VIEW_DISTANCE * WORLD_CHUNK_SIZE;
     visibilityProjMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -875,7 +956,7 @@ export async function createOrRefresh3DWorld(
         continue;
       }
       entry.mesh.visible = true;
-      if (entry.lines) entry.lines.visible = true;
+      if (entry.lines) entry.lines.visible = chunkBoundaryAllowed;
       visibleCollisionMeshes.push(entry.mesh);
     }
     if (visibleCollisionMeshes.length > 0) collisionMeshes = visibleCollisionMeshes;
@@ -1053,7 +1134,10 @@ export async function createOrRefresh3DWorld(
     const tRenderMain = performance.now();
     composer!.render();
     const renderMainMs = performance.now() - tRenderMain;
-    const { prepMs: renderMapPrepMs, drawMs: renderMapDrawMs, restoreMs: renderMapRestoreMs } = renderMinimap();
+    const minimapTiming = effectEnabledInCurrentMode("minimap")
+      ? renderMinimap()
+      : { prepMs: 0, drawMs: 0, restoreMs: 0 };
+    const { prepMs: renderMapPrepMs, drawMs: renderMapDrawMs, restoreMs: renderMapRestoreMs } = minimapTiming;
     const renderMinimapMs = renderMapPrepMs + renderMapDrawMs + renderMapRestoreMs;
     const renderPassTotalMs = renderStepFrameMs.render_pass + renderStepFrameMs.render_ssao + renderStepFrameMs.render_output;
     const renderOtherMs = Math.max(0, renderMainMs - renderPassTotalMs);
@@ -1094,6 +1178,7 @@ export async function createOrRefresh3DWorld(
       if (!canFirstPerson) {
         firstPersonActive = false;
         state.isFirstPerson = false;
+        applyLayerVisibilityForMode();
         return;
       }
       firstPersonActive = enabled;
@@ -1110,6 +1195,7 @@ export async function createOrRefresh3DWorld(
         }
         playerFeet.set(camera.position.x, camera.position.y - physics.eyeHeight, camera.position.z);
       }
+      applyLayerVisibilityForMode();
     },
     setGravityEnabled: (enabled: boolean) => {
       gravityEnabled = enabled;
@@ -1210,6 +1296,7 @@ export async function createOrRefresh3DWorld(
       container.innerHTML = "";
     },
   };
+  applyLayerVisibilityForMode();
   animate();
   await reportProgress("Finalizing", 1, 1);
   return state;
