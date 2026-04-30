@@ -6,6 +6,7 @@ import {
   RecoveredSchedulerState,
   advanceNetTick,
   evaluateEndpointSend,
+  initialRecoveredSchedulerState,
 } from "./recovered-endpoint-scheduler.js";
 
 type AddressEncodingStrategy =
@@ -30,6 +31,10 @@ type MessageEvent = {
 type OutputJson = {
   metadata: {
     encodingStrategy: AddressEncodingStrategy;
+    /** Values at start of the run (from CLI). */
+    initialPhaseA: number;
+    initialPhaseB: number;
+    /** Values after the last simulated tick. */
     phaseA: number;
     phaseB: number;
     analyzedTicks: number;
@@ -121,6 +126,16 @@ function signaturesByTick(events: MessageEvent[], ticks: number): string[] {
   return out;
 }
 
+const ENCODING_STRATEGIES: readonly AddressEncodingStrategy[] = [
+  "identity",
+  "plus_one_all_octets",
+  "plus_one_first_octet",
+];
+
+function isEncodingStrategy(value: string): value is AddressEncodingStrategy {
+  return (ENCODING_STRATEGIES as readonly string[]).includes(value);
+}
+
 function detectPeriod(signatures: string[]): number {
   const n = signatures.length;
   for (let p = 1; p <= Math.floor(n / 2); p += 1) {
@@ -137,15 +152,38 @@ function detectPeriod(signatures: string[]): number {
 }
 
 function main(): void {
-  const ticksArg = process.argv[2];
-  const strategyArg = process.argv[3] as AddressEncodingStrategy | undefined;
-
+  const args = process.argv.slice(2);
+  const ticksArg = args[0];
   const analyzedTicks = ticksArg ? Number(ticksArg) : 2048;
   if (!Number.isFinite(analyzedTicks) || analyzedTicks <= 0) {
     throw new Error(`Invalid analyzed tick count: ${ticksArg}`);
   }
-  const strategy: AddressEncodingStrategy = strategyArg ?? "plus_one_all_octets";
-  const state: RecoveredSchedulerState = { phaseA: 0, phaseB: 0 };
+
+  let strategy: AddressEncodingStrategy = "plus_one_all_octets";
+  let phaseArgOffset = 1;
+  if (args[1] !== undefined && isEncodingStrategy(args[1])) {
+    strategy = args[1];
+    phaseArgOffset = 2;
+  }
+
+  let phaseA = 0;
+  let phaseB = 0;
+  if (args[phaseArgOffset] !== undefined) {
+    phaseA = Number(args[phaseArgOffset]);
+    if (!Number.isFinite(phaseA)) {
+      throw new Error(`Invalid initial phaseA: ${args[phaseArgOffset]}`);
+    }
+  }
+  if (args[phaseArgOffset + 1] !== undefined) {
+    phaseB = Number(args[phaseArgOffset + 1]);
+    if (!Number.isFinite(phaseB)) {
+      throw new Error(`Invalid initial phaseB: ${args[phaseArgOffset + 1]}`);
+    }
+  }
+
+  const state: RecoveredSchedulerState = initialRecoveredSchedulerState(phaseA, phaseB);
+  const initialPhaseA = state.phaseA;
+  const initialPhaseB = state.phaseB;
 
   const endpoints = loadEndpoints("data.json");
   const allAddresses = endpoints.map((e) => e.address);
@@ -194,6 +232,8 @@ function main(): void {
   const output: OutputJson = {
     metadata: {
       encodingStrategy: strategy,
+      initialPhaseA,
+      initialPhaseB,
       phaseA: state.phaseA,
       phaseB: state.phaseB,
       analyzedTicks,
@@ -207,7 +247,7 @@ function main(): void {
   const outPath = join("out", "message-sequence.json");
   writeFileSync(outPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
   console.log(
-    `[message-sequence] wrote ${outPath} period=${repeatPeriodTicks} events=${periodEvents.length} strategy=${strategy}`,
+    `[message-sequence] wrote ${outPath} period=${repeatPeriodTicks} events=${periodEvents.length} strategy=${strategy} initialPhase=(${initialPhaseA},${initialPhaseB}) finalPhase=(${state.phaseA},${state.phaseB})`,
   );
 }
 

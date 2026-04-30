@@ -1,3 +1,4 @@
+import { initialRecoveredSchedulerState, type RecoveredSchedulerState } from "./recovered-endpoint-scheduler.js";
 import {
   AddressEncodingStrategy,
   compareRecoveredAgainstCurrentImplementation,
@@ -7,19 +8,49 @@ function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+const ENCODING_STRATEGIES: readonly AddressEncodingStrategy[] = [
+  "identity",
+  "plus_one_all_octets",
+  "plus_one_first_octet",
+];
+
+function isEncodingStrategy(value: string): value is AddressEncodingStrategy {
+  return (ENCODING_STRATEGIES as readonly string[]).includes(value);
+}
+
 function main(): void {
-  const ticksArg = process.argv[2];
-  const strategyArg = process.argv[3] as AddressEncodingStrategy | undefined;
+  const args = process.argv.slice(2);
+  const ticksArg = args[0];
   const ticks = ticksArg ? Number(ticksArg) : 4096;
   if (!Number.isFinite(ticks) || ticks <= 0) {
     throw new Error(`Invalid ticks value: ${ticksArg}`);
   }
 
-  const strategy: AddressEncodingStrategy = strategyArg ?? "plus_one_all_octets";
-  const report = compareRecoveredAgainstCurrentImplementation(ticks, "data.json", strategy);
+  let strategy: AddressEncodingStrategy = "plus_one_all_octets";
+  let phaseArgOffset = 1;
+  if (args[1] !== undefined && isEncodingStrategy(args[1])) {
+    strategy = args[1];
+    phaseArgOffset = 2;
+  }
+
+  let initial: RecoveredSchedulerState = initialRecoveredSchedulerState(0, 0);
+  if (args[phaseArgOffset] !== undefined) {
+    const phaseA = Number(args[phaseArgOffset]);
+    if (!Number.isFinite(phaseA)) {
+      throw new Error(`Invalid initial phaseA: ${args[phaseArgOffset]}`);
+    }
+    const phaseB =
+      args[phaseArgOffset + 1] !== undefined ? Number(args[phaseArgOffset + 1]) : 0;
+    if (args[phaseArgOffset + 1] !== undefined && !Number.isFinite(phaseB)) {
+      throw new Error(`Invalid initial phaseB: ${args[phaseArgOffset + 1]}`);
+    }
+    initial = initialRecoveredSchedulerState(phaseA, phaseB);
+  }
+
+  const report = compareRecoveredAgainstCurrentImplementation(ticks, "data.json", strategy, initial);
 
   console.log(
-    `[scheduler-compare] ticks=${report.ticks} endpoints=${report.endpointsCompared} strategy=${report.encodingStrategy}`,
+    `[scheduler-compare] ticks=${report.ticks} endpoints=${report.endpointsCompared} strategy=${report.encodingStrategy} initialPhase=(${initial.phaseA},${initial.phaseB})`,
   );
   console.log(
     `[scheduler-compare] avgRecovered=${pct(report.averageRecoveredRate)} avgLegacy=${pct(report.averageLegacyRate)} avgAbsDelta=${pct(report.averageAbsoluteDelta)}`,

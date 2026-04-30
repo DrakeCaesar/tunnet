@@ -237,6 +237,11 @@ export function advanceNetTick(current: number): number {
   return (current + 1) & 0xffff;
 }
 
+/** Initial `RecoveredSchedulerState` for a run (e.g. “save” `*(+0x1c4)` / `*(+0x1c5)`). */
+export function initialRecoveredSchedulerState(phaseA = 0, phaseB = 0): RecoveredSchedulerState {
+  return { phaseA, phaseB };
+}
+
 export function shouldForcePhaseTransition(state: RecoveredSchedulerState, decision: RecoveredDecision): boolean {
   return (
     decision.shouldSend &&

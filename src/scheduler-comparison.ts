@@ -157,9 +157,10 @@ export function compareRecoveredAgainstCurrentImplementation(
   ticks = 4096,
   dataPath = "data.json",
   encodingStrategy: AddressEncodingStrategy = "plus_one_all_octets",
+  initialRecoveredState: RecoveredSchedulerState = { phaseA: 0, phaseB: 0 },
 ): ComparisonSummary {
   const endpoints = loadEndpointRows(dataPath);
-  const recovered = simulateRecoveredModel(endpoints, ticks, encodingStrategy);
+  const recovered = simulateRecoveredModel(endpoints, ticks, encodingStrategy, initialRecoveredState);
   const legacy = simulateLegacyIntervalModel(endpoints, ticks);
 
   const byEndpoint: EndpointComparison[] = endpoints.map((endpoint) => {

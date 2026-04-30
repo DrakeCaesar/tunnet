@@ -185,6 +185,7 @@ Notes:
 
 - `0x1c4` is now partially recovered (`5->6->7` known).
 - `0x1c5` **read** role for the mainframe branch is confirmed (phase index `0..5` in `sub_1402f9a40`); **writes** are driven by **`sub_1401f5660`** (state machine through at least **`0xa`**, plus **`0xb`**), not the scheduler.
+- For tooling parity without simulating story/zone systems, set **`phaseA` / `phaseB`** at run start via **`pnpm sched:sequence`** / **`pnpm sched:compare`** (see **§9**).
 
 ### MCP timeouts (`read timed out` / `Not connected`)
 
@@ -260,12 +261,44 @@ If you see `Connection closed` / `Not connected`:
 
 ## 9) Current repo artifacts
 
-- `src/recovered-endpoint-scheduler.ts`
-  - recovered scheduler model (WIP toward exact parity)
-- `src/scheduler-comparison.ts`
-  - recovered vs current-implementation comparison
-- `src/export-message-sequence.ts`
-  - exports tick-wise message sequence JSON
+### Core sources
+
+- **`src/recovered-endpoint-scheduler.ts`**
+  - Recovered scheduler: `evaluateEndpointSend`, `applyRecoveredStateTransitions` (today: **`sub_1402f5840`** status ladder for `0x1c4` only).
+  - **`BinaryObservedPhaseA`**: named constants for `*(node+0x1c4)` values seen in the binary (scheduler **`5`–`7`**, zone fn **`sub_140165cb0`** **`0xc`–`0xe`**, **`0x13`**).
+  - **`initialRecoveredSchedulerState(phaseA?, phaseB?)`**: builds `{ phaseA, phaseB }` mirroring game **`0x1c4` / `0x1c5`** at simulation start (“save” line-in).
+
+- **`src/scheduler-comparison.ts`**
+  - **`compareRecoveredAgainstCurrentImplementation(ticks, dataPath, encodingStrategy, initialRecoveredState?)`** — fourth argument is initial **`RecoveredSchedulerState`** (default **`{ phaseA: 0, phaseB: 0 }`**).
+
+- **`src/export-message-sequence.ts`**
+  - Writes **`out/message-sequence.json`**.
+
+### CLI: set initial phase (save line-in)
+
+Both **`pnpm sched:sequence`** and **`pnpm sched:compare`** accept optional trailing **`phaseA`** / **`phaseB`** after **`ticks`** and optional **`encodingStrategy`**:
+
+| Arguments | Meaning |
+|-----------|---------|
+| `ticks` | Tick count (required for explicit non-default; default **2048** sequence / **4096** compare). |
+| `encodingStrategy` | One of **`identity`**, **`plus_one_all_octets`**, **`plus_one_first_octet`**. If omitted, default is **`plus_one_all_octets`**. |
+| `phaseA` | Initial **`*(+0x1c4)`**-mirroring value (integer). |
+| `phaseB` | Initial **`*(+0x1c5)`**-mirroring value (integer). |
+
+If **`argv[1]`** is not a known strategy string, it is parsed as **`phaseA`** (strategy stays default). Examples:
+
+```bash
+pnpm sched:sequence 2048 plus_one_all_octets 5 2
+pnpm sched:sequence 2048 identity 6 0
+pnpm sched:sequence 4096 5 3
+pnpm sched:compare 4096 plus_one_all_octets 5 0
+```
+
+**`out/message-sequence.json`** `metadata` includes **`initialPhaseA`**, **`initialPhaseB`** (start) and **`phaseA`**, **`phaseB`** (end of run after any modeled transitions).
+
+### MCP / BN quirk
+
+- **`function_at`** may return a valid function name in the payload while the Cursor MCP client reports a **schema validation error** (expects a plain string). Prefer **`decompile_function("sub_…")`** when you already know the name (e.g. **`sub_140165cb0`** for the secondary **`0x1c5`** site near **`0x140166850`**).
 
 ---
 
