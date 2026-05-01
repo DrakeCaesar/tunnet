@@ -73,7 +73,7 @@ export type RecoveredSchedulerState = {
 /**
  * Per-tick **packet-slot** context for **`sub_1402f5840`** **same-tick ordering** (one resolution per slot per tick).
  * See **`BINARY_NINJA_MCP_WORKFLOW.md`** §E + **§E.1a** (NetTock cadence, **`0x98`** slot list, deferred **`+0x7a`**) + VAs
- * **`0x1402f5bfe` / `0x1402f5c26` / `0x1402f5cc1` / `0x1402f75bf`**. Export/compare omit this until inbound
+ * **`0x1402f5bf5`–`0x1402f5bfe` / `0x1402f5c26` / `0x1402f5cbd`–`0x1402f5cc1` / `0x1402f75bf`** (**§J.3.4**). Export/compare omit this until inbound
  * simulation exists; when set, {@link evaluateEndpointSend} suppresses a **scheduled** compose send for that tick.
  */
 export type RecoveredSlotTickContext = {
@@ -96,7 +96,8 @@ export const MAINFRAME_SUBPHASE_MAX = 5;
 
 /**
  * Packet / compose-slot byte seen in **`sub_1402f5840`** HLIL (BN). **`evaluateEndpointSend`** does not gate on this yet.
- * - **`0x1402f5bfe`**: **`*(slot + 0x7a) == 2`** selects the **`sub_1402f9a40`** path.
+ * - **`0x1402f5bf5`–`0x1402f5bfe`**: **`cmp [slot+0x7a], 2` / `jne`** — fall-through calls **`sub_1402f9a40`** @ **`0x1402f5c26`**.
+ * - **`0x1402f5cbd`–`0x1402f5cc1`**: **`cmp [slot+0x7a], 2` / `je`** — **`==2`** skips **`dword [rsp+0x108] ← dword [[rsp+0x298]+8]`** (tape **`rax_11[1].d`**); **`§J.3.4`**.
  * - **`0x1402f5bdb`**: **`= 2`** after the **`var_348`** jump-table deferral path (infection-sized packet), when not already compose.
  * - **`0x1402f75bf`**: **`= r8_13.b`** with **`r8_13.b = 2`** on the inbound merge (receive path).
  * - **`0x1402f78a5`**: **`= 1`** after PING→PONG slot fill when **`*(slot + 0x7a) != 2`**.
@@ -136,6 +137,23 @@ export const BinarySub1402f5840CallSites = {
  * **`sub_1402f5840`** loads **`var_300.d`** from **`dword [[rsp+0x298]+8]`** (**`0x1402f5ccf`**). **`BINARY_NINJA_MCP_WORKFLOW.md`** **J.3.2**.
  */
 export const BinarySub1402f5840LoadVar300FromTapeRow = "0x1402f5ccf" as const;
+
+/** **`memcpy(&slot_slice, &var_308, 0x90)`** — source is **`var_308` only**, not **`var_300`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.1**). */
+export const BinarySub1402f5840MemcpyVar308ToRingSlot0x90 = "0x1402f5ed1" as const;
+
+/** Mega-dispatch from **`sub_1402f5840`**; **`arg1`** often **`&var_300`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.3**). */
+export const BinarySub1405211a0 = "0x1405211a0" as const;
+
+/** **`sub_1405211a0`** tail; **`decompile_function`** zeros **`arg1` head**, **`*(arg1+0x18)`** = float/alloc pipeline (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.3–§J.4.5**). */
+export const BinarySub1405208d0 = "0x1405208d0" as const;
+
+/**
+ * **`mov [rsp+0x1e0], rcx`** / **`mov [rsp+0x1e8], rdx`** @ **`sub_1402f5840`** entry (**incoming Windows args**). Every **`call sub_142244e00`** there uses **`lea rdx,[rsp+0x1e0]`**, so **`*(arg2+8)`** in that helper is **`incoming rdx`** to **`sub_1402f5840`**, not **`0x58` row `+0x48`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.10.4**).
+ */
+export const BinarySub1402f5840SaveIncomingRcxdAtRsp1e0 = "0x1402f589e" as const;
+
+/** Catalog / **`0x30`** strip helper; **`sub_1402f5840`** @ **`0x1402f7c97`** uses **`&rbp_7[0x160]`**, not **`&var_300`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.1**). */
+export const BinarySub14079a770 = "0x14079a770" as const;
 
 /** Builds **`0x30`**-byte per-destination tape rows; **`BINARY_NINJA_MCP_WORKFLOW.md`** **J.3.2**. */
 export const BinarySub1404628b0 = "0x1404628b0" as const;
@@ -181,6 +199,12 @@ export const BinaryData142428768DwordAtPlus8 = 0x4242_86e0 as const;
 /** **`sub_1402f5840` → `sub_1402f9a40`** only (**`0x1402f5c26`**). */
 export const BinarySub1402f9a40 = "0x1402f9a40" as const;
 
+/** **`cmp byte [rbx+0x7a], 2` / `jne 0x1402f5f3c`** — **Gate A** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.3.4**). */
+export const BinarySub1402f5840GateAComposeCmp7a = "0x1402f5bf5" as const;
+
+/** **`cmp byte [rbx+0x7a], 2` / `je 0x1402f5f3c`** — skips **`[[rsp+0x298]]+8 → [rsp+0x108]`** when **`==2`** (**§J.3.4**). */
+export const BinarySub1402f5840GateBTapeReloadJe = "0x1402f5cc1" as const;
+
 /** Compose tail: **`*(arg1+0x18) = var_130:8.q`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **J.3.3**). */
 export const BinarySub1402f9a40StoreArg1Plus18 = "0x1402fbd3b" as const;
 
@@ -190,11 +214,15 @@ export const BinarySub1423b0fc0 = "0x1423b0fc0" as const;
 /** **`sub_1423b0fc0`** target; vtable **`+0x18`/`+0x20`** on **`arg1[1]`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **J.3.3**). */
 export const BinarySub1423af220 = "0x1423af220" as const;
 
-/** Appends **`0x58`** table rows; **`+0x40` ← `arg2[4]`** (see **`BINARY_NINJA_MCP_WORKFLOW.md`** §E.2–E.6, callers §E.8). */
+/**
+ * Appends **`0x58`** table rows; **`+0x40` ← `arg2[4]`** (see **`BINARY_NINJA_MCP_WORKFLOW.md`** §E.2–E.6, callers §E.8).
+ * HLIL **`*(arg1[2]+0x48)`** gates **which deque index** is used — **not** a branch on the **`arg2[4]+0xc`** tag (**§J.4.11**).
+ */
 export const BinarySub140516d40 = "0x140516d40" as const;
 
 /**
  * **`get_xrefs_to(0x140516d40)`** — every code ref (BN MCP); **§E.6** table in **`BINARY_NINJA_MCP_WORKFLOW.md`**.
+ * Per-callee **`arg2[4]`** (→ **`0x58` row `+0x40`**) sources: **`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.10**; disasm pins: **§J.4.10.1** (**`2f5840`**, **`4f0910`**), **§J.4.10.2** (**`44eae0`**, **`4f3a90`**, **`3a7a00`**, **`74aa00`**), **§J.4.10.3** (**`516f40` / `380650`**), **§J.4.10.4** (**`142244e00` second arg in `2f5840`**), **§J.4.11** (**fifth-lane tag vs append-helper control flow**), **§J.4.12** (**`4f3a90` inline `0x58` clone**), **§J.4.13**–**§J.4.14** (**`7baf90` `0x60` tuple drain**; **`WSASend` / vtable** — partial **Lead #1**).
  */
 export const BinarySub140516d40CallSites = {
   netSchedulerA: "0x1402f66ea",
@@ -212,9 +240,12 @@ export const BinarySub140516d40CallSites = {
 } as const;
 
 /**
- * Same dual-**`Vec`** / **`0x58`** row write as **`{@link BinarySub140516d40}`** (HLIL field order differs). **Only** called from **`{@link BinarySub140380650}`** (§E.10–E.11).
+ * Same dual-**`Vec`** / **`0x58`** row write as **`{@link BinarySub140516d40}`** (HLIL field order differs). **Only** called from **`{@link BinarySub140380650}`** (§E.10–E.11). **`arg2[4]`** on preview paths is **not** the relay **`+0x10` / `+0x18`** recipe — **`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.10.3**. Append helper does **not** branch on **`arg2[4]+0xc`** (**§J.4.11**).
  */
 export const BinarySub140516f40 = "0x140516f40" as const;
+
+/** First **`{@link BinarySub140516f40}`** call in **`{@link BinarySub140380650}`** disasm cluster (**§J.4.10.3**). */
+export const BinarySub140380650Call516f40First = "0x14038192b" as const;
 
 /** **`Vec` reserve** for **`0x58`**-byte elements (**`sub_14079e410`**, **`new_cap * 0x58`**); shared by **`sub_140516d40`**, scheduler neighbors, **`sub_1404f3a90`**, **`sub_140380650`**, etc. (§E.10). */
 export const BinarySub14079fa10 = "0x14079fa10" as const;
@@ -270,6 +301,50 @@ export const BinarySub142353b40 = "0x142353b40" as const;
 /** Open-hash find/insert (**`{@link BinarySub1406425d0}`** on miss); **`sub_140175c50`** @ **`0x140176139`**. §E.12. */
 export const BinarySub14037e9d0 = "0x14037e9d0" as const;
 
+/** Neighbor **`0x14`**-cell writer on **`sub_1406b6550`** hit (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.1**). */
+export const BinarySub14037bf80 = "0x14037bf80" as const;
+
+/** Returns **`&neighbor_row+0xc`** for refcount **`+=1`** in relay (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.1**). */
+export const BinarySub14037de30 = "0x14037de30" as const;
+
+/** **`var_300.d`** (tape dword scratch) stored at **`row+0x18`** on infection-template row build (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.8**). */
+export const BinarySub1402f5840InfectionRowStoreVar300AtPlus18 = "0x1402f8f09" as const;
+
+/**
+ * **`0x7a != 2`** tape path: **`rax_11[1].d` → `var_300.d` → `var_200` → ring row dword @ `+0x18`**
+ * (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.8**).
+ */
+export const BinarySub1402f5840TapeToBeepRingRowPlus18 = {
+  loadRax11SecondDwordToVar300: "0x1402f5cd2",
+  assignVar200FromVar300: "0x1402f5da5",
+  storeVar200AtRowPlus18: "0x1402f5f26",
+} as const;
+
+/** Static phishing-title table: **`*(rbp+0x48)=0x19`** is a **string length**, not queue TTL (**workflow §J.4.8**). */
+export const BinarySub1402f5840PhishingTitleTableLenAtPlus48 = "0x1402f8d89" as const;
+
+/**
+ * After refcount / **`sub_1423a0360`**, **`var_350`** / **`var_200.q`** are written to the live **`NetNode`**
+ * **`slot`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.9**). Relay **`{@link BinarySub14044eae0}`** does **not** read **`slot+0x60`**
+ * when building **`{@link BinarySub140516d40}`** **`arg2`** on the traced **`0x14044ef8a`** / **`0x14044f160`** slices.
+ */
+export const BinarySub1402f5840SlotPackAfterFmt = {
+  storeVar350AtSlotPlus58: "0x1402f7581",
+  storeVar200QAtSlotPlus60: "0x1402f7585",
+} as const;
+
+/** **`fmt` aggregate / stack sum helper** — **`arg1 = &var_208`**; does **not** assign **`var_200`** (**workflow §J.4.9**). */
+export const BinarySub1423a0360 = "0x1423a0360" as const;
+
+/**
+ * Rust deque push helpers: same **`*(arg1[2]+0x48)`** / **`sub_14079f430`** / **`rcx = rdx*5<<3`** spine as the
+ * beep ring push, but **only** three qwords per row (**`+0` / `+0x10` / `+0x20`** — no **`+8` / `+0x18`** writes).
+ * Row stride is **`× 0x28`**, **not** **`imul …, 0x58`** (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.8**, **§J.4.12**).
+ */
+export const BinarySub1405177a0 = "0x1405177a0" as const;
+export const BinarySub1405179c0 = "0x1405179c0" as const;
+export const BinarySub140517a50 = "0x140517a50" as const;
+
 /** **`0xc`**-byte inline slot insert + bitmap scan; **`{@link BinarySub14062eb10}`** on grow. **Not** **`NetNode` `+0x40`**. §E.12. */
 export const BinarySub1406425d0 = "0x1406425d0" as const;
 
@@ -278,6 +353,52 @@ export const BinarySub14062eb10 = "0x14062eb10" as const;
 
 /** Relay / multi-endpoint PING-PONG driver (same **`0x60`/`0x58`** walk as **`sub_1402f5840`**). */
 export const BinarySub14044eae0 = "0x14044eae0" as const;
+
+/**
+ * **`0x60`**-stride row walker: **`[row+0x50]`** tuple base, **`[row+0x58]`** tuple count → **`sub_142244e00`** then **`sub_141fcee80`**.
+ * **No** **`+0x48`** load in disasm (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.13** — Lead #1 partial).
+ */
+export const BinarySub1407baf90 = "0x1407baf90" as const;
+
+/** **`sub_1407baf90`:** **`mov rbp, qword [rax+rcx+0x58]`** — inner-loop bound (paired with **`+0x50`** base). */
+export const BinarySub1407baf90RowLoadPlus58AsCount = "0x1407bb047" as const;
+
+/** **`sub_1407baf90`:** **`mov r15, qword [rax+rcx+0x50]`** — **`(r8d,r9d)`** stream base. */
+export const BinarySub1407baf90RowLoadTupleBasePlus50 = "0x1407bb051" as const;
+
+/** Thin **`r9` → `7baf90`** relay (**workflow §J.4.13**). */
+export const BinarySub14054fff0CallSub1407baf90 = "0x14055001d" as const;
+
+/** **`lock xadd [transport+0x270]`** gate + **`subject+0xe8` / `+0x118`** bundle → **`sub_1407baf90`** (**§J.4.13**). */
+export const BinarySub1405f0920CallSub1407baf90 = "0x1405f0995" as const;
+
+/** Sibling of **`sub_1405f0920`** (**§J.4.13**). */
+export const BinarySub1407ad390CallSub1407baf90 = "0x1407ad3f8" as const;
+
+/**
+ * **`.rdata`** qword (**vtable slot**) → **`sub_1407ad390`** — **no** direct **`E8`** callers (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.14**).
+ */
+export const BinaryRdataVtableSlotSub1407ad390 = "0x1424a9df8" as const;
+
+/**
+ * **`.rdata`** qword (**vtable slot**) → **`sub_1405f0920`** (**§J.4.14**).
+ */
+export const BinaryRdataVtableSlotSub1405f0920 = "0x1424a9e00" as const;
+
+/** **`sub_14082c450`** → **`sub_142345a90`** (**`WSASend`** wrapper — **§J.4.14**). */
+export const BinarySub14082c450CallSub142345a90 = "0x14082c4ee" as const;
+
+/** **`sub_14083e490`:** **`lea rcx,[rel 0x144d59a88]`** before **`call [rbp+0x20]`** (**§J.4.14**). */
+export const BinarySub14083e490LeaVtable144d59a88 = "0x14083e57f" as const;
+
+/** **`sub_14083e490`:** trait **`call qword [rbp+0x20]`** (**§J.4.14**). */
+export const BinarySub14083e490IndirectCallRbpPlus20 = "0x14083e5a9" as const;
+
+/** **`.rdata`** blob root: **`*(this+0x60)==sub_142345a90`** on stock image (**§J.4.14**). */
+export const BinaryRdataWsaIoVtableRoot144d59a88 = "0x144d59a88" as const;
+
+/** **`0x144d59a88+0x60`** → **`sub_142345a90`** (**§J.4.14**). */
+export const BinaryRdataWsaSendPtrAt144d59ae8 = "0x144d59ae8" as const;
 
 /**
  * Known **`sub_14044eae0`** call sites. Wrappers **`sub_140444950`** / **`sub_1405e5170`** embed Rust metadata naming
@@ -300,14 +421,35 @@ export const BinarySub140516d40FromRelayCallSites = {
   caseF5a2: "0x14044f758",
 } as const;
 
+/**
+ * **`label_14044f160` (B):** **`if (*(slot+0x3a)!=0) slot[1].q -= 1`** before **`var_218`** repack (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§E.3a–E.3b**).
+ * **Heuristic:** at-most **`-1`** updates suggest **filter/endpoint/relay** consumption; **`>1`** steps or arbitrary rewrites point to **bridge**-style paths (**same doc** **§E.3b**, **§J.2**).
+ */
+export const BinarySub14044eae0RelayDecrementSlot1Q = "0x14044fae1" as const;
+
+/** Synthetic **PONG**: **`var_218.o = zmm8`** (clears **`slot[1]`** lane for write-back) (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§E.3b**). */
+export const BinarySub14044eae0PongClearVar218 = "0x1404500b5" as const;
+
+/** **`sub_140516d40`**: **`arg2[1]` → `*(new_row + 0x10)`** (**HLIL** **`*(result+rcx+0x10)=zmm1`**) — ties **`var_218`** pack to **`0x58`** layout (**`BINARY_NINJA_MCP_WORKFLOW.md`** **§E.3b**). */
+export const BinarySub140516d40StoreArg2Int128AtRowPlus10 = "0x140516de5" as const;
+
 /** Graph / distance search that forwards **`+0x40`** from neighbor **`0x58`** rows into **`sub_140516d40`** @ **`0x1403a8e7d`**. */
 export const BinarySub1403a7a00 = "0x1403a7a00" as const;
 
 /** “Dummy packet” injector: **`sub_140516d40`** @ **`0x1404f0b1b`** (see **`BINARY_NINJA_MCP_WORKFLOW.md`** §E.6). */
 export const BinarySub1404f0910 = "0x1404f0910" as const;
 
-/** Connection / multi-slot path with several **`sub_140516d40`** calls and inlined **`0x58`** writes (§E.6). */
+/**
+ * Connection / multi-endpoint path: **`sub_140516d40`** ×4 **plus** inlined **`imul rcx, rdx, 0x58`** **`movups`** bursts
+ * (**`0x1404f4a82`–`0x1404f4acd`**, **`0x1404f4b36`–`0x1404f4b81`**) — **`BINARY_NINJA_MCP_WORKFLOW.md`** **§J.4.12**.
+ */
 export const BinarySub1404f3a90 = "0x1404f3a90" as const;
+
+/** Inlined full **`0x58`** row (**`[rsi+0x38]`** deque); mirrors **`{@link BinarySub140516d40}`** layout (**§J.4.12**). */
+export const BinarySub1404f3a90InlineRowWriteVec38 = "0x1404f4a82" as const;
+
+/** Inlined full **`0x58`** row (**`[rsi+0x20]`** deque); dual-tail sibling of **`{@link BinarySub1404f3a90InlineRowWriteVec38}`** (**§J.4.12**). */
+export const BinarySub1404f3a90InlineRowWriteVec20 = "0x1404f4b36" as const;
 
 /** Large map/relay-related system; **`sub_140516d40`** @ **`0x14074b501`**, slot **`+0x40`/`+0x48`** @ **`0x14074ca69`**, zero-init through **`+0x40`** @ **`0x14074cc73`** (§E.6–E.7). */
 export const BinarySub14074aa00 = "0x14074aa00" as const;

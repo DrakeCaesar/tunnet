@@ -109,15 +109,15 @@ In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewr
 
 **MCP / BN check (`decompile_function sub_1402f5840`, stock `tunnet.exe.bndb`):**
 
-- **`0x1402f5bfe`**: `if (*(rbx_3 + 0x7a) == 2)` immediately before **`sub_1402f9a40`** @ **`0x1402f5c26`** (full header/subject composer).
-- **`0x1402f5cc1`**: `if (*(rbx_3 + 0x7a) != 2)` → packs from **`rax_11`** / **`sub_1404628b0`** / tape-style path **without** that **`sub_1402f9a40`** call — same slot, **non-compose** outbound.
+- **`0x1402f5bf5`–`0x1402f5bfe`**: **`cmp byte [rbx+0x7a], 2` / `jne 0x1402f5f3c`** — fall-through only when **`*(slot+0x7a)==2`**, then **`call sub_1402f9a40`** @ **`0x1402f5c26`** (full header/subject composer).
+- **`0x1402f5cbd`–`0x1402f5cc1`**: **`cmp byte [rbx+0x7a], 2` / `je 0x1402f5f3c`** — when **`==2`**, **skips** **`dword [rsp+0x108] ← dword [[rsp+0x298]+8]`** (**tape `rax_11[1].d`** lane); **`!=2`** falls through into **`rax_11`** reload (**§J.3.4**). (**Distinct** from **Gate A**: **`!=2`** there jumps **before** composer — **§J.3**.)
 - **`0x1402f75bf`**: `*(rdi_14 + 0x7a) = r8_13.b` on inbound merge into **`rdi_14`** (packet slot); **`r8_13.b = 2`** is prepared @ **`0x1402f90ed`** on the path into that merge.
 
 So “game code” definitely splits **compose (`0x7a==2`) → `sub_1402f9a40`** vs **copy/other builder**. **§E.1a** documents **HLIL order** (**`0x1402f5bfe` before `0x1402f75bf`**), **`NetTock` cadence**, the **`0x1402f5bdb` same-invocation compose** spine, and **§E.1b** debunks **`SendBack`** string xrefs as **serde/particles**.
 
 ### E.1) Reply / “reply-chain” subject and slot flag **`+0x7a`**
 
-In **`sub_1402f5840`**, the outbound builder **`sub_1402f9a40`** is invoked only when **`*(packet_slot + 0x7a) == 2`** (HLIL @ `0x1402f5bfe` → call @ `0x1402f5c26`). Other values take the branch that copies from **`rax_11`** instead (same function, @ `0x1402f5cc1`).
+In **`sub_1402f5840`**, **`sub_1402f9a40`** is invoked only when **`cmp [slot+0x7a], 2` / `jne`** does **not** fire (**§J.3.4** Gate **A** → **`0x1402f5c26`**). **`!=2`** there jumps **`0x1402f5f3c`**, **not** straight to **`rax_11`** reload — tape dword **`[[rsp+0x298]]+8`** is merged at **Gate B** (**`0x1402f5cbd`–`0x1402f5cc1`**) when **`*(slot+0x7a)!=2`** at **that** merge.
 
 After inbound handling, the receive path writes **`*(slot + 0x7a) = r8_13.b`** with **`r8_13.b = 2`** on the merge into that block (HLIL @ **`0x1402f75bf`**). **HLIL order** puts **`0x1402f5bfe` before** this merge on the **`0x1402f965f`** spine, so **`sub_1402f9a40` does not read that `= 2` on the same inner-loop iteration** as the merge write. A **later** **`0x1402f5bfe`** (often **same `sub_1402f5840`**, next **`rdi_43`**, if the slot pointer repeats and **`0x7a` is still `2`**—or after **PING/PONG** paths that may rewrite **`0x7a`** to **`1`** @ **`0x1402f78a5`**) decides the actual composer. **§E.1a** documents **`NetTock` cadence**; **§E.1a** “CFG” documents the **infection `0x1402f5bdb`** case where **same-invocation compose is explicit in HLIL**.
 
@@ -224,6 +224,22 @@ Inside the relay **`while`**, **`sx.q(jump_table_1404504bc[zx.q(r15_2[result_1 *
 On **(B)** after **`0x14044fd7f`**, HLIL reaches **`sub_14037bf80`** and **`*(slot+0x7a) != 2`** stores that **copy `var_228`… back into `&slot[8]`** (**`rsi_15` @ `0x14044fc44`**, **`rsi_23` @ `0x140450341`**), so the **decremented second `qword`** is not **only** a **`0x58`** queue artifact—it can **round-trip into the live packet slot**.
 
 **Simulator note:** do **not** model relay as a single **`var_228` packer**: **(A)** preserves **`slot[1].q`** and keeps **`+0x3b`** in **`var_1ee:1`**, while **(B)** may **clear `var_1ee:1`** and **subtract one** from **`slot[1].q`**. The **byte predicate** ahead of **`0x14044fa24`** mixes **`rbp_5[1].q`** with **`*(rbp_5+0x3a)`** (**`0x14044f9ec`–`0x14044fa0f`**) — treat as **relay classifier**, not the **tape `rax_11[1].d`** dword (**§J.4.1**).
+
+### E.3b) **`slot[1].q` inside relay — not born here (except synthetic clears)**
+
+**HLIL mapping (`decompile_function("sub_14044eae0")`):** on every **`sub_140516d40(&var_b8, &var_228)`** tail, **`var_228 = *slot`** (first **`int128`** at **`slot+0`**) and **`var_218`** is the **second** logical lane fed into **`arg2[1]`** — **`sub_140516d40`** then writes **`arg2[1]`** to **`*(row + 0x10)`** on the appended **`0x58`** row (**`decompile_function("sub_140516d40")`** **`*(result + rcx + 0x10) = zmm1`** with **`zmm1 = arg2[1]`**). So **`var_218`** is the **`int128`/SIMD view of the same bytes as `slot[1].q`** for packing purposes.
+
+**Copy-forward tails (no new hop constant):** **`label_14044ef8a`** (**`0x14044f0f2`**) and **`label_14044f5a2`** (**`0x14044f710`**) set **`var_218 = r15_5[1].q` / `rbp_9[1].q`** — **pure read** of the live **`NetNode` packet slot**. **`label_14044f160` (A)** (**`0x14044fd2b`**) sets **`var_218 = var_240_4`** where **`var_240_4`** was captured as **`rbp_5[1].q`** @ **`0x14044fa00`** — still **no relay-side invention** of the counter.
+
+**Decrement (only (B) narrow arm):** **`if (*(rbp_5 + 0x3a) != 0) rdi_27 -= 1`** @ **`0x14044fadf`–`0x14044fae1`** with **`rdi_27`** initialized from **`rbp_5[1].q`** @ **`0x14044fa87`–`0x14044fa8f`**, then **`var_218 = rdi_27`** @ **`0x14044fb82`** before **`0x14044fd7f`**.
+
+**Synthetic PONG:** **`var_218.o = zmm8`** @ **`0x1404500b5`** — **`zmm8`** is the **loop-zero SIMD scratch** (**`0x14044edb0`**), so this path **explicitly clears** the **`var_218`** lane before **`sub_14037bf80`** and the **`rsi_21[1] = var_218.o`** store @ **`0x140450194`** ( **`&slot[8]`** style pointer).
+
+**Synthetic PING:** the **`"PING"`** stub (**`0x14044f7d1`–`0x14044f999`**) builds **`var_228` / `var_208`** from literals; **`var_218`** is still passed into **`rsi_14[1]`** @ **`0x14044f991`** — BN HLIL may **hide a zero-init**; **confirm in disasm** if you need the **exact** **`slot[1].q`** on first inject.
+
+**Bottom line for “first writer” research:** **`sub_14044eae0`** **reads** **`slot[1].q`**, optionally **decrements once** on **`label_14044f160` (B)**, and **zeros** it for **synthetic PONG**. **Initial hop counts** for normal forwarded packets still come from **upstream** (**`sub_1402f5840`** tape / **`memcpy`** / **`0x90`** slot fills, etc.) — keep **`§E.6` / `sub_140516d40`** row builders as the **append** side, not the **origin** of the first value in the **live slot**. Neighbor helpers **`sub_14037bf80` / `sub_14037de30`** touch **`+0xc` / `+0x10`** probe rows (**§J.1**), not **`slot[1].q`** unless you **prove** a merged layout.
+
+**Heuristic (field semantics, not proof):** if a path **only reads** a counter and applies a **single `-1`** when it mutates at all, treat it as **per-hop consumption** — **filter / endpoint / relay-style forward** behavior until you see a wider dataflow. If you find **`-k` with `k>1`**, **reassignment from an unrelated expression**, or **TTL set from a constant unrelated to the prior value** on forward, prioritize **bridge / chamber** style logic (**§J.2**). **`sub_14044eae0` (B)** matches the **`-1` only** pattern (**`0x14044fae1`**).
 
 ### E.4) Who calls **`sub_14044eae0`** (Rust names from panic metadata)
 
@@ -333,6 +349,8 @@ Inside **`sub_1402f9a40`**, when **`r13.d == 2`** (first dword of the **`arg3`**
 **`get_xrefs_to(0x14079fa10)`** is large; notable **net-adjacent** callees include **`sub_140516d40`** (**`0x140516da2`**, **`0x140516e36`**), **`sub_140516f40`** (**`0x140516f75`**, **`0x140516f95`**), **`sub_1404f3a90`**, the **`sub_1402f0840` / `sub_1402f0e70` / …** family next to **`sub_1402f5840`**, and **`sub_140380650`** (many sites). Treat it as **shared grow plumbing** for **`0x58`-strided** tables, not as the **first** writer of **`*(row+0x40)`**.
 
 **`sub_140516d40`** and **`sub_140516f40`** are **the same algorithm class**: HLIL for **`sub_140516d40`** already branches on **`*(arg1[2] + 0x48)`** and calls **`sub_14079fa10`** on either **`arg1[2]+0x18`** or **`arg1[2]+0x30`** before writing the **`0x58`** row (**`+0x40` ← packed `arg2[4]`**). **`sub_140516f40`** repeats that **dual-`Vec`** choice with only **field-store ordering** differences. **`get_xrefs_to(0x140516f40)`** returns **only** **`sub_140380650`** (many internal call sites). **`get_xrefs_to(0x140380650)`** returns **only** **`sub_140175c50`** @ **`0x14017664f`**. The related **`sub_140386c30`** helper is called from **`sub_140175c50`** @ **`0x140176bd6`** **and** from the twin walker **`sub_14016d910`** @ **`0x14016f587`** (§E.11). So **`sub_140516d40`** covers **NetTock / relay / graph / pathfinding** (§E.5–E.6), while **`sub_140516f40`** is **specialized codegen** for **`sub_140380650`** inside **`sub_140175c50`** only.
+
+**Third mechanical class — `sub_1404f3a90` inline clone:** **`fetch_disassembly("sub_1404f3a90")`** contains **`imul rcx, rdx, 0x58`** **`movups`** bursts @ **`0x1404f4a82`–`0x1404f4acd`** and **`0x1404f4b36`–`0x1404f4b81`** that write **`+0x00`…`+0x50`** **without** **`call sub_140516d40`** (**§J.4.12**). **`sub_1405177a0`** is **not** this class (**`× 0x28`** tail — **§J.4.8**).
 
 ### E.11) **`update_preview_connections`** — `sub_1401597f0` / **`sub_140175c50`** / **`data_142429eb0`**
 
@@ -489,7 +507,7 @@ Filtered hits include the ECS system name **`tunnet::net::endpoint::update`** in
 
 #### J.1) BN session notes — “how TTL is set” (in progress)
 
-MCP was run against the stock **`tunnet.exe.bndb`** (see **§1** one-request-at-a-time). **Initial TTL on compose** is **not** pinned yet; **relay-side decrement** of a **candidate hop/TTL field** is partially visible.
+MCP was run against the stock **`tunnet.exe.bndb`** (see **§1** one-request-at-a-time). **Where compose skips the tape dword reload** is **pinned** (**§J.3.4**); **numeric initial TTL inside `sub_1402f9a40`** vs **ring `+0x18`** is **still** open. **Relay-side decrement** of a **candidate hop/TTL field** is partially visible.
 
 **Strings (navigation only):**
 
@@ -504,23 +522,36 @@ MCP was run against the stock **`tunnet.exe.bndb`** (see **§1** one-request-at-
 
 - **`get_xrefs_to(0x140516d40)`** includes **`sub_14044eae0`** @ **`0x14044f13a`**, **`0x14044fd7f`**, **`0x14044f758`** — full per-site field map in **§E.3a**.
 - On **`label_14044f160`** only the **narrow (B)** fall-through (**`0x14044fa2e`**) does **`rdi_27 = rbp_5[1].q`**, **`if (*(rbp_5+0x3a) != 0) rdi_27 -= 1`**, then **`var_218 = rdi_27`** before **`sub_140516d40(&var_b8, &var_228)` @ `0x14044fd7f`**. The **(A)** arm (**`0x14044fc99`**) hits the **same call** with **no** **`slot[1].q--`**, but **splits `+0x3a` / `+0x3b` into `var_1ee`’s two bytes** (**§E.3a**).
-- **Working hypothesis:** **`slot[1].q`** behaves like a **remaining-hop / counter** on **(B)** only; **(A)** + the **other two `516d40` sites** copy it **verbatim** — still **not** the same dword as **tape `rax_11[1].d` → `arg2+0x48`** unless you prove a shared writer.
+- **Working hypothesis:** **`slot[1].q`** behaves like a **remaining-hop / counter** on **(B)** only; **(A)** + the **other two `516d40` sites** copy it **verbatim** — still **not** the same dword as **tape `rax_11[1].d` → `arg2+0x48`** unless you prove a shared writer. That **single-step `-1`** shape fits a **filter/endpoint/relay** classifier more than a **bridge** (**§E.3b** heuristic, **§J.2**).
 
-**`sub_14037bf80` (`0x14037bf80`)** — neighbor row touch:
+**`sub_14037bf80` (`0x14037bf80`)** — neighbor hash **match writer** (not a generic TTL setter):
 
-- On match, HLIL does **`*(rsi_1 + 0xc) = arg4`** and **`*(rsi_1 + 0x10) = arg6`** (**`rsi_1`** points into a **`0x14`**-strided open-hash value). Relay callers pass **`arg4 = 1`** and **`arg6`** from an incremented counter sourced from **`*(r13_1 + idx*0x38 + 0x30)`** in the same function — **may be path bookkeeping**, not the same field as **`slot[1]`** above; keep separate until one dataflow graph merges them.
+- **`decompile_function("sub_14037bf80")`:** **`sub_140766420` / SIMD tag scan** over **`arg2`**, then **two** **`sub_1406b6550`** probes. On hit: **`rcx_4 = *(rsi_1 + 0xc)`**, **`*(rsi_1 + 0xc) = arg4`**, **`*(rsi_1 + 0x10) = arg6`**, **`*(arg1 + 4) = rcx_4`**, **`*arg1 = 1`**, **`return arg1`** (**`0x14037c097`–`0x14037c0e5`**). Miss path calls **`sub_140643270`** and returns **`*arg1 = 0`**. There is **no** HLIL store that rewrites a relay **`var_218` / `slot[1].q`** blob inside this helper — it only mutates **`0x14`-strided neighbor cells** at **`+0xc` / `+0x10`**.
+- Relay still passes **`arg4 = 1`** and an **`arg6`** counter as before — treat as **open-hash / path bookkeeping** until a **single** merged field map proves otherwise.
+
+**`sub_14037de30` (`0x14037de30`)** — **returns `entry + 0xc`**, refcount helper:
+
+- **`decompile_function("sub_14037de30")`:** same **probe skeleton** as **`sub_14037bf80`**, but on success **`return &result[0xc]`** (**`0x14037df57`**), else **`nullptr`**. Relay **`0x14044fecb`** does **`*rax_128 += 1`** on that pointer — **increment a counter in the matched neighbor row**, not **set hop TTL from scratch**.
+
+**`sub_1402f5840` — same `var_300.d`, different offset in another packed row:** HLIL on the **infection / spam-template** tail (**`0x1402f8ee8`–`0x1402f8f09`**) stores **`*(row + 8) = 0xd`** (small literal) and **`*(row + 0x18) = var_300.d`** after **`*(row + 0x10) = var_308`**. So the **tape-reloaded dword** (**`var_300.d`**) is **not universally “`+8` relative to the same base”** across every **`sub_1402f5840`** sub-structure — **rename offsets per table** when correlating captures.
+
+**Cross-check — `memcpy(..., &var_308, 0x90)` vs `sub_1405211a0` vs `sub_14079a770`:**
+
+1. **`memcpy` @ `0x1402f5ed1`:** HLIL **`memcpy(&rsi_2[1][…], &var_308, 0x90)`** copies **only** **`0x90` bytes from `&var_308`**. On the tape-reload spine, **`var_300.d = rax_11[1].d` @ `0x1402f5cd2`** and **`var_308 = *rax_11` @ `0x1402f5cdc`** are **separate** assignments — **`var_300` is not part of the memcpy source range**. Treat **`var_300`** as **adjacent stack scratch** feeding **`var_200` / `sub_1405211a0` / `sub_140516d40`**, not a trailing tail of the **`0x90`** slab.
+2. **`sub_1405211a0` (`0x1405211a0`):** prologue **`int128_t* rsi = arg1`**; **`sub_1402f5840`** passes **`rsp+0x108` / `&var_300`** on several tails (**§J.4.3** table). **`sub_1405208d0` (`0x1405208d0`)** ( **`decompile_function`**) **zeros `arg1[0..0xf]`** and writes **`*(arg1+0x18)=…`** from a **float / capacity pipeline** — it **clobbers** any **tape dword** that had just landed at **`rsp+0x108`** on those branches (**§J.4.3–§J.4.5**).
+3. **`sub_14079a770` (`0x14079a770`):** **`decompile_function`** shows **`sub_1406e7400`**, **`0x30`-strided** walks, **`arg1[1][rdx]=…`**, **`memmove` compaction**, frees — **catalog / strip bookkeeping**. **`sub_1402f5840`** calls it @ **`0x1402f7c97`** with **`arg1 = &rbp_7[0x160]`**, **not** **`&var_300`**, so it is **not** the function that **first merges** the tape dword into the **`0x90`** **`memcpy`** image.
 
 **Next BN steps (initial TTL):**
 
 1. **Tape row dword:** **§J.3.2** now pins **`[rsp+0x298]`**, **RNG + `.rdata` blend**, **disasm layout into `row+8`**, and **both** **`sub_14204f0e0`** sites — remaining work is **runtime correlation** (breakpoint **`0x1402f5ccf`**) or **symbolic/`i_1==6`** narrowing on **`sub_14204f0e0`**.
-2. **Compose `+0x18`:** **`sub_1423b0fc0` → `sub_1423af220`** reads as **`String` reserve / UTF-8`**, not wire TTL (**§J.3.3**); still map **which ring field** carries **numeric TTL** on send. Relay **`slot[1].q`** first-writer remains **§E.3a** / **§J.1**.
+2. **Compose `+0x18`:** **`sub_1423b0fc0` → `sub_1423af220`** reads as **`String` reserve / UTF-8`**, not wire TTL (**§J.3.3**); still map **which ring field** carries **numeric TTL** on send. Relay **`slot[1].q`**: **§E.3b** — **not first-written inside `sub_14044eae0`** except **synthetic PONG clear**; initial value still **upstream** (**`sub_1402f5840`** **`memcpy`/tape**, **`sub_14037bf80`** neighbor **`+0xc`/`+0x10`** — **separate** fields per **§J.1**).
 3. Optional: **`get_xrefs_to`** on the **`Debug` vtable`** that references **`0x14248f8c0`**, if BN UI shows one — MCP **`get_xrefs_to`** on the string alone was empty.
 
 #### J.2) Chamber **`1.*.1.0`** endpoints — bridge **first-octet** remap **and TTL** (topology hint for BN)
 
 - **Address form:** endpoints in the wiki pattern **`1.b.1.0`** (e.g. **`1.3.1.0`**) are **in-chamber** identities. The **`0.b.1.0`** pattern is **not** used as the canonical in-chamber address for those sites — **`1.*.1.0`** is.
 - **Bridge — addressing:** the chamber **bridge** rewrites the **first octet** on forwarded packets: **egress (out of chamber)** **`1 → 0`**, **ingress (into chamber)** **`0 → 1`**. Packets seen **outside** can therefore carry **`0.*.1.0`**-shaped addressing for the same logical chamber endpoint.
-- **Bridge — TTL:** the same **bridge** code paths can **set or change TTL** (initial remaining hops / counter), not only the **relay** decrement described in **§J.1**. Treat **bridge / chamber forward** as a primary place to find **immediate constants** and **stores** into the TTL field alongside the **first-octet** transform.
+- **Bridge — TTL:** the same **bridge** code paths can **set or change TTL** (initial remaining hops / counter), not only the **relay** decrement described in **§J.1**. Treat **bridge / chamber forward** as a primary place to find **immediate constants** and **stores** into the TTL field alongside the **first-octet** transform. **Discriminator (working rule):** **relay**-like paths so far show at most **`slot[1].q -= 1`** (**§E.3a–E.3b**); **bridge**-like behavior is more likely when BN shows **multi-step decrements**, **subtract `>1`**, or **arbitrary reassignment** of the same field independent of the prior value.
 - **BN:** correlate **first-dword / first-byte** transforms and **TTL writes** on the same spine as **`sub_14044eae0`**, **`sub_140516d40`**, and any **`sub_1402f5840`** slot fill that runs when a packet **crosses** a chamber boundary.
 
 Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch explicitly **reflects** or **drops** on the TTL field.
@@ -529,16 +560,31 @@ Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch
 
 **Why there is no `"0.3.0.0"` string anchor:** MCP `list_strings_filter("0.3.0.0")` on the stock **`tunnet.exe.bndb`** returns **no hits**; the address is not stored as that ASCII quad in **`.rdata`**.
 
-**Single composer entry:** `get_xrefs_to(0x1402f9a40)` → **only** **`sub_1402f5840` @ `0x1402f5c26`**, immediately after **`if (*(rbx_3 + 0x7a) == 2)`** @ **`0x1402f5bfe`**. First argument is **`&var_308`** (stack scratch the HLIL names **`var_308`**, not the raw **`rbx_3`** slot base).
+**Single composer entry:** `get_xrefs_to(0x1402f9a40)` → **only** **`sub_1402f5840` @ `0x1402f5c26`**, reachable only when **`cmp byte [rbx+0x7a], 2` / `jne 0x1402f5f3c`** @ **`0x1402f5bf5`–`0x1402f5bfe`** does **not** branch (**i.e. `*(slot+0x7a)==2`**). First argument is **`&var_308`** (**`rsp+0x100`** stack scratch in disasm, not the raw **`rbx`** slot base).
 
-**After `sub_1402f9a40` returns (`0x1402f5c38` …):**
-
-- If **`*(var_3a8_1 + 0x7a) != 2`**, HLIL frees **`+0x58`**, copies **`var_308` / `var_2f8` / `var_2e8` / `var_2d8`** into **`var_3a8_1[4..7]`**, then forces **`var_308.d = 0x3020101`** @ **`0x1402f5c93`** (header reset for the next stage).
-- If **`+0x7a` stays `2`**, that whole block is **skipped** — **`var_308` is not reloaded from `rax_11`** on the next gate either: **`if (*(rbx_3 + 0x7a) != 2)`** @ **`0x1402f5cc1`** is the tape path **`var_300.d = rax_11[1].d`**, **`var_308 = *rax_11`** @ **`0x1402f5cd2`–`0x1402f5cdc`**. So for **compose mode that remains `0x7a == 2`**, **initial TTL / header dwords must come from what `sub_1402f9a40` wrote into `&var_308`**, not from the **`rax_11`** table used on the **`0x7a != 2`** branch.
+**After `sub_1402f9a40` returns (`0x1402f5c2b` …):** **`cmp byte [rax+0x7a], 2` / `je 0x1402f5c56`** @ **`0x1402f5c34`–`0x1402f5c38`** — when **`==2`**, skip **`HeapFree`** on **`[slot+0x58]` / `[slot+0x60]`** (**`0x1402f5c3a`–`0x1402f5c51`**). Then **`movdqu`** from **`[rsp+0x100…]`** into **`[slot+0x40…]`** (**`lea rdi,[rax+0x40]`** @ **`0x1402f5c30`**), **`mov dword [rsp+0x100], 0x3020101`** @ **`0x1402f5c93`**. **Dual gate / tape reload:** **§J.3.4** (lead exhausted).
 
 **`+0x3a` vs `sub_140516d40` @ `0x1402f66ea`:** **`if (*(rbx_3 + 0x3a) != 2)`** @ **`0x1402f5f46`** guards the large spine that ends in **`sub_140516d40(arg14, &var_308)`** @ **`0x1402f66ea`** (and the parallel tail @ **`0x1402f6808`**). When **`*(rbx_3 + 0x3a) == 2`**, that **`sub_140516d40`** block is skipped — other tails push **`var_308`** with **`memcpy(..., &var_308, 0x90)`** instead (e.g. **`0x1402f5ed1`**, **`0x1402f83a1`**, with nearby **`var_308.w = 0xf` / `0x14`** staging).
 
 **5-byte row / regional tuple (ties repo TS to BN):** In **`sub_1402f9a40`**, **`r13 = zx.q(*arg3)`** @ **`0x1402f9a70`** (**arg3** is **`result_2`** from **`sub_1402f5840`**, i.e. **`var_120_1 + rdi_43 * 5`**). **`if (r13.d == 4)`** @ **`0x1402f9ba7`** plus **`arg3[1..3]`** byte checks @ **`0x1402f9e46`** matches **`src/endpoint-address-encoding.ts`** **`plus_one_all_octets_regional_mainframe`** **`(4,1,1,1)`** for wiki **`0.1.0.0` / `0.2.0.0` / `0.3.0.0`** (same 5-byte prefix; **which** regional mainframe is live is **which `NetNode` / slot** is iterating, not a different first-row byte).
+
+##### J.3.4) **Lead exhausted — compose `*(slot+0x7a)==2` vs `[[rsp+0x298]]+8` tape dword (`var_300.d`)**
+
+**Goal:** close the thread “when **`+0x7a` is compose**, where does **`rax_11[1].d` / `[[rsp+0x298]]+8`** stop applying?”
+
+**Gate A — enter composer (`fetch_disassembly("sub_1402f5840")`):**
+
+- **`0x1402f5bf5`–`0x1402f5bfe`**: **`cmp byte [rbx+0x7a], 2`** then **`jne 0x1402f5f3c`**. If **`*(slot+0x7a) != 2`**, control jumps **straight to `0x1402f5f3c`** — **no** **`sub_1402f9a40`**, **no** **`movdqu`** mirror **`rsp+0x100 → [slot+0x40]`**, **no** **`dword [rsp+0x100]=0x3020101`** reset on this spine.
+- **`0x1402f5c26`**: **`call sub_1402f9a40`** — **only** reachable via **fall-through** when **`==2`** at **Gate A**.
+
+**Gate B — tape row reload into `rsp+0x108` / `rsp+0x100`:**
+
+- **`0x1402f5cbd`–`0x1402f5cc1`**: **`cmp byte [rbx+0x7a], 2`** (**`rbx = qword [rsp+0x60]`** @ **`0x1402f5cb8`**) then **`je 0x1402f5f3c`**. When **`*(slot+0x7a)==2`**, jump **skips** **`0x1402f5cc7`–`0x1402f5cdc`**: **`rcx = [rsp+0x298]`**, **`eax = dword [rcx+8]`** → **`[rsp+0x108]`**, **`rax = qword [rcx]`** → **`[rsp+0x100]`** — i.e. **no** reload from the **`rax_11`** / **`0x30`** tape row pointer (**§J.3.2**).
+- When **`!=2`** at **Gate B**, fall-through runs that reload — **same opcodes** **`§J.3.2`** already cited.
+
+**Merge note:** **`0x1402f5cb8`** is also targeted by **`jmp 0x1402f5cb8`** (**e.g. `0x1402f6b3e`**) and **`jae 0x1402f5cb8`** (**`0x1402f5e16`**); **`0x1402f5cbd`** by **`jmp 0x1402f5cbd`** (**`0x1402f5eda`** after **`memcpy`**). **Gate B** is a **global merge**, not **compose-only** — but **whenever** **`*(slot+0x7a)==2`** here, the **`[[rsp+0x298]]+8 → dword [rsp+0x108]`** path is **not taken**.
+
+**Conclusion:** **`*(slot+0x7a)==2`** implies **`dword [rsp+0x108]`** is **not** refreshed from **`dword [[rsp+0x298]+8]`** at **`0x1402f5ccf`**. For **TTL-like tooling**, treat **`var_300.d`** on **compose-branched** iterations as **whatever `sub_1402f9a40` + prior stack mirrors left**, **orthogonal** to the **tape ChaCha row** until a **different** writer is proven (**§J.3.3**, **§J.4**).
 
 ##### J.3.1) `*(arg2 + 0x1c5)` switch ↔ **`MainframeHeaderU32`** ↔ two `arg1` (`&var_308`) tails
 
@@ -640,6 +686,7 @@ So on this spine the **hop/TTL seed from `rax_11[1].d`** is **not** merged into 
 - **`arg2[1]`** (**`+0x110`…`+0x11f`**): **low qword** **`[rsp+0x110]`** ← **`rdi`** (first site) or **`rsi`** (second site); **high qword** is the **low 8 bytes** of **`xmm1`** after **`movdqu xmm1, [rsp+0x200]`** then **`movdqu [rsp+0x118], xmm1`** (so **`[rsp+0x200]`**’s first qword continues the **`int128`**).
 - **`arg2[2..3]`** (**`+0x120`…`+0x13f`**): remainder of **`xmm1`**, the **`[rsp+0x210]`** qword staged at **`[rsp+0x128]`**, and the **`[rsp+0x130]`** / **`0x135`** / **`0x139`** / **`0x13a`…`0x13c`** small-field pack from **`[rsp+0x40]`**, **`[rsp+0x44]`**, **`[rsp+0x38]`**, **`[rsp+0x3c]`**, and byte temps — **tuple / scratch**, not the **`rax_11`** reload.
 - **`arg2[4]`** (**`+0x140`…`+0x14f`**): **`mov qword [rsp+0x140], rcx`** with **`rcx` from `[rsp+0x1a0]`** (**`*rax_11` / first qword of the per-destination row**), then **`mov dword [rsp+0x148], ecx`** with **`ecx` from `[rsp+0x1a8]`** (**`rax_11[1].d`**, same dword as **`var_300.d`** on the tape path), then **`mov byte [rsp+0x14c], 1`**. So within **`arg2[4]`** as an **`int128`**, the **TTL seed dword** is at **byte offset `+8`** inside that lane, i.e. **`arg2` byte offset `0x48`**, which **`sub_140516d40` lands at `row + 0x40 + 8 = row + 0x48`** inside the **`0x58` row**.
+- **Read-back in the same function (later spine):** **`0x1402f95d7`**, **`0x1402f9615`**, **`0x1402f9635`**, **`0x1402f9648`** each **`mov …, qword [rdx + (table_index)*0x58 + 0x40]`** into **`rsp+0x308` / `0x2e8` / `0x2f0` / `0x2e0`**, then **`sub_142244e00` @ `0x1402f9689`** after **`lea rdx,[rsp+0x1e0]` @ `0x1402f9677`** (setup **`r8d`/`r9d` → `[rsp+0x7c]`/`[rsp+0x78]`** @ **`0x1402f967f`–`0x1402f9684`**). Those **`mov`** instructions load only the **low qword** of **`arg2[4]`** (**bytes `row+0x40`…`+0x47`**, i.e. **`*rax_11` copy**), **not** a lone **`dword` at `+0x48`**. **`decompile_function("sub_142244e00")`** is a **small keyed lookup / fill `*arg1`** helper (**`*( *(arg2+8) + … + r10*0x18 + 0x10)`**), **not** “return hop TTL for UDP.” **`arg2`** there is **`{ incoming_rcx, incoming_rdx }`** saved at **`sub_1402f5840`’s** prologue (**§J.4.10.4**), **not** the **`0x58`** row.
 
 **Reconcile with §J.4 ring table:** the **same logical value** **`rax_11[1].d`** is still the per-row TTL seed, but **containers differ**: on the **beep / PINGPONG ring** it sits at **ring row `+0x18`** next to **`var_208` at `+0x10`**, while on this **`sub_140516d40`** tail it sits in **`arg2[4]`** and becomes **`(0x58 row) + 0x48`**. **`arg2[0]` does not carry that dword** on these two call sites.
 
@@ -706,6 +753,236 @@ On this **success slice**, there is **no** **`mov` / `movaps` / `movups` into `[
 
 **Opcode `0x190` inside `sub_1405211a0`:** **`movzx` off `*arg2`** hits **`jump_table_140536480`**; HLIL for **`sub_1405211a0`** shows **`case 0x140531832`** (**`*arg2 == 0x190`**) clearing locals then **`return sub_140531847(&jump_table_140536480, arg2, arg3, arg4) __tailcall`**. **`decompile_function("sub_140531847")`** sets **`arg_40 = 0x19b`**, wires a long **Architects / recruit** **`.rdata` string** into **`arg_20`**, and **`return sub_140534d0a(rsi, …, 0x66, &arg_f8) __tailcall`** — i.e. **another canned-dialog `String` build into `rsi` / `arg1` (`rsp+0x200` from `sub_1402f5840`)**, not a **hop counter** load from **`rax_11`**.
 
+##### J.4.8) **Tape seed dword → beep/PINGPONG ring row `+0x18` — explicit VAs; phishing `+0x48` false lead; `sub_1405177a0` family**
+
+**Producer chain (same spine as §J.4 table, disasm-addressed for tooling):**
+
+1. **`var_300.d = rax_11[1].d`** @ **`0x1402f5cd2`** — only on **`if (*(slot + 0x7a) != 2)`** (**`0x1402f5cc1`**).
+2. **`var_200 = var_300.d`** @ **`0x1402f5da5`** (HLIL name **`var_200`**; same dword as **`rax_11[1].d`** on that branch).
+3. **`*(ring_base + (count * 5 << 3) + 0x18) = var_200`** @ **`0x1402f5f26`** — **first durable store** of the tape dword into the **40-byte (`0x28`) stride** row (**§J.4** column **`+0x18`**).
+
+**`get_xrefs_to(0x1402f5f26)`** in BN MCP may return **no rows** (instruction is not always indexed as a symbol target); use the **function** **`sub_1402f5840`** and the **VAs above** for breakpoints.
+
+**`*(… + 0x48) = 0x19` is not hop TTL:** @ **`0x1402f8d89`** inside **`sub_1402f5840`**, **`rbp_5`** points at a **`0xe0`**-byte **static phishing-title table** built from **`.rdata`** (**`"Totally n0t a v1rus"`** …). **`*(rbp_5 + 0x48) = 0x19`** is a **hard-coded UTF-8 length** for one column of that **UI / joke** table — **not** the **`*(arg17[2] + 0x48)`** “which deque?” flag used beside **`sub_14079f430`**.
+
+**Infection-sized tail reuses the same `+0x18` column:** **`*(rax_371 + (rcx_278 << 3) + 0x18) = var_300.d`** @ **`0x1402f8f09`** — same **per-row dword lane** semantics as the tape path; still **not** proof of **on-wire** TTL without a consumer proof (**§J.5**).
+
+**`sub_1405177a0` / `sub_1405179c0` / `sub_140517a50` — sibling “`rdx * 5 << 3`” pushers, thinner rows:** **`decompile_function`** shows the same **`arg1[2]`** shape as **`sub_140516d40`** (**`*(rdi + 0x48)`** branch, **`sub_14079f430`**, **`rax_1 = rdi + 0x20` / `+0x38`**, **`rcx_2 = rdx_1 * 5`**) but each **only** stores **`int128 *arg2`** @ **`+0x00`**, **`arg2[1]`** @ **`+0x10`**, and **`r14 = *(rdi+0x10)`** @ **`+0x20`** — **no** writes to **`+0x08` / `+0x18`**. So **multiple Rust call sites share the same 40-byte stride math** with **different in-use column subsets**; do not assume every **`rdx*5<<3`** row is the **five-qword beep layout** from **`0x1402f5f05`–`0x1402f5f2a`**.
+
+**Next BN lead (consumer):** find **loads** of **`(row_index * 5 << 3) + 0x18`** on the **deque backing** that **`sub_1402f5840`** appends to — **§J.4.9** documents a **different** bridge (**`slot+0x60`**) that may **reuse** **`var_200`** without draining the ring first.
+
+##### J.4.9) **Three different “`+0x18`” meanings — and `slot+0x58` / `slot+0x60` pack after `sub_1423a0360`**
+
+**Do not conflate offsets across objects:**
+
+| **Object / base** | **`+0x18` meaning** |
+|---|---|
+| **`NetNode` / packet `slot`** | **`sub_1423a1b30(&var_308, slot + 0x18)`** (**e.g. `0x1402f5f85`**) — **`arg2`** is a **Rust `String` / `(ptr,len,cap)`** triple living **in the component** at **`slot+0x18`**, copied into **`&var_308`**. This is **subject / text**, **not** the **40-byte deque row** dword from **§J.4** / **§J.4.8**. |
+| **40-byte deque row** | **Tape dword** @ **`0x1402f5f26`** (**§J.4.8**); row stride uses **`rdx * 5 << 3`**. |
+| **`&var_308` inside `sub_1423a0360`** | **`decompile_function("sub_1423a0360")`** reads **`*(arg2 + 0x18)`** as an **inner pointer** into **`arg2`’s buffer** for a **`fmt` / `Display` aggregate sum** (**`library/alloc/src/fmt.rs`** panic path) — **`arg2 = &var_308`**, not **`slot+0x18`**. |
+
+**`sub_1423a0360` (`0x1423a0360`)** writes **`*arg1`**, **`arg1[1]`**, **`arg1[2]`** with **`arg1 = &var_208`** — it **does not** assign **`var_200`** in HLIL. On the **`sub_1402f5840`** tails that immediately do **`var_350 = var_208.q`**, **`rbp_19 = var_200.q`** (**e.g. `0x1402f71ba`**, **`0x1402f7440`**, **`0x1402f91ba`**, **`0x1402f92cb`**, **`0x1402f93a5`**), **`var_350`** is therefore the **post-`1423a0360` first qword** of **`var_208`** (**numeric / fmt side-channel**, not the raw **`var_308`** header word), while **`var_200.q`** is whatever **`var_200`** still holds (**often the last `var_200 = var_300.d` from the tape path @ `0x1402f5da5` if no intervening overwrite** — confirm per-path in BN **stack / defs**).
+
+**Pack into the live `slot` (`rdi_13` / `var_3a8_1`) after refcount drops on `var_308`’s `String`:** **`*(slot + 0x58) = var_350`** @ **`0x1402f7581`**, **`*(slot + 0x60) = rbp_19`** @ **`0x1402f7585`** (same cluster as **`0x1402f7565`–`0x1402f7591`** filling **`+0x40`…`+0x70`**). This is the **strongest static bridge yet** from the **tape-named stack dword `var_200`** into **durable endpoint storage** (**`+0x60`**), **parallel** to **`+0x58`** taking **`var_350`**. **Still not wire proof:** next step is **relay / send** code that **reads `slot+0x60`** (or copies it into **`slot[1].q`** / UDP buffer).
+
+**Same `mov [rdi+0x40]` / `mov [rdi+0x48]` pair @ `0x1402f755d`–`0x1402f7569` — second producer:** on the path through **`0x1402f727e`** (**`mov [rsp+0xa8], …`**) → **`0x1402f72a7`–`0x1402f72b7`** (**`[rsp+0xa0] ← [rsp+0x80]`**, **`[rsp+0x98] ← [rsp+0x58]`**) → **`0x1402f74f5`** → **`0x1402f7555`**, the **qwords** written to **`slot+0x40` / `slot+0x48`** come from **`rsp+0x80` / `rsp+0x58`**, which are fed by the **`0x1402f611f`–`0x1402f6187`** **SIMD row scan** (**`sub_140765640`**, **`movdqu xmm1, [rcx+rax]`**, **`pmovmskb`**) — **not** from **`rax_11` / `516d40`**. So **offset `+0x48` on the live slot is overloaded:** tape **`rax_11[1].d`** (via **`516d40`**) **vs** bitmask/search state on **this** branch. (**Distinct** from **`*(arg1[2]+0x48)`** inside **`sub_140516d40`**, which gates **deque indices** — **§J.4.11**.)
+
+
+**`sub_142244e00`:** **`get_xrefs_to`** is **huge** (shared Rust helper); inside **`sub_1402f5840`** alone **ten** calls (**`0x1402f76ca`** … **`0x1402f9689`**, including **`0x1402f9689`** next to the **`row+0x40` qword reload** chain). Argument **`arg2`** at every site is **`lea rdx,[rsp+0x1e0]`** → **`*(arg2+8)`** is **`incoming rdx`** to **`sub_1402f5840`** (**§J.4.10.4**). **Do not** treat it as TTL-specific without local argument proof.
+
+**`sub_14079f6c0` (`0x14079f6c0`)** ( **`sub_1402f5840` @ `0x1402f76f5`** next to **`rsi_25[3]`** ) is **`Vec` reserve** with **`len << 4`** element sizing — **unrelated** to the **`rdx*5<<3`** ring.
+
+**Relay check (`sub_14044eae0`):** on **`label_14044ef8a`** / **`label_14044f160`**, **`sub_140516d40(&var_b8, &var_228)`** is fed from **`var_228 = *r15_5`**, **`var_218 = r15_5[1].q`** (**`slot[1].q`**), **`sub_1423a1b30(&var_210, r15_5 + 0x18)`**, plus **`+0x34`…`+0x3c`** header bytes — **no** **`*(slot + 0x60)`** read appears in that pack. So **`slot+0x60`** is **not** the same field as **`slot[1].q`** in the **relay → `516d40`** fast path; proving **`slot+0x60` → wire** still needs **`sub_1402f5840`** send-side or **UDP** glue.
+
+##### J.4.10) **`sub_140516d40` — who fills `arg2[4]` (→ `0x58` row `+0x40`…`+0x4f`; dword @ row `+0x48`)**
+
+**`decompile_function("sub_140516d40")`** copies **`arg2[4]`** to **`*(new_row + 0x40)`** (**§J.4.1**). **`mcp get_xrefs_to(0x140516d40)`** lists **11** code refs — mirrored in **`src/recovered-endpoint-scheduler.ts`** as **`BinarySub140516d40CallSites`**.
+
+| **Parent** | **Call VA** | **`arg2` base (HLIL) — sources feeding the `+0x40` / `arg2[4]` lane** |
+|---|---|---|
+| **`sub_1402f5840`** | **`0x1402f66ea`**, **`0x1402f6808`** | **`lea rdx,[rsp+0x100]`** (**§J.4.1**): **`mov qword [rsp+0x140], rcx`** with **`rcx` from `[rsp+0x1a0]`** (**`*rax_11`**, first qword of **`0x30`** tape row); **`mov dword [rsp+0x148], ecx`** from **`[rsp+0x1a8]`** (**`rax_11[1].d`**, same dword as **`var_300.d`** when **`0x7a != 2`**); **`mov byte [rsp+0x14c], 1`**. |
+| **`sub_14044eae0`** (relay) | **`0x14044f13a`**, **`0x14044fd7f`**, **`0x14044f758`** | **`&var_228`**: **`var_228 = *r15_5`**, **`var_218 = r15_5[1].q`**, **`sub_1423a1b30(&var_210, r15_5 + 0x18)`**, then **`int32_t` from `*(var_160_1 + idx * 0x30 + 0x18)`** with **`qword` from `*(… + 0x10)`** (**e.g. `0x14044f063`–`0x14044f073`**, **`0x14044fca5`–`0x14044fcb5`**, **`0x14044f685`–`0x14044f695`**) — **`0x30` send-plan table** fields merged into the stack blob before **`516d40`**. **`arg2[4]`** is the **fifth `int128`** in that contiguous layout (**confirm offsets in BN Variables**). |
+| **`sub_1403a7a00`** (graph / path cache) | **`0x1403a8e7d`** | **`&var_298`**: probe tail copies **`*(r13_9 + 8)`**, **`*(r13_9 + 0x18)`**, **`sub_1423a1b30(&var_218, r13_9 + 0x20)`**, then **`0x48`**-stride replay (**`rsi_14 += 0x48`**) feeding **`var_218` / `var_2e8` / `var_208`** before **`sub_140516d40(&var_a0, &var_298)`** — **`arg2[4]`** sits in the **`var_250` / `var_258`** / **`var_26c`** band immediately above the call (**`0x1403a8e1c`–`0x1403a8e7d`**). |
+| **`sub_1404f0910`** (“Dummy packet”) | **`0x1404f0b1b`** | **`&var_128`**: **`memcpy(&var_120, …)`** literal **`0x18`** bytes, then **`var_e0_1 = *(rbp_1 + rax_4 * 0x30 + 0x18)`**, **`var_e8_1 = *(rbp_1 + rax_4 * 0x30 + 0x10)`** (**`0x1404f0b03`–`0x1404f0b0b`**) — same **`0x30` row `+0x18` / `+0x10`** pattern as relay; **`sub_140516d40(&var_78, &var_128)`**. |
+| **`sub_1404f3a90`** (multi-endpoint) | **`0x1404f4513`**, **`0x1404f48ef`**, **`0x1404f4a13`**, **`0x1404f4d3d`** | **`&var_2b8`**: **`var_2b8.o = *(r13_2 + 0x40)`** (**`0x1404f49d6`**), **`var_2a8 = *(slot + 0x50)`**, **`sub_1423a1b30(&var_1e8, slot + 0x58)`**, **`var_288`** from **`*(slot + 0x70)`**, **`var_270` / `var_278`** from **`rcx_11`** (**`rdi_5 + rsi_1 * 0x30 + 0x10`**). **`arg2[4]`** is the **fifth `int128`** in that block — **map with BN stack view** (HLIL names **`var_27c`…`var_283`** tails). |
+| **`sub_14074aa00`** (nav / pathfinding) | **`0x14074b501`** | **`&var_7a8`**: **`var_7a8 = *(r15_5 - 0x18)`**, **`var_798 = r15_5[-1]`**, **`var_760 = rbp_9[1].d`**, **`var_768 = *rbp_9`** with **`rbp_9 = var_c20_1 + (rcx_35 << 4) + 0x10`** (**`0x14074b252`**) — **`arg2[4]`** comes from **that `0x30`-row scratch + `var_448` float pipeline**, **not** from **`slot[1].q`**. |
+
+**Still stuck without Variables view:** **`arg2`** is **five `int128`s** (**`0x50` bytes**). HLIL **field names** for **`var_2b8` / `var_228` / `var_7a8` tails** do not always print in **source order**; use BN **Stack** / **retype `arg2` as `uint128_t arg2[5]`** at each callsite to read **`arg2[4]`** mechanically.
+
+##### J.4.10.1) **Disassembly check — `arg2[4]` byte-accurate on two callsites**
+
+**`sub_1402f5840` @ `0x1402f66ea`** ( **`fetch_disassembly` / saved agent disasm** around **`0x1402f6620`–`0x1402f66ea`** ):
+
+- **`lea rdx, [rsp+0x100]` @ `0x1402f66e2`** — second argument **`arg2`** base (**`&var_308`** stack slab).
+- **`lea rdx, [rsp+0x140]` @ `0x1402f6649`** — cursor at **`arg2 + 0x40`**, i.e. **`arg2[4]`** base.
+- **`mov dword [rdx+0x8], ecx` @ `0x1402f668e`** with **`ecx = [rsp+0x1a8]`** — **`dword *(tape_row+8)`** (**`rax_11[1].d`**, same as **`var_300.d`** on the **`0x7a != 2`** path).
+- **`mov qword [rdx], rcx` @ `0x1402f6699`** with **`rcx = [rsp+0x1a0]`** — **`*rax_11`** first qword of the **`0x30`** row.
+- **`mov byte [rsp+0x14c], 0x1`** @ `0x1402f669c` — **`rdx+0xc`** when **`rdx = rsp+0x140`** (**tag byte in the fifth lane**).
+
+So **`arg2[4]`** on this **`516d40`** site is **not** a mystery typedef: it is **exactly** the **`*rax_11` / `rax_11[1].d` / `0x01`** bundle described in **§J.4.1**, now **pinned to `rsp+0x140`**.
+
+**`sub_1404f0910` @ `0x1404f0b1b`** ( **`fetch_disassembly("sub_1404f0910")`** ):
+
+- **`lea rdx, [rsp+0x30]` @ `0x1404f0b16`** — **`arg2`** base.
+- **`lea rcx, [rsp+0x70]` @ `0x1404f0afe`** — **`arg2 + 0x40`** (**`arg2[4]`**).
+- **`mov qword [rcx], rax` @ `0x1404f0b0b`** with **`rax = [rsp+0x20]`** from **`mov rax, [rbp+rax_idx+0x10]`** @ **`0x1404f0a74`**.
+- **`mov dword [rcx+0x8], eax` @ `0x1404f0b03`** with **`eax = [rsp+0x28]`** from **`mov ecx, [rbp+rax_idx+0x18]`** @ **`0x1404f0a6c`–`0x1404f0a70`**.
+
+So **“Dummy packet”** fills **`arg2[4]`** from the **same `+0x10` / `+0x18` fields** of a **`0x30`-strided row** as relay’s table-driven path — **different parent**, **same offset recipe**.
+
+##### J.4.10.2) **Disassembly sweep — remaining `sub_140516d40` parents (`fetch_disassembly`, May 2026 session)**
+
+All dumps from **`tunnet.exe.bndb`** via MCP **`fetch_disassembly`** on the **parent function name** (full function text; cites are **near-call clusters only**).
+
+**`sub_14044eae0` — all three relay calls share one `arg2` stack layout**
+
+| **Call VA** | **`lea rdx, …` (`arg2` base)** | **`arg2[4]` (`base+0x40`)** | **Qword lane (`+0x40`)** | **Dword lane (`+0x48`)** | **Tag @ `+0x4c` (`+0xc` in lane)** |
+|---|---|---|---|---|---|
+| **`0x14044f13a`** | **`lea rdx,[rsp+0xa0]` @ `0x14044f132`** | **`rsp+0xe0`** (= **`[rsp+0xb8]+0x28`** while **`rdx = rsp+0xb8`**) | **`mov qword [rdx+0x28], rcx` @ `0x14044f0dd`** with **`rcx = [rsp+0x100]`** from **`mov rax, [send_plan+idx*0x30+0x10]` @ `0x14044f06e`–`0x14044f073`** | **`mov dword [rdx+0x30], ecx` @ `0x14044f0d2`** with **`ecx = [rsp+0x108]`** from **`mov ecx, […+0x18]` @ `0x14044f063`** | **`mov byte [rsp+0xec], 0x1` @ `0x14044f0e1`** |
+| **`0x14044f758`** | same **`lea`** @ **`0x14044f750`** | same arithmetic | **`0x14044f6fb` / `0x14044f6f0`** (same **`+0x28` / `+0x30`** stores into **`[rsp+0xb8]+…`**) | loads **`0x14044f685`–`0x14044f695`** | **`0x14044f6ff`** |
+| **`0x14044fd7f`** | **`lea rdx,[rsp+0xa0]` @ `0x14044fd77`** | same | **`0x14044fd0e` / `0x14044fd03`** | **`0x14044fca5`–`0x14044fcb5`** | **`0x14044fd12`** |
+
+**Only difference on the (C) arm:** **`mov qword [rsp+0xb0], rcx` @ `0x14044fd2b`** uses **`rcx = [rsp+0x88]`** instead of **`rsi = *(slot+0x10)`** — that perturbs **`arg2[1]`**’s upper half / **`slot[1].q` image**, **not** the **`+0x28` / `+0x30`** tail that lands in **`arg2[4]`**.
+
+**Bottom line:** relay **`arg2[4]`** is **mechanically the same `0x30`-row `+0x10` / `+0x18` dword+qword** as **dummy** and **tape `516d40`**, with **`0x01`** at **`arg2[4]+0xc`**.
+
+---
+
+**`sub_1404f3a90` — four callsites, identical `arg2` base and fifth-lane micro-sequence**
+
+- **`arg2` base:** **`lea rdx,[rsp+0x60]`** immediately before each **`call`** (**`0x1404f450e`**, **`0x1404f48ea`**, **`0x1404f4a0e`**, **`0x1404f4d38`**).
+- **`arg2[4]`** lives at **`rsp+0xa0`** (**`0x60+0x40`**). The compiler reuses **`lea rdx,[rsp+0x90]`** as a cursor (**`arg2+0x30`**) and stores:
+  - **`mov qword [rdx+0x10], rcx` / `mov dword [rdx+0x18], ecx`** with **`rcx` / `ecx` from `[rbp+0]` / `[rbp+8]`**, **`rbp` loaded from `[rsp+0x150]`** (representative: **`0x1404f44c1`–`0x1404f44cb`**, **`0x1404f489d`–`0x1404f48a7`**, **`0x1404f49c0`–`0x1404f49ca`**, **`0x1404f4cbc`–`0x1404f4cc9`**).
+  - **`mov byte [rsp+0xac], 0x1`** — **`arg2[4]+0xc`** (**`0x60+0x4c`**), same **tag `1`** pattern as relay/scheduler/dummy.
+- **`@0x1404f4a13` branch detail:** **`movups xmm0, [rbx]`** @ **`0x1404f4970`** with **`rbx` pointing at an existing neighbor `0x58` row `+0x40`** seeds **`arg2[0]`** from live **`+0x40…` data**; **`arg2[4]`** is **still** filled from **`[rbp+0]` / `[rbp+8]`**, not from that **`movups`**.
+
+---
+
+**`sub_1403a7a00` @ `0x1403a8e7d`**
+
+- **`lea rdx,[rsp+0x120]` @ `0x1403a8e75`** — **`arg2`** base; **`arg2[4]`** @ **`rsp+0x160`**.
+- **`mov qword [rsp+0x160], rcx` @ `0x1403a8e27`** with **`rcx = [rsp+0x170]`** after **`mov rax, qword [ptr+0x10]`** @ **`0x1403a8d43`–`0x1403a8d47`** (**`ptr = [rsp+0x88]`**).
+- **`mov dword [rsp+0x168], ecx` @ `0x1403a8e1c`** with **`ecx = [rsp+0x178]`** from **`mov ecx, dword [ptr+0x18]`** @ **`0x1403a8d39`–`0x1403a8d3c`**.
+- **`mov byte [rsp+0x16c], 0x0` @ `0x1403a8e2a`** — **fifth-lane tag is `0`**, not **`1`**.
+
+---
+
+**`sub_14074aa00` @ `0x14074b501`**
+
+- **`lea rdx,[rsp+0x530]` @ `0x14074b4f9`** — **`arg2`** base; **`arg2[4]`** @ **`rsp+0x570`**.
+- **`mov qword [rdx], rcx` @ `0x14074b4ab`** / **`mov dword [rdx+0x8], ecx` @ `0x14074b4a0`** (**`rdx = rsp+0x570`**) pull **`[rsp+0x230]`** / **`[rsp+0x238]`**, which (on the traced **`0x14074b3e0`** spine) come from **`[rbp]`** / **`[rbp+8]`** (**`0x14074b3ea`–`0x14074b3ee`**).
+- **`mov byte [rsp+0x57c], 0x0` @ `0x14074b4ae`** — again **tag `0`**.
+
+---
+
+##### J.4.10.3) **`sub_140516f40` + `sub_140380650` — build-preview rows (not the `+0x10` / `+0x18` tape recipe)**
+
+**`get_xrefs_to(0x140516f40)`** returns **code refs only inside `sub_140380650`** (dozens of call sites; **not** in **`sub_140175c50`** directly — **`175c50`** @ **`0x14017664f`** calls **`380650`** per **§E.10–E.11**).
+
+**`decompile_function("sub_140516f40")`** matches **`516d40`** algorithmically: **`sub_14079fa10`** on **`arg1[2]+0x18` vs `+0x30`** depending on **`*(arg1[2]+0x48)`**, then **`*(row + 0x40) = arg2[4]`** (**`0x140516fac`**), **`arg2[0..3]`** into **`+0x00`…`+0x30`**, **`+0x50`** cursor — only **store ordering** vs **`516d40`** differs (**§E.10**).
+
+**Disasm — first representative `516f40` call @ `0x14038192b`** (**`fetch_disassembly("sub_140380650")`**):
+
+- **`lea rdx, [rsp+0x40]` @ `0x140381923`** — **`arg2`** base; **`arg2[4]`** at **`rsp+0x80`**.
+- **`0x140381904`–`0x14038191b`**: **`mov byte [rsp+0x40], 0x7`**, **`movups [rsp+0x60], xmm0`** (constant table), **`movlps [rsp+0x70], xmm1` / `movss [rsp+0x78], xmm0`** (packed **floats** from **`rsi`**, **`xmm6`**, **`.rdata`** scales), **`movups [rsp+0x7c], xmm8`**, **`mov byte [rsp+0x8d], 0x2`** (**`0x8d = arg2_base + 0x4d`**, i.e. **inside the fifth `int128` lane** — **tag-like byte `2`**, not **`0`/`1`** from **§J.4.10.2**).
+
+So **connection preview / build graph** appends **`0x58`** rows through **`516f40`** using **geometry / label constants**, **not** the **`send_plan` / `rbp` `+0x10` / `+0x18`** dword+qword pair used by **runtime relay / scheduler `516d40`**. Treat **preview `+0x48` on the `0x58` row** as **UI / editor state**, not proof of **wire TTL** unless the same row is later **read by NetTock** (unlikely for pure preview tables).
+
+**Spot-checks (same `380650` disasm dump):** **`0x140384989`** / **`0x140384a05`** — still **`lea rdx,[rsp+0x40]`**, **`mov byte [rsp+0x8d], 2`**, **`movups [rsp+0x7c], …`**, float pack from **`rsi`**; **`0x14038618d`** — adds **immediate** **`mov qword [rsp+0x48], 1`**, **`mov dword [rsp+0x50], 0x1020402`**, etc. into **`arg2[0…]`** before the same **`0x8d`** tag and **`516f40`** — **still zero** loads from a **`0x30` send-plan `+0x10` / `+0x18`** into **`arg2[4]`** on these slices.
+
+##### J.4.10.4) **Lead exhausted — `sub_142244e00` second argument inside `sub_1402f5840`**
+
+**Goal:** decide whether **`*(arg2+8)`** in **`sub_142244e00`** could be **`row+0x48`** / deque TTL.
+
+**Prologue @ `0x1402f589e`–`0x1402f58a6`:** **`mov qword [rsp+0x1e0], rcx`**, **`mov qword [rsp+0x1e8], rdx`** — **Windows incoming first two arguments** to **`sub_1402f5840`** before **`rcx`/`rdx`** are repurposed for **`r8`** unpack (**`0x1402f58ae`** onward).
+
+**All ten calls** (**`0x1402f76ca`**, **`0x1402f792a`**, **`0x1402f79d9`**, **`0x1402f7a96`**, **`0x1402f7b5d`**, **`0x1402f7e4e`**, **`0x1402f80d5`**, **`0x1402f8435`**, **`0x1402f87d0`**, **`0x1402f9689`**) pass **`lea rdx,[rsp+0x1e0]`** immediately before **`call sub_142244e00`**.
+
+So **`arg2`** is always **`&{ saved_rcx, saved_rdx }`**, and **`*(arg2+8)`** is **`incoming rdx`** to **`sub_1402f5840`** (Bevy **`NetTock`** callback **`rdx`** / system-param bundle), **not** a pointer derived from **`imul …, 0x58`**. Indices **`r8d`/`r9d`** are **`[rsp+0x7c]`** / **`[rsp+0x78]`** (sometimes freshly filled from **`rsp+0x300`** right before **`0x1402f9689`**); they key the small HLIL lookup, **orthogonal** to **`row+0x48`**.
+
+**Conclusion:** this investigation branch is **closed** — **`sub_142244e00`** here does **not** consume **`0x58`** row **`+0x48`** for **`*(arg2+8)`**.
+
+##### J.4.11) **Lead exhausted — fifth-lane tag (`arg2[4]+0xc`) inside `516d40` / `516f40`**
+
+**Goal:** decide whether the **`arg2[4]`** tail byte catalogued in **§J.4.10.2** (**`0` / `1` / `2`**) drives **control flow** inside the **`0x58`** row-append helpers.
+
+**`decompile_function("sub_140516d40")`:** **`arg2[4]`** is copied wholesale (**`var_28` / `var_28_1`**) to **`*(result + (idx * 0x58) + 0x40)`** — the full **`int128`**, including byte **`+0xc`** inside that lane (**→ `row+0x4c`**). There is **no** reload of **`arg2[4]`** for branching.
+
+The only **`+0x48`** involved is **`if (*(arg1[2] + 0x48) == 0)`**, which picks **`*(arg1[2]+0x28)`** vs **`*(arg1[2]+0x40)`** as the **deque cursor** (`idx * 0x58`). Base **`arg1[2]`** is the **table / NetNode metadata object**, **not** the **`0x58`** row being written — **do not** confuse this dword with the **`arg2[4]` dword** that lands at **`row+0x48`** (**TTL-like lane**, **§J.4.1**).
+
+**`decompile_function("sub_140516f40")`:** same shape — **`*(rdi + 0x48) == 0`** toggles **`rdi+0x28` vs `rdi+0x40`** tails; **`*(result + rcx_2 + 0x40) = arg2[4]`** is an unconditional **`int128`** store.
+
+**Conclusion:** on **`516d40` / `516f40`**, the fifth-lane tag is **opaque payload**, not a **switch operand**. Whether **`row+0x4c`** means anything **downstream** (**NetTock**, relay consumers, wire encode) is **still open** (**§J.5**) — outside this exhausted slice.
+
+##### J.4.12) **Lead exhausted — “inline” full `0x58` row writes vs `516d40` / thin `0x28` pushers**
+
+**Goal:** enumerate **non-helper** stores that fill an **`0x58`-byte deque row** ( **`+0x00`…`+0x50`** ), and rule out false positives (**`imul …, 0x58`** **loads** / index math only).
+
+**Canonical append (already §E.10):** **`sub_140516d40`** / **`sub_140516f40`** — **`get_xrefs_to(0x140516d40)`** (MCP, stock BN) lists **eleven** code parents (**`sub_1402f5840` ×2**, **`sub_14044eae0` ×3**, **`sub_1403a7a00`**, **`sub_1404f0910`**, **`sub_1404f3a90` ×4**, **`sub_14074aa00`**).
+
+**Inlined full-row mirror — only in `sub_1404f3a90` (`fetch_disassembly`):**
+
+- **`0x1404f4a82`–`0x1404f4acd`**: **`rax = qword [rsi+0x38]`** (backing **`Vec`**), **`imul rcx, rdx, 0x58`**, then **`mov qword [rax+rcx+0x50], …`**, **`movups [rax+rcx+0x40], xmm0`**, **`movups [rax+rcx+0x30..0x00], xmm3…xmm0`**, **`inc qword [rsi+0x40]`** — **byte-for-byte same tail layout** as **`516d40`** (**`+0x50` cursor**, **`+0x40`** **`arg2[4]` lane**, four **`movups`** lanes below).
+- **`0x1404f4b36`–`0x1404f4b81`**: identical **`imul rcx, rdx, 0x58`** / **`movups`** sequence with **`rax = qword [rsi+0x20]`**, **`inc qword [rsi+0x28]`** — the **dual-deque** mirror of **`*(parent+0x48)`** routing in **`516d40`** (**`+0x28` vs `+0x40`** cursor).
+
+Elsewhere on traced **net** paths, **`sub_1404f3a90`** still **`call`s `516d40`** @ **`0x1404f4513`**, **`0x1404f48ef`**, **`0x1404f4a13`**, **`0x1404f4d3d`** — the **inline** blocks are an **optimization / alternate commit** on **`*(slot+0x7a)==2`**-gated slices (**`cmp byte [rax+0x7a], 2`** @ **`0x1404f4a27`** / **`0x1404f4ad8`**), not a second geometry.
+
+**Not `0x58` rows — `sub_1405177a0` family (`fetch_disassembly("sub_1405177a0")`):** **`lea rcx, [rdx+rdx*4]`** then **`movups [rax+rcx*8+…]`** — index **`× 0x28`** (**40 bytes**), **only** **`+0x00`**, **`+0x10`**, **`+0x20`** stores (**§J.4.8**). Do **not** treat as **`516d40`**-compatible **`0x58`** tuples.
+
+**`sub_1402f5840`:** **`imul …, 0x58`** sites in **`fetch_disassembly("sub_1402f5840")`** on the **`0x1402f95d1`–`0x1402f9648`** spine are **table-index loads** into **`rsp+0x308` / …**, **not** row initialization; **new** **`0x58`** rows there go through **`call sub_140516d40`** (**`0x1402f66ea`**, **`0x1402f6808`**).
+
+**Scope statement:** this lead is **exhausted** for **every `516d40` parent in §E.6** plus **explicit disassembly** of **`sub_1405177a0`** and **`sub_1404f3a90`**. A **whole-`.text` `imul 0x58` + `mov`→`[r64+r64*1+displacement]`** harvest is **not** claimed — only **no additional net-scheduler-shaped writer** showed up beyond **`4f3a90`**’s pair.
+
+##### J.4.13) **Lead #1 partial — `sub_1407baf90`: `0x60`-stride table, `+0x50` / `+0x58` lanes → `sub_142244e00` then `sub_141fcee80`**
+
+**Goal:** test whether **`slot+0x60`** / **`0x58` deque row `+0x48`** are read on an **outbound append** path toward **wire**.
+
+**`fetch_disassembly("sub_1407baf90")` (stock BN):**
+
+- **Incoming bundle (`r9`):** **`rsi ← qword [r9]`**, **`rdi ← qword [r9+8]`**, **`eax ← dword [r9+0x10]`**, **`r9d ← dword [r9+0x14]`** (saved across the **`call sub_14221bbe0`** site — that helper is **`xor eax,eax; ret`** here, so **`r15 ← 0`** after **`0x1407bafc7`**).
+- **`rbx ← qword [rdi+0x60]`**, **`rax ← qword [rdi+0x68]`**, **`rdi ← rbx + rax*8`** — **`rdi`** is an **end pointer** for a **`qword[]`** slice rooted at **`[arg_bundle+8]+0x60`**.
+- **Outer loop:** walk **`rbx`** toward **`rdi`**; each **`qword [rbx]`** is an index **`rcx`** bounded by **`qword [rsi+0xd8]`** against **`qword [rsi+0xd0]`** (**`0x1407bb025`–`0x1407bb032`**); **`lea rcx,[rcx+rcx*2]; shl rcx,5`** ⇒ stride **`0x60`**; **`rbp ← qword [rax+rcx+0x58]`**, **`test rbp,rbp`** — **zero skips** the tuple inner loop; **`r15 ← qword [rax+rcx+0x50]`**, **`r13 ← 0`**, inner **`jmp`**.
+- **Inner loop (`0x1407baff0`–`0x1407bb016`):** **`r8d ← dword [r15+r13*8]`**, **`r9d ← dword [r15+r13*8+4]`**, **`inc r13`**, **`call sub_142244e00`** (**`rcx`** / **`rdx`** from **`rsp`** scratch — same **two-dword → lookup / scratch** flavor as **`sub_1402f5840`**), **`call sub_141fcee80`** (**buffer growth / push-bytes** class elsewhere in §J).
+- **Inner termination:** **`cmp r13, rbp`** @ **`0x1407bb01b`** — so **`[row+0x58]`** behaves as a **tuple count** (or upper bound) paired with **`[row+0x50]`** as the **`(r8d,r9d)` array base**, **not** evidence that **`+0x58`** is a **`qword` pointer** in this consumer.
+
+**Known callers (`fetch_disassembly` / BN xrefs on stock DB):**
+
+- **`sub_14054fff0`** @ **`0x14055001d`** — **thin relay**: **`lea rax,[rsp+0x40]`**, **`movups`/stores from `r9`**, **`call sub_1407baf90`**.
+- **`sub_1405f0920`** @ **`0x1405f0995`** and **`sub_1407ad390`** @ **`0x1407ad3f8`** — **parallel**: **`lock xadd dword [transport+0x270], ebx`**, **`cmp byte [subject+0x1e0], 2`** → **`sub_1423ab4f0`** panic slice on **`je`**; else **`lea rcx,[subject+0xe8]`**, **`call sub_142244c90`** (**`mov rax,rcx; ret`** — **`rax`** is **`&subject->field_0xe8`**), **`lea rbp,[subject+0x118]`**, **`r9`** stack bundle **`{ transport, rbp, dword [subject+0xc8], ebx }`**, **`mov rdx,rax`**, **`lea rcx,[rsp+…]`**, **`call sub_1407baf90`**, **`mov dword [subject+0xc8], ebx`**.
+
+**What this proves on the traced slice:** **`0x60`** rows **do** feed **`sub_142244e00` → `sub_141fcee80`** (**encode-side tuple drain**). **`rdi`** in **`7baf90`** is **`subject+0x118`** from those parents — **not** shown equal to **`NetNode` `slot`** from **`sub_1402f5840`** (**§J.4.9**); **`[rdi+0x60]`** here is **“pointer table at `+0x178` equivalent”**, not **`slot+0x60`** without a **shared-type proof**.
+
+**Negative for “`row+0x48` → bytes” on this function:** **`fetch_disassembly`** shows **no** **`[base+row+0x48]`** load — only **`+0x50`** / **`+0x58`** on the **`0x60`**-strided row.
+
+**Still open (Lead #1):** bridge **`sub_1407baf90` → … → `WSASend` / `sendto`** for **game UDP / Tunnet endpoint** traffic (**§J.4.14** narrows **`WSASend`** geography but **does not** merge it with **`7baf90`**), and whether **any** **`0x58`** deque **`+0x48`** dword hits **socket buffers** outside **`141fcee80`**.
+
+##### J.4.14) **Lead #1 continued — vtable-only `5f0920` / `7ad390`; static `WSASend` spine (`83e490` → trait slot → `82c450` → `142345a90`)**
+
+**Why MCP `get_xrefs_to(sub_1405f0920)` looked dead:** a **full `.text` `E8` rel32 scan** (stock **`tunnet.exe`**) finds **zero** direct **`call`** targets equal to **`sub_1405f0920`**, **`sub_1407ad390`**, or **`sub_14054fff0`**. Those entry points are still **real code** — they sit on **Rust dynamic-dispatch / vtable** paths.
+
+**`.rdata` anchors (image qwords, VA):**
+
+| **Slot VA** | **Points to** |
+|---|---|
+| **`0x1424a9df8`** | **`sub_1407ad390`** (**`0x1407ad390`**) |
+| **`0x1424a9e00`** | **`sub_1405f0920`** (**`0x1405f0920`**) |
+
+Adjacent qwords form a **fat-pointer / vtable row** with many **`0x1407ae…` / `0x14056…`** methods — treat **`1424a9df8`–`1424a9e08`** as **one recovered dispatch table**, not isolated functions.
+
+**Direct `WSASend` wrapper edge:** **`sub_142345a90`** has **one** traced **`E8`** caller @ **`0x14082c4ee`** inside **`sub_14082c450`** (**`fetch_disassembly("sub_14082c450")`**).
+
+**HTTP-ish stack hook** (same import family; **not** proved Tunnet UDP): **`fetch_disassembly("sub_14083e490")`** — when **`dword [rsp+0x150] == 3`**, **`lea rcx, [rel 0x144d59a88]` @ `0x14083e57f`** seeds **`[rsp+0x28]`**, then **`call qword [rbp+0x20]` @ `0x14083e5a9`** (**trait indirect**). On the stock image, **`qword *(0x144d59a88 + 0x60) == sub_142345a90`** and a sibling blob **`0x144d59a40`** holds **`sub_14082c450`** at **`+0x00`** — i.e. **`WSASend`** and **`sub_14082c450`** share **vtable geography** typical of **`tokio`/Hyper-style IO**.
+
+**Takeaway vs §J.4.13:** **`244e00 → 1fcee80`** (**game encode buffers**) and **`82c450 → 142345a90`** (**`WSASend`**) are **both real**, but **no static merge** yet — **`7baf90`** does **not** appear on the **`83e490`** slice above.
+
+---
+
+**Synthesis (where we stop without new data):**
+
+- Across **every §E.6 `sub_140516d40` parent** (**relay**, **multi-endpoint**, **graph propagate**, **nav**, **dummy**, **tape scheduler**), the **`arg2[4]` qword + dword** are **always** sourced from some **logical `(qword @ +0x10, dword @ +0x18)`** pair (sometimes via **`rbp`**, **`send_plan`**, or a **probe `ptr`**), i.e. the **same structural recipe** the HLIL tables already described (**§J.4.10**). **`sub_140516f40` ← `sub_140380650`** is the **documented exception** (**§J.4.10.3**): **FP-packed `arg2`**, **no** **`+0x10` / `+0x18`** loads on the traced first cluster.
+- **Fifth-lane tail byte:** writers vary (**§J.4.10.2**); **`516d40` / `516f40`** themselves **do not branch on it** (**§J.4.11**). **Semantic meaning** of **`row+0x4c`** for **later** readers is **still unproven**.
+- **Still missing for “TTL on the wire”:** any **UDP / encode** reader that maps **`0x58` row `+0x48`** or **`row+0x4c`** to **socket bytes** — **§J.4.13** adds a **partial** **`0x60`**-row **`244e00 → 1fcee80`** drain (**no `+0x48`** there); **§J.4.14** pins **`WSASend`** (**`142345a90`**) **vtable / direct-call** geography **separate** from **`7baf90`** until linked by capture or deeper CFG (**§J.5**).
+
 ##### J.5) Goal: **initial TTL per packet** — all sends vs some, and what BN already implies
 
 **End state you want:** for **each** logical emit (per **tick**, **endpoint**, **destination row** / **`rdi_43`**, and **profile**: tape vs compose vs **`memcpy`**), know the **numeric initial TTL** (or **“none / infinite”**) the game attaches **before** filters/endpoints decrement it (your simulator already matches **decrement sites**).
@@ -715,13 +992,13 @@ On this **success slice**, there is **no** **`mov` / `movaps` / `movups` into `[
 | **Source (HLIL spine)** | **Initial TTL–like dword** | **“All packets?”** |
 |---|---|---|
 | **Tape / `0x7a != 2`** | **`rax_11[1].d` → `var_300.d`**, then e.g. ring row **`+0x18`** on the beep/PINGPONG path (**§J.4** table) | **Only sends that take this reload.** **`rax_11`** is **`var_128_1 + 0x10 + rdi_43*0x30`** — value can **differ per destination index** **`rdi_43`**, so TTL is **data-driven per row**, not automatically the same for every packet from that endpoint. |
-| **Compose / `sub_1402f9a40` (`0x7a == 2`)** | When **`+0x7a` stays `2`**, HLIL **skips** **`var_300 ← rax_11[1].d`** (**§J.3**). TTL must come from **composer + neighbor swap** (**`sub_14037d450`** copies **`*(rbx_2+0x18)`** into **`var_268`**, etc.) or from **later** **`memcpy` / `sub_140516d40`** packing — **not** the same **`rax_11`** load. | **Only packets that actually run the compose gate** (regional mainframe / infection-style tails you care about). |
+| **Compose / `sub_1402f9a40` (`0x7a == 2`)** | **`je 0x1402f5f3c` @ `0x1402f5cc1`** skips **`[[rsp+0x298]]+8 → [rsp+0x108]`** when **`*(slot+0x7a)==2`** (**§J.3.4**). TTL must come from **`sub_1402f9a40` / stack mirrors**, **neighbor swap** (**`sub_14037d450`** …), or **later** **`memcpy` / `sub_140516d40`** — **not** that **`rax_11`** dword reload at **`0x1402f5ccf`**. | **Only** emits that pass **Gate A** (**§J.3.4**) and reach **Gate B** still with **`0x7a==2`**. |
 | **`sub_140516d40` / `memcpy` 0x90`** | **`sub_140516d40`:** **§J.4.1** (**`arg2+0x48` → `0x58` row `+0x48`**). **`memcpy` `0x90`:** **§J.4.2**–**§J.4.7** — **`sub_1405211a0` + `sub_1405208d0`** build **Rust `String` headers**; **`xmm2` @ `arg1+0x18` is not hop TTL** (**§J.4.5**). **Site D** order (**§J.4.6**) + guards + **`0x190 → sub_140531847`** (**§J.4.7**) — **no** **`[rsp+0x200]`** stores **before** **`5211a0`** on the traced slice; **`0x190`** is **canned dialog**, not **`rax_11[1].d`**. | **Subset** of emits (wrong branch class if you assume every send hits **`sub_140516d40` @ `0x1402f66ea`** — **`+0x3a == 2`** skips that block, **§J.3**). |
 
 **Practical way to answer “each packet” in the tools:**
 
 1. **Instrument or capture** one run per **profile** (tape-only, compose-only, portal **`memcpy`**) and log **two dwords**: **header** (your existing **`header` / `headerHexU32`**) and **candidate TTL** read from the **same row** offset you believe is **`+0x18`** once the **`0x58` / `0x28` / `0x90`** map is finalized.
-2. **§J.4.1**–**§J.4.7** cover **`sub_140516d40`**, **`memcpy` `0x90`**, **`sub_1405211a0` / `sub_1405208d0`** (**`xmm2` closed in §J.4.5**), **compose / neighbor `+0x18`**, **Site D ordering + guards + `0x190` → `sub_140531847`**, and the **§E.6** **`516d40`** xref table. Remaining BN work: **per-callee `arg2` packing** for relay / graph / dummy / nav (**§E.6** bodies), not **`rsp+0x200` stale preimage** on Site D.
+2. **§J.3**–**§J.3.4** (**`sub_1402f9a40`** vs **`[[rsp+0x298]]+8`** tape dword — **§J.3.4** exhausted), **§J.4.1**–**§J.4.10** and **§J.4.10.1**–**§J.4.14** cover **`sub_140516d40`**, **`sub_140516f40`** (**preview exception §J.4.10.3**), **`sub_1404f3a90` inline `0x58` writes (§J.4.12 — exhausted)**, **`memcpy` `0x90`**, **`sub_1405211a0` / `sub_1405208d0`** (**`xmm2` closed in §J.4.5**), **compose / neighbor `+0x18`**, **Site D ordering + guards + `0x190` → `sub_140531847`**, the **§J.4.8** **tape → ring `+0x18`** VA chain / phishing **`+0x48`** note / **`5177` family** partial rows, **§J.4.9** (**three `+0x18` meanings**, **`slot+0x58` / `+0x60`** pack), **§J.4.10** (**HLIL `arg2[4]` sources**), **§J.4.10.1**–**§J.4.10.2** (**all §E.6 `516d40` parents**), **§J.4.10.3** (**`516f40` / `380650`**), **`sub_142244e00` `arg2` in `2f5840` (§J.4.10.4 — exhausted)**, **fifth-lane tag inside append helpers (§J.4.11 — exhausted)**, **`sub_1407baf90` `0x60` tuple drain (§J.4.13 — partial; Lead #1)**, **`WSASend` / vtable geography (§J.4.14 — partial; Lead #1)**, and **§E.6**. Remaining BN work: **numeric TTL inside **`sub_1402f9a40`** / ring **`+0x18`** mapping**, **downstream** semantics for **`row+0x4c`** / **`row+0x48`**, **loads** of **deque row `+0x18`**, **send / encode** reads of **`row+0x48`** or **`slot+0x60`** (**§J.4.13** did **not** close **`slot+0x60`**), **`7baf90` → Tunnet UDP send** closure (**§J.4.14** split **`WSASend`**), **whole-`.text` `imul 0x58` harvest** (optional), not **`rsp+0x200` stale preimage** on Site D.
 
 **Repo note:** until **`MessageEvent`** (or export JSON) carries **`ttlInitial`**, **`pnpm sched:sequence`** cannot regress **per-packet TTL**; add a field once the mapping row is chosen.
 
