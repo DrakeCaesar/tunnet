@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
 import {
   type AddressEncodingStrategy,
   encodeEndpointAddressForStrategy,
@@ -34,7 +35,7 @@ type ComparisonSummary = {
 
 export type { AddressEncodingStrategy } from "./endpoint-address-encoding.js";
 
-function loadEndpointRows(path = "data.json"): EndpointRow[] {
+function loadEndpointRows(path = ENDPOINTS_JSON): EndpointRow[] {
   const raw = readFileSync(path, "utf8");
   const parsed = JSON.parse(raw) as { endpoints: EndpointRow[] };
   return parsed.endpoints;
@@ -129,7 +130,7 @@ function simulateRecoveredModel(
 
 export function compareRecoveredAgainstCurrentImplementation(
   ticks = 4096,
-  dataPath = "data.json",
+  dataPath = ENDPOINTS_JSON,
   encodingStrategy: AddressEncodingStrategy = "plus_one_all_octets_regional_mainframe",
   initialRecoveredState: RecoveredSchedulerState = { phaseA: 0, phaseB: 0 },
 ): ComparisonSummary {

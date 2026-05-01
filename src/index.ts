@@ -1,5 +1,4 @@
 import { parseFlowFile, mergeFlowGraphs } from "./flow-parser.js";
-import { exportTopologyGraphMl } from "./graphml.js";
 import { TunnetSimulator } from "./simulator.js";
 import {
   createEndpointOnlyTopology,
@@ -51,8 +50,6 @@ function main(): void {
   console.log(
     `[phase3] covered=${phase3.report.coveredEdges}/${phase3.report.totalEdges} deferred=${phase3.report.deferredEdges} devices=${Object.keys(phase3.topology.devices).length} links=${phase3.topology.links.length}`,
   );
-  exportTopologyGraphMl(phase3.topology, "out/phase3-topology.graphml", merged.nodeColors);
-  console.log(`[phase3] wrote out/phase3-topology.graphml`);
   const phase3Sim = new TunnetSimulator(phase3.topology, 20260421);
   const phase3Snapshot = phase3Sim.run(60);
   console.log(
@@ -78,8 +75,6 @@ function main(): void {
   console.log(
     `[phase4] covered=${phase4.report.coveredEdges}/${phase4.report.totalEdges} deferred=${phase4.report.deferredEdges} devices=${Object.keys(phase4.topology.devices).length} links=${phase4.topology.links.length}`,
   );
-  exportTopologyGraphMl(phase4.topology, "out/phase4-topology.graphml", merged.nodeColors);
-  console.log(`[phase4] wrote out/phase4-topology.graphml`);
   const phase4Verification = verifyEdgesIndividually(phase4.topology, merged.edges, {
     maxTicksPerEdge: 300,
   });
@@ -98,8 +93,6 @@ function main(): void {
   console.log(
     `[phase5] covered=${phase5.report.coveredEdges}/${phase5.report.totalEdges} deferred=${phase5.report.deferredEdges} devices=${Object.keys(phase5.topology.devices).length} links=${phase5.topology.links.length}`,
   );
-  exportTopologyGraphMl(phase5.topology, "out/phase5-topology.graphml", merged.nodeColors);
-  console.log(`[phase5] wrote out/phase5-topology.graphml`);
   const phase5Verification = verifyEdgesIndividually(phase5.topology, merged.edges, {
     maxTicksPerEdge: 600,
   });

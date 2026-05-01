@@ -1,5 +1,5 @@
 {
-  "source_file": "data.json",
+  "source_file": "analysis/data/wiki-endpoints.dirty.json",
   "generated_at": "2026-04-22T13:45:10.538Z",
   "count": 60,
   "endpoints": [

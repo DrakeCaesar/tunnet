@@ -12,19 +12,19 @@ kept. Only lines with ``length`` ≥ ``--min-length`` are written.
 Usage::
 
   # Longest first, preview 40 lines on stdout
-  python scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --head 40
+  python analysis/scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --head 40
 
   # Full sorted copy (still large)
-  python scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --out out/tunnet-rdata-strings-by-length.jsonl
+  python analysis/scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --out out/tunnet-rdata-strings-by-length.jsonl
 
   # Shortest first
-  python scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --head 30 --ascending
+  python analysis/scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --head 30 --ascending
 
   # Drop short runs then sort
-  python scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --min-length 32 --out out/long-only-sorted.jsonl
+  python analysis/scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --min-length 32 --out out/long-only-sorted.jsonl
 
   # Drop short runs, **keep input order** (no sort)
-  python scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --no-sort --min-length 32 --out out/long-only.jsonl
+  python analysis/scripts/sort-tunnet-rdata-jsonl.py --in out/tunnet-rdata-strings.jsonl --no-sort --min-length 32 --out out/long-only.jsonl
 """
 
 from __future__ import annotations

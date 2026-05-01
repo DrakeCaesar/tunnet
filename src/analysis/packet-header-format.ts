@@ -5,7 +5,7 @@
  */
 
 export type HeaderExactStrings = {
-  /** Lowercase `0x` + unsigned 32-bit hex (same convention as literals in `recovered-endpoint-scheduler.ts`). */
+  /** Lowercase `0x` + unsigned 32-bit hex (same convention as literals in `src/analysis/recovered-endpoint-scheduler.ts`). */
   headerHexU32: string;
   /** Eight lowercase hex nybbles: first byte = least significant byte of the word (typical x86 memory order). */
   headerBytesLe: string;
@@ -68,7 +68,7 @@ export function mainframeRegionalBroadcastMaskFromWikiAddress(address: string): 
 /**
  * Destination wiki mask for logging / non-mainframe routing.
  * **`mainframe-phase-sequence`**: returns **`0.k.*.*`** for wiki **`0.k.0.0`** (logging only; compare/export may
- * expand full **`sends_to`** instead of {@link headerToMask} — see **`packetProfileUsesWikiSendsToFanOut`** in **`recovered-endpoint-scheduler.ts`**).
+ * expand full **`sends_to`** instead of {@link headerToMask} — see **`packetProfileUsesWikiSendsToFanOut`** in **`src/analysis/recovered-endpoint-scheduler.ts`**).
  */
 export function dstWikiMaskForRecoveredSend(
   wikiSourceAddress: string,

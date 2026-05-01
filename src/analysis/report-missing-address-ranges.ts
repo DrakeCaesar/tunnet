@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { ENDPOINTS_NORMALIZED_JSON } from "./endpoint-data-paths.js";
 
 interface EndpointRow {
   address: string;
@@ -58,7 +59,7 @@ function emitMissingRanges(
 }
 
 function main(): void {
-  const raw = readFileSync("data.normalized.json", "utf8");
+  const raw = readFileSync(ENDPOINTS_NORMALIZED_JSON, "utf8");
   const data = JSON.parse(raw) as NormalizedData;
 
   const present = new Set<string>(

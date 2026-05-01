@@ -6,4 +6,4 @@ out/
 web/public/data/topology.json
 temp/
 saves/
-scripts/__pycache__/
+analysis/scripts/__pycache__/

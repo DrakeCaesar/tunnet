@@ -1,9 +1,9 @@
 /**
- * Compare **author wiki table** traffic (`data.json` `send_rate` + `sends_to`) vs **recovered**
+ * Compare **author wiki table** traffic (`analysis/data/endpoints.json` `send_rate` + `sends_to`) vs **recovered**
  * scheduler (`evaluateEndpointSend` + header masks) over N ticks.
  *
- * **`data.json` is not ground truth** — it is a convenience baseline and may disagree with the game or BN.
- * Recovered behavior follows **`sub_1402f9a40` / `sub_1402f5840`** modeling in `recovered-endpoint-scheduler.ts`
+ * **`analysis/data/endpoints.json` is not ground truth** — it is a convenience baseline and may disagree with the game or BN.
+ * Recovered behavior follows **`sub_1402f9a40` / `sub_1402f5840`** modeling in `src/analysis/recovered-endpoint-scheduler.ts`
  * plus numeric {@link encodeEndpointAddressForStrategy} only (no wiki topology overrides beyond encoding).
  *
  * Only **(sender, receiver)** edges are compared — not headers or RNG pools. Optional
@@ -30,9 +30,9 @@
  * {@link applyRecoveredStateTransitions} after status-family sends. Use **`plus_one_all_octets_regional_mainframe`**
  * so wiki **`0.{1,2,3}.0.0`** maps to **`(4,1,1,1)`** (`sub_1402f9a40` **`r13 == 4`** gate @ **`0x1402f9ba7`**).
  *
- * CLI: `tsx src/compare-endpoint-edges.ts [ticks] [strategy] [phaseA] [phaseB] [--list-pairs] [--edge-subjects-file=out/edges.json]`
+ * CLI: `tsx src/analysis/compare-endpoint-edges.ts [ticks] [strategy] [phaseA] [phaseB] [--list-pairs] [--edge-subjects-file=out/edges.json]`
  * With **pnpm**: `pnpm compare:edges -- 10000 … --list-pairs` — a forwarded **`--`** is stripped so **`ticks`** stays numeric.
- * Scan: `tsx src/compare-endpoint-edges.ts scan [ticks] [aMin] [aMax] [bMin] [bMax] [encoding...|all]`
+ * Scan: `tsx src/analysis/compare-endpoint-edges.ts scan [ticks] [aMin] [aMax] [bMin] [bMax] [encoding...|all]`
  * - Trailing encodings: `identity`, `plus_one_all_octets`, `plus_one_all_octets_regional_mainframe`, `plus_one_first_octet`, or **`all`**.
  * - Omit encodings → defaults to **`identity` + `plus_one_all_octets` + `plus_one_all_octets_regional_mainframe`**; combined union vs wiki is printed.
  * - Omit phase bounds → ticks=10000, a 0..20, b 0..11.
@@ -40,6 +40,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
 import {
   type AddressEncodingStrategy,
   encodeEndpointAddressForStrategy,
@@ -77,7 +78,7 @@ function matchMask(mask: string, candidate: string): boolean {
   return true;
 }
 
-function loadEndpoints(path = "data.json"): EndpointRow[] {
+function loadEndpoints(path = ENDPOINTS_JSON): EndpointRow[] {
   const raw = readFileSync(path, "utf8");
   const parsed = JSON.parse(raw) as { endpoints: EndpointRow[] };
   return parsed.endpoints;
@@ -616,7 +617,7 @@ function main(): void {
   const { argv: afterSubjects, edgeSubjectsFile } = stripEdgeSubjectsFileFlag(strippedPnpm);
   const { argv: args, listPairs } = stripListPairsFlag(afterSubjects);
 
-  const endpoints = loadEndpoints("data.json");
+  const endpoints = loadEndpoints();
   const allAddresses = endpoints.map((e) => e.address);
   const destinationsBySource = new Map<string, string[]>();
   for (const endpoint of endpoints) {

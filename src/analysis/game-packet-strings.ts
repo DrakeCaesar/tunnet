@@ -11,7 +11,7 @@
  * Until that state is ported, **`pick*Placeholder`** functions pick deterministically
  * from the tick (stand-in — replace when RNG is matched).
  *
- * **Gaps:** `scripts/extract-packet-string-pools.py` covers all **25** Tunnet **`sub_140673b40`**
+ * **Gaps:** `analysis/scripts/extract-packet-string-pools.py` covers all **25** Tunnet **`sub_140673b40`**
  * callsites (three via a **manual** table for nonlinear builders). Some scheduler paths build
  * copy text via **`sub_14067a670`** only (no **`sub_140673b40`** row pool) — those are not in
  * **`out/packet-string-pools.json`**.
@@ -51,7 +51,7 @@ export const KILLSWITCH_REPLY_TOKEN_RDATA_BLOB =
 
 /**
  * Subject line material for **`sub_1402f9a40`** **`a == 4`** / **`(1,1,1)`** mainframe path: **`switch (*(arg2+0x1c5))`**
- * cases **0..5** (same range as **`MAINFRAME_SUBPHASE_MAX`** in `recovered-endpoint-scheduler.ts`). The game copies out of
+ * cases **0..5** (same range as **`MAINFRAME_SUBPHASE_MAX`** in `src/analysis/recovered-endpoint-scheduler.ts`). The game copies out of
  * **`data_1424246e0`** with **`sub_14067a670`** (not **`sub_140673b40`** row pools).
  *
  * **Inferred layout** (same 88-byte `.rdata` row as {@link KILLSWITCH_REPLY_TOKEN_RDATA_BLOB}):
@@ -59,7 +59,7 @@ export const KILLSWITCH_REPLY_TOKEN_RDATA_BLOB =
  * - **4:** first **`0x13`** bytes at **`0x40`** — matches **`a == 2`** reply **`strncpy`** width @ **`0x1402f9d8f`** and equals {@link REPLY_CHAIN_PACKET_SUBJECT} in this blob.
  * - **5:** **`Token`** at **`0x53`**, length **5**.
  *
- * **BN:** `BINARY_NINJA_MCP_WORKFLOW.md` §G cites **`&data_1424246e0[0x30]`** on one HLIL **case 2** arm — that address is the start of **`Killswitch (1/4)`** here (**`phaseB === 3`** in this linear table). Reconcile per-case RVAs in BN if your switch order differs.
+ * **BN:** `analysis/BINARY_NINJA_MCP_WORKFLOW.md` §G cites **`&data_1424246e0[0x30]`** on one HLIL **case 2** arm — that address is the start of **`Killswitch (1/4)`** here (**`phaseB === 3`** in this linear table). Reconcile per-case RVAs in BN if your switch order differs.
  */
 export function mainframePhaseSequenceSubjectFromBlob(phaseB: number): {
   packetSubject: string;
@@ -99,7 +99,7 @@ export const STATUS_FAMILY_THREE_SUBJECT_POOL = [
 
 /**
  * Before **`sub_140673b40`** at **`0x1402fb46a`** (firmware branch when **`(floor(tick/2)&0xf)!=0`** in **`sub_1402f9a40`**).
- * Matches **`MANUAL_SUB_140673B40_POOLS[0x2FB46A]`** in **`scripts/extract-packet-string-pools.py`**.
+ * Matches **`MANUAL_SUB_140673B40_POOLS[0x2FB46A]`** in **`analysis/scripts/extract-packet-string-pools.py`**.
  */
 export const FIRMWARE_UPDATE_FOUR_SUBJECT_POOL = [
   "Firmware update",

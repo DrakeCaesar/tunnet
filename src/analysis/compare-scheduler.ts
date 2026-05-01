@@ -1,4 +1,5 @@
 import { initialRecoveredSchedulerState, type RecoveredSchedulerState } from "./recovered-endpoint-scheduler.js";
+import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
 import {
   AddressEncodingStrategy,
   compareRecoveredAgainstCurrentImplementation,
@@ -48,7 +49,7 @@ function main(): void {
     initial = initialRecoveredSchedulerState(phaseA, phaseB);
   }
 
-  const report = compareRecoveredAgainstCurrentImplementation(ticks, "data.json", strategy, initial);
+  const report = compareRecoveredAgainstCurrentImplementation(ticks, ENDPOINTS_JSON, strategy, initial);
 
   console.log(
     `[scheduler-compare] ticks=${report.ticks} endpoints=${report.endpointsCompared} strategy=${report.encodingStrategy} initialPhase=(${initial.phaseA},${initial.phaseB})`,

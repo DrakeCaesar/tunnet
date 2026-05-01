@@ -24,8 +24,8 @@ Writes JSON (default ``out/packet-string-pools.json``) with one record per call 
 
 Usage::
 
-  python scripts/extract-packet-string-pools.py
-  python scripts/extract-packet-string-pools.py --exe path/to/tunnet.exe --out out/pools.json
+  python analysis/scripts/extract-packet-string-pools.py
+  python analysis/scripts/extract-packet-string-pools.py --exe path/to/tunnet.exe --out out/pools.json
 """
 
 from __future__ import annotations

@@ -19,12 +19,6 @@ pnpm check
 pnpm start
 ```
 
-`pnpm start` writes:
-
-- `out/phase3-topology.graphml` (yEd-compatible GraphML)
-- `out/phase4-topology.graphml`
-- `out/phase5-topology.graphml`
-
 Web builder:
 
 ```bash
@@ -53,8 +47,7 @@ pnpm web:preview
   - `synthesizePhase3Topology`: mixed gadget synthesis (pair rails + configured hub cycles)
   - `synthesizePhase4RingTopology`: full ring of hub+filter endpoint gadgets (full-edge target)
   - `synthesizePhase5HierarchicalRings`: region rings + core ring ("tree of rings") demand-shaped backbone
-- `src/index.ts`: simple CLI entrypoint that parses files and runs a 40-tick demo.
-- `src/graphml.ts`: GraphML export with endpoint IP labels/colors and configurable device settings.
+- `src/index.ts`: simple CLI entrypoint that parses files and runs phased topology synthesis plus a 40-tick demo.
 - `src/verification.ts`: per-edge single-packet verification (isolated trials).
 
 ## Semantics implemented from docs

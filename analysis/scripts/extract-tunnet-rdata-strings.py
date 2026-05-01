@@ -15,9 +15,9 @@ Writes one JSONL file (one JSON object per line: ``section``, ``fileOffset``, ``
 ``length``, ``value``).
 
 Usage:
-  python scripts/extract-tunnet-rdata-strings.py
-  python scripts/extract-tunnet-rdata-strings.py --min-len 12
-  python scripts/extract-tunnet-rdata-strings.py --sections .rdata,.text
+  python analysis/scripts/extract-tunnet-rdata-strings.py
+  python analysis/scripts/extract-tunnet-rdata-strings.py --min-len 12
+  python analysis/scripts/extract-tunnet-rdata-strings.py --sections .rdata,.text
 """
 
 from __future__ import annotations

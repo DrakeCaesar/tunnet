@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
 import { dstWikiMaskForRecoveredSend, formatHeaderExact } from "./packet-header-format.js";
 import {
   type AddressEncodingStrategy,
@@ -71,7 +72,7 @@ function matchMask(mask: string, candidate: string): boolean {
   return true;
 }
 
-function loadEndpoints(path = "data.json"): EndpointRow[] {
+function loadEndpoints(path = ENDPOINTS_JSON): EndpointRow[] {
   const raw = readFileSync(path, "utf8");
   const parsed = JSON.parse(raw) as { endpoints: EndpointRow[] };
   return parsed.endpoints;
@@ -168,7 +169,7 @@ function main(): void {
   const initialPhaseA = state.phaseA;
   const initialPhaseB = state.phaseB;
 
-  const endpoints = loadEndpoints("data.json");
+  const endpoints = loadEndpoints();
   const allAddresses = endpoints.map((e) => e.address);
   const destinationsBySource = new Map<string, string[]>();
   for (const endpoint of endpoints) {

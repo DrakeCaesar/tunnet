@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { ENDPOINTS_NORMALIZED_JSON, WIKI_ENDPOINTS_DIRTY_JSON } from "./endpoint-data-paths.js";
 
 type RawEndpoint = {
   address: string;
@@ -118,19 +119,19 @@ function normalizeEndpoint(row: RawEndpoint): NormalizedEndpoint {
 }
 
 function main(): void {
-  const rawJson = readFileSync("data.json", "utf8");
+  const rawJson = readFileSync(WIKI_ENDPOINTS_DIRTY_JSON, "utf8");
   const rows = JSON.parse(rawJson) as RawEndpoint[];
   const endpoints = rows.map(normalizeEndpoint);
 
   const out = {
-    source_file: "data.json",
+    source_file: WIKI_ENDPOINTS_DIRTY_JSON,
     generated_at: new Date().toISOString(),
     count: endpoints.length,
     endpoints,
   };
 
-  writeFileSync("data.normalized.json", `${JSON.stringify(out, null, 2)}\n`, "utf8");
-  console.log(`Wrote data.normalized.json (${endpoints.length} endpoints)`);
+  writeFileSync(ENDPOINTS_NORMALIZED_JSON, `${JSON.stringify(out, null, 2)}\n`, "utf8");
+  console.log(`Wrote ${ENDPOINTS_NORMALIZED_JSON} (${endpoints.length} endpoints)`);
 }
 
 main();

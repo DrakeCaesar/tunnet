@@ -105,7 +105,7 @@ In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewr
 - **Multi-slot endpoints:** extra packet records are **`+0x98`** apart (**§E.1a**); each has its own **`+0x7a`**.
 - **`SendBack` / `PacketDrop` strings:** MCP xrefs are **serde / JSON / particle UI** classifiers (**§E.1b**), not proof of where **wrong-address wire bounce** lives.
 
-**TypeScript hook:** `RecoveredSlotTickContext` + optional 4th argument to **`evaluateEndpointSend`** in **`src/recovered-endpoint-scheduler.ts`**. When **`receiveOrBounceClaimedSlot: true`**, the recovered model returns **`shouldSend: false`** with reason **`same-tick slot: receive/bounce claimed`** so export/compare can opt in once inbound simulation sets the flag. Call sites that omit the argument behave as before.
+**TypeScript hook:** `RecoveredSlotTickContext` + optional 4th argument to **`evaluateEndpointSend`** in **`src/analysis/recovered-endpoint-scheduler.ts`**. When **`receiveOrBounceClaimedSlot: true`**, the recovered model returns **`shouldSend: false`** with reason **`same-tick slot: receive/bounce claimed`** so export/compare can opt in once inbound simulation sets the flag. Call sites that omit the argument behave as before.
 
 **MCP / BN check (`decompile_function sub_1402f5840`, stock `tunnet.exe.bndb`):**
 
@@ -410,7 +410,7 @@ These two transitions are now safe to model as binary-backed behavior.
 
 In `sub_1402f9a40`, the decompiler shows `uint64_t rax_37 = zx.q(*(arg2 + 0x1c5))` immediately before a `switch (rax_37)` with cases `0` through `5` for the `a == 4` / `(1,1,1)` tuple path. Each case sets the corresponding `0x1020104`-style header table and optional side buffers (for example case `2` uses `sub_14067a670` with `&data_1424246e0[0x30]`).
 
-So for that branch, **`0x1c5` is the mainframe sub-phase index** (not a tick gate). The TypeScript model field `phaseB` in `src/recovered-endpoint-scheduler.ts` is intended to mirror this byte/word at `+0x1c5` for parity with the `a === 4` profile.
+So for that branch, **`0x1c5` is the mainframe sub-phase index** (not a tick gate). The TypeScript model field `phaseB` in `src/analysis/recovered-endpoint-scheduler.ts` is intended to mirror this byte/word at `+0x1c5` for parity with the `a === 4` profile.
 
 **Writes to `0x1c5`:** The scheduler pair **`sub_1402f5840` / `sub_1402f9a40`** only **read** `+0x1c5` (`movzx`; confirmed in saved disassembly). Advancement is **not** there.
 
@@ -477,6 +477,8 @@ So **“can this address be resolved to a live slot right now?”** is exactly *
 Filtered hits include the ECS system name **`tunnet::net::endpoint::update`** inside the usual long Rust metadata blob (example chunk address **`0x142441181`**). Related: **`tunnet::net::endpoint::EndpointPlugin`** near **`0x142461581`**. Use Binary Ninja’s own string/xref UI on these substrings first; **`get_xrefs_to` on the raw chunk address** often returns nothing in this MCP bridge, so treat these as **navigation hints**, not automatic xref sources.
 
 ### J) Packet TTL (hop lifetime) — BN research checklist
+
+**Quick reference:** consolidated findings live in **`analysis/RECOVERED_TTL.md`**; VA pins grouped for tooling in **`src/analysis/recovered-ttl.ts`**. Subsections **§J.1–§J.5** below keep the **full** Binary Ninja narrative.
 
 **Repo context (not game truth):** `src/simulator.ts` implements a **topology scaffold**: if `Packet.ttl === undefined`, **`decrementTtl`** leaves the packet unchanged, so TTL never runs down (“infinite TTL”). When `ttl` is set, filters decrement on the operating port and wrong-address non-sensitive endpoint bounces decrement once; **`README_TS_SIM.md`** summarizes that **design** behavior. **None of this is proven from `tunnet.exe` yet** for the live slot / relay layout.
 
@@ -566,7 +568,7 @@ Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch
 
 **`+0x3a` vs `sub_140516d40` @ `0x1402f66ea`:** **`if (*(rbx_3 + 0x3a) != 2)`** @ **`0x1402f5f46`** guards the large spine that ends in **`sub_140516d40(arg14, &var_308)`** @ **`0x1402f66ea`** (and the parallel tail @ **`0x1402f6808`**). When **`*(rbx_3 + 0x3a) == 2`**, that **`sub_140516d40`** block is skipped — other tails push **`var_308`** with **`memcpy(..., &var_308, 0x90)`** instead (e.g. **`0x1402f5ed1`**, **`0x1402f83a1`**, with nearby **`var_308.w = 0xf` / `0x14`** staging).
 
-**5-byte row / regional tuple (ties repo TS to BN):** In **`sub_1402f9a40`**, **`r13 = zx.q(*arg3)`** @ **`0x1402f9a70`** (**arg3** is **`result_2`** from **`sub_1402f5840`**, i.e. **`var_120_1 + rdi_43 * 5`**). **`if (r13.d == 4)`** @ **`0x1402f9ba7`** plus **`arg3[1..3]`** byte checks @ **`0x1402f9e46`** matches **`src/endpoint-address-encoding.ts`** **`plus_one_all_octets_regional_mainframe`** **`(4,1,1,1)`** for wiki **`0.1.0.0` / `0.2.0.0` / `0.3.0.0`** (same 5-byte prefix; **which** regional mainframe is live is **which `NetNode` / slot** is iterating, not a different first-row byte).
+**5-byte row / regional tuple (ties repo TS to BN):** In **`sub_1402f9a40`**, **`r13 = zx.q(*arg3)`** @ **`0x1402f9a70`** (**arg3** is **`result_2`** from **`sub_1402f5840`**, i.e. **`var_120_1 + rdi_43 * 5`**). **`if (r13.d == 4)`** @ **`0x1402f9ba7`** plus **`arg3[1..3]`** byte checks @ **`0x1402f9e46`** matches **`src/analysis/endpoint-address-encoding.ts`** **`plus_one_all_octets_regional_mainframe`** **`(4,1,1,1)`** for wiki **`0.1.0.0` / `0.2.0.0` / `0.3.0.0`** (same 5-byte prefix; **which** regional mainframe is live is **which `NetNode` / slot** is iterating, not a different first-row byte).
 
 ##### J.3.4) **Lead exhausted — compose `*(slot+0x7a)==2` vs `[[rsp+0x298]]+8` tape dword (`var_300.d`)**
 
@@ -588,9 +590,9 @@ Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch
 
 ##### J.3.1) `*(arg2 + 0x1c5)` switch ↔ **`MainframeHeaderU32`** ↔ two `arg1` (`&var_308`) tails
 
-**Phase index:** **`uint64_t rax_37 = zx.q(*(arg2 + 0x1c5))`** @ **`0x1402fa00b`** in **`sub_1402f9a40`** (second arg **`arg2`** is the **`rsi_2`** / **`arg10[2]`** world node pointer from **`sub_1402f5840`**). This is the same **sub-phase** the repo models as **`RecoveredSchedulerState.phaseB`** / **`*(node + 0x1c5)`** in **`src/recovered-endpoint-scheduler.ts`**.
+**Phase index:** **`uint64_t rax_37 = zx.q(*(arg2 + 0x1c5))`** @ **`0x1402fa00b`** in **`sub_1402f9a40`** (second arg **`arg2`** is the **`rsi_2`** / **`arg10[2]`** world node pointer from **`sub_1402f5840`**). This is the same **sub-phase** the repo models as **`RecoveredSchedulerState.phaseB`** / **`*(node + 0x1c5)`** in **`src/analysis/recovered-endpoint-scheduler.ts`**.
 
-**`var_10b` constants match `src/packet-header-format.ts` `MainframeHeaderU32` 1:1** (HLIL **`switch (rax_37)`** @ **`0x1402fa02a`**):
+**`var_10b` constants match `src/analysis/packet-header-format.ts` `MainframeHeaderU32` 1:1** (HLIL **`switch (rax_37)`** @ **`0x1402fa02a`**):
 
 | **`rax_37` (phaseB)** | **`var_10b` in `sub_1402f9a40`** | **`MainframeHeaderU32` key** |
 |---:|---:|---|
@@ -601,7 +603,7 @@ Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch
 | 4 | `0x3020104` | `phase4` |
 | 5 | `0x4020104` | `phase5` |
 
-The **`a === 4`** branch of **`evaluateEndpointSend`** uses the **same numeric literals** for **`header`** as this BN **`switch`** (**`recovered-endpoint-scheduler.ts`**, regional **`a === 4`** / **`phaseB` 0..5** block).
+The **`a === 4`** branch of **`evaluateEndpointSend`** uses the **same numeric literals** for **`header`** as this BN **`switch`** (**`src/analysis/recovered-endpoint-scheduler.ts`**, regional **`a === 4`** / **`phaseB` 0..5** block).
 
 **Two different HLIL paths write `arg1` (`&var_308`):**
 
@@ -796,7 +798,7 @@ On this **success slice**, there is **no** **`mov` / `movaps` / `movups` into `[
 
 ##### J.4.10) **`sub_140516d40` — who fills `arg2[4]` (→ `0x58` row `+0x40`…`+0x4f`; dword @ row `+0x48`)**
 
-**`decompile_function("sub_140516d40")`** copies **`arg2[4]`** to **`*(new_row + 0x40)`** (**§J.4.1**). **`mcp get_xrefs_to(0x140516d40)`** lists **11** code refs — mirrored in **`src/recovered-endpoint-scheduler.ts`** as **`BinarySub140516d40CallSites`**.
+**`decompile_function("sub_140516d40")`** copies **`arg2[4]`** to **`*(new_row + 0x40)`** (**§J.4.1**). **`mcp get_xrefs_to(0x140516d40)`** lists **11** code refs — mirrored in **`src/analysis/recovered-endpoint-scheduler.ts`** as **`BinarySub140516d40CallSites`**.
 
 | **Parent** | **Call VA** | **`arg2` base (HLIL) — sources feeding the `+0x40` / `arg2[4]` lane** |
 |---|---|---|
@@ -1008,11 +1010,11 @@ Adjacent qwords form a **fat-pointer / vtable row** with many **`0x1407ae…` / 
 
 ### Simulator scope (what this repo is aiming for)
 
-The **target** is a **reasonable replica** of Tunnet’s endpoint traffic in the tools (`recovered-endpoint-scheduler`, message export, comparisons): right cadence, right branches for the tuples you care about, and **headers that match the game’s chosen values** where we have recovered them (today mostly as **32-bit integers** in code / JSON—the same bits the game packs into headers).
+The **target** is a **reasonable replica** of Tunnet’s endpoint traffic in the tools (`src/analysis/recovered-endpoint-scheduler.ts`, message export, comparisons): right cadence, right branches for the tuples you care about, and **headers that match the game’s chosen values** where we have recovered them (today mostly as **32-bit integers** in code / JSON—the same bits the game packs into headers).
 
 **Automatic phase progression** (story/zone systems writing `0x1c4` / `0x1c5` over time) is **out of scope**: treat saves as a **line-in** with **`pnpm sched:sequence`** / **`pnpm sched:compare`** (see **§9**), not something the simulator must replay from world state.
 
-**“Exact strings of the headers”** here means: **bit-exact header values** plus stable renderings: see **`src/packet-header-format.ts`** (`formatHeaderExact`, **`MainframeHeaderU32`**) and **`out/message-sequence.json`** per-event **`headerHexU32` / `headerBytesLe` / `headerBytesBe`**. If the on-wire layout includes **extra bytes** beyond the 32-bit word, that framing is a **separate** capture task.
+**“Exact strings of the headers”** here means: **bit-exact header values** plus stable renderings: see **`src/analysis/packet-header-format.ts`** (`formatHeaderExact`, **`MainframeHeaderU32`**) and **`out/message-sequence.json`** per-event **`headerHexU32` / `headerBytesLe` / `headerBytesBe`**. If the on-wire layout includes **extra bytes** beyond the 32-bit word, that framing is a **separate** capture task.
 
 ### Still in scope to improve the replica
 
@@ -1077,7 +1079,7 @@ When branch selects among candidates, follow:
 
 Record exactly when sampling occurs and what candidate arrays are passed.
 
-For a **static inventory of every `.text` call to `sub_140673b40`** and the decoded **literal strings** in each candidate vector (no MCP required), run **`pnpm extract:packet-pools`** — see **§9** (**`scripts/extract-packet-string-pools.py`**). Three call sites on the stock build still need CFG/BN follow-up (**§9** lists RVAs).
+For a **static inventory of every `.text` call to `sub_140673b40`** and the decoded **literal strings** in each candidate vector (no MCP required), run **`pnpm extract:packet-pools`** — see **§9** (**`analysis/scripts/extract-packet-string-pools.py`**). Three call sites on the stock build still need CFG/BN follow-up (**§9** lists RVAs).
 
 ### Step 6: Validate lifecycle/ordering
 
@@ -1109,34 +1111,34 @@ If you see `Connection closed` / `Not connected`:
 - **`src/simulator.ts`**
   - **Topology tick simulator** (endpoints / relays / hubs / filters): optional **`Packet.ttl`**, bounce decrement, filter operating-port decrement, **`ttlExpired`** / **`bounced`** stats. **`ttl === undefined` ⇒ no countdown** (infinite-life scaffold). **Not** recovered from **`tunnet.exe`**; replace with **§5 J** once the wire field and rules are known.
 
-- **`src/recovered-endpoint-scheduler.ts`**
+- **`src/analysis/recovered-endpoint-scheduler.ts`**
   - Recovered scheduler: `evaluateEndpointSend`, `applyRecoveredStateTransitions` (today: **`sub_1402f5840`** status ladder for `0x1c4` only).
   - **`BinaryObservedPhaseA`**: named constants for `*(node+0x1c4)` values seen in the binary (scheduler **`5`–`7`**, zone fn **`sub_140165cb0`** **`0xc`–`0xe`**, **`0x13`**).
   - **`initialRecoveredSchedulerState(phaseA?, phaseB?)`**: builds `{ phaseA, phaseB }` mirroring game **`0x1c4` / `0x1c5`** at simulation start (“save” line-in).
 
-- **`src/scheduler-comparison.ts`**
+- **`src/analysis/scheduler-comparison.ts`**
   - **`compareRecoveredAgainstCurrentImplementation(ticks, dataPath, encodingStrategy, initialRecoveredState?)`** — fourth argument is initial **`RecoveredSchedulerState`** (default **`{ phaseA: 0, phaseB: 0 }`**).
 
-- **`src/export-message-sequence.ts`**
+- **`src/analysis/export-message-sequence.ts`**
   - Writes **`out/message-sequence.json`**. Each event includes **`header`** (number) plus **`headerHexU32`**, **`headerBytesLe`**, **`headerBytesBe`** from **`formatHeaderExact`** (see below).
 
-- **`src/packet-header-format.ts`**
+- **`src/analysis/packet-header-format.ts`**
   - **`formatHeaderExact(header)`** — exact string forms of the 32-bit header: literal-style **`0x…`**, little-endian byte hex, big-endian byte hex.
   - **`MainframeHeaderU32`** — fixed mainframe phase header words (`a === 4`, `phaseB` **0..5**) for cross-checks against BN.
 
-- **`src/game-packet-strings.ts`**
+- **`src/analysis/game-packet-strings.ts`**
   - Curated **subject / copy** literals wired into the simulator for specific **`evaluateEndpointSend`** profiles (**status-family**, **ad-family**, **search-family** rotation, etc.). Each pool matches rows passed to **`sub_140673b40`** on known branches; **`pick*Placeholder`** helpers are **tick-based stand-ins** until **`sub_140673b40`** / RNG state is ported (**`packetSubjectPickMode`** in **`out/message-sequence.json`** stays **`placeholder`** until then).
   - For the **full static list** of pools from the binary (not profile-keyed), use **`pnpm extract:packet-pools`** → **`out/packet-string-pools.json`** (**§9** below).
 
-- **`scripts/extract-packet-string-pools.py`** (+ **`pnpm extract:packet-pools`**)
+- **`analysis/scripts/extract-packet-string-pools.py`** (+ **`pnpm extract:packet-pools`**)
   - **Purpose:** Offline PE scan of **`tunnet.exe`**: find every **`call`** in **`.text`** whose displacement targets **`sub_140673b40`** (VA **`0x140673b40`**, RVA **`0x673b40`**, PE ImageBase **`0x140000000`** on the stock Steam build).
   - **Method:** Walk backward from each callsite through the MSVC-style **slot builder** (**`lea rax, [rip+disp]`** → store pointer → store **`imm32`** length in **`[rsi|rbx|rdi]+disp`**, sometimes **`mov qword [rsp+disp], imm`** / **`mov byte [rsp+0x73], 1`** filler) until **`mov edx`, pool size**, optionally **`lea r8,[rsp+0x78]`**, then **`call`**.
   - **Output:** **`out/packet-string-pools.json`** (under **`out/`**, gitignored). Top-level fields include **`callSiteCount`**, **`decodedOkCount`**, **`decodedFailCount`**, **`noMovEdxCount`**, **`imageBase`**, **`calleeRva`**. Each **`pools[]`** entry has **`callRva`** / **`callRvaHex`**, **`poolSize`**, **`strings`** (ordered as in memory before the uniform pick), **`decodeStatus`** (**`ok`** | **`fail`** | **`no_mov_edx`**), **`decodeError`** (tail hex / reason when not **`ok`**), **`rcxNote`** (how **`rcx`** was set before the call, e.g. **`rcx_rsi`**, **`rcx_r14`**).
-  - **Coverage (stock Steam `tunnet.exe`):** **25** callsites found; **22** decode with **`decodeStatus: ok`**. **3** remain **`fail`** (**`0x2fb46a`**, **`0x2fb782`**, **`0x2fb82c`**) — XMM / **`jmp`** / Rust **`&str`** paths the linear decoder does not follow; recover with Binary Ninja (CFG) or extend **`scripts/extract-packet-string-pools.py`**. Hints: **`0x2fb782`** / **`0x2fb82c`** share the **`CONFIDENTIAL` / `TOP SECRET`** builder with **`0x2fb62f`**; **`0x2fb46a`** is **`rcx = r14`** with corn **`&str`** metadata at **`0x1424247d8`** and architect text nearby in **`.rdata`**.
+  - **Coverage (stock Steam `tunnet.exe`):** **25** callsites found; **22** decode with **`decodeStatus: ok`**. **3** remain **`fail`** (**`0x2fb46a`**, **`0x2fb782`**, **`0x2fb82c`**) — XMM / **`jmp`** / Rust **`&str`** paths the linear decoder does not follow; recover with Binary Ninja (CFG) or extend **`analysis/scripts/extract-packet-string-pools.py`**. Hints: **`0x2fb782`** / **`0x2fb82c`** share the **`CONFIDENTIAL` / `TOP SECRET`** builder with **`0x2fb62f`**; **`0x2fb46a`** is **`rcx = r14`** with corn **`&str`** metadata at **`0x1424247d8`** and architect text nearby in **`.rdata`**.
   - **Scope limits:** Only strings reached via **`sub_140673b40`**. Other packet copy paths (no call to this helper, different binaries, future patches) are **not** included. Re-run after game updates; RVAs and codegen can shift.
-  - **CLI:** `python scripts/extract-packet-string-pools.py [--exe path/to/tunnet.exe] [--out path/to.json]`
+  - **CLI:** `python analysis/scripts/extract-packet-string-pools.py [--exe path/to/tunnet.exe] [--out path/to.json]`
 
-- **`scripts/extract-tunnet-rdata-strings.py`** (+ **`pnpm extract:exe-strings`**)
+- **`analysis/scripts/extract-tunnet-rdata-strings.py`** (+ **`pnpm extract:exe-strings`**)
   - Dumps **every** contiguous printable-ASCII run in the chosen PE section(s) (default **`.rdata`**, default **`--min-len 0`** = length **≥ 1**) to **`out/tunnet-rdata-strings.jsonl`**—**no content filter**, no second output file. There is **no VA range** beyond full section bounds. Use **`rg`** / **`grep`** on that JSONL to narrow (file is huge at **`--min-len 0`**). **`--min-len N`** (N ≥ 1) shortens runs; **`--sections .rdata,.text`** adds sections; **`--exe`** sets the binary path.
 
 ### CLI: set initial phase (save line-in)
