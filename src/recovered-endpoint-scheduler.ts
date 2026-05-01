@@ -82,6 +82,25 @@ export type PacketProfile =
   | "status-family"
   | "short-fixed";
 
+/**
+ * Wiki **`send_rate` / `sends_to`** treats each emit as reaching **every** expanded destination.
+ * **`sub_1402f9a40`** still picks **one** **`var_10b`** per send — {@link headerToMask} is often a **subset** of that row.
+ * Edge-compare and sequence export use full **`sends_to`** for these profiles so totals align with the wiki table
+ * (the binary may not actually deliver to every row on one tick; the wiki can also be imprecise).
+ */
+export function packetProfileUsesWikiSendsToFanOut(profile: PacketProfile): boolean {
+  switch (profile) {
+    case "mainframe-phase-sequence":
+    case "school-chat":
+    case "track-broadcast":
+    case "search-family":
+    case "ad-family":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export type RecoveredDecision = {
   shouldSend: boolean;
   header: number | null;
@@ -225,6 +244,11 @@ function rawAddrHeader(addr: EndpointAddress): number {
 /** Which third-of-half-tick bucket **`sub_1402f9a40`** uses for **`c=3`,`d=3`** ammo / confidential / field-rations (HLIL `rax_70 % 3`). */
 function supplyTripleBucketFromTick(tick: number): 0 | 1 | 2 {
   return ((tick >>> 1) % 3) as 0 | 1 | 2;
+}
+
+/** `rax_231` at **`0x1402fbb48`** (`tick >= 0`): **`(tick >> 3) & 3`** — investment header row in **`c=4`,`d=3`**. */
+function case4D3Rax231Mod4(tick: number): number {
+  return (i32(tick) >> 3) & 3;
 }
 
 export function evaluateEndpointSend(
@@ -554,6 +578,42 @@ export function evaluateEndpointSend(
         };
       }
 
+      if (d === 3) {
+        if (b < 2 || b > 4) {
+          return {
+            shouldSend: false,
+            header: null,
+            profile: null,
+            reason: "c=4 d=3 requires b in [2..4] (HLIL 0x1402fad4f rcx_1)",
+          };
+        }
+        if ((tick & 1) !== 0) {
+          return { shouldSend: false, header: null, profile: null, reason: "c=4 d=3 odd tick gate" };
+        }
+        const halfQuad = signedHalfTickFloor(tick) & 3;
+        if (halfQuad !== 0) {
+          return {
+            shouldSend: true,
+            header: ((b << 8) | 0x1040001) >>> 0,
+            profile: "search-family",
+            reason: "c=4 d=3 long-form branch (HLIL 0x1402fad76–0x1402fae50)",
+            packetSubject: pickSearchInvestmentSubjectPlaceholder(tick),
+            packetSubjectCandidates: searchInvestmentSubjectCandidates(),
+          };
+        }
+        const rax231 = case4D3Rax231Mod4(tick);
+        const header =
+          (rax231 >>> 0) < 4 ? (((rax231 << 8) + 0x2020101) >>> 0) : (0x2020001 >>> 0);
+        return {
+          shouldSend: true,
+          header,
+          profile: "search-family",
+          reason: "c=4 d=3 INVEST rotation (HLIL 0x1402fbb32–0x1402fbbd8)",
+          packetSubject: pickSearchInvestmentSubjectPlaceholder(tick),
+          packetSubjectCandidates: searchInvestmentSubjectCandidates(),
+        };
+      }
+
       if (d === 2) {
         if (!case4D2TestBitGatePasses(b)) {
           return { shouldSend: false, header: null, profile: null, reason: "c=4 d=2 HLIL test_bit(0x16,b) gate" };
@@ -586,7 +646,12 @@ export function evaluateEndpointSend(
       }
 
       if (d !== 1) {
-        return { shouldSend: false, header: null, profile: null, reason: "c=4 requires d=1 (token), d=2, or d=4 (meeting/status)" };
+        return {
+          shouldSend: false,
+          header: null,
+          profile: null,
+          reason: "c=4 requires d=1 (token), d=2, d=3 (shelter/invest), or d=4 (meeting/status)",
+        };
       }
       if ((tick & 3) !== 0) {
         return { shouldSend: false, header: null, profile: null, reason: "c=4 every-4-ticks gate" };

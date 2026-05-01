@@ -67,9 +67,8 @@ export function mainframeRegionalBroadcastMaskFromWikiAddress(address: string): 
 
 /**
  * Destination wiki mask for logging / non-mainframe routing.
- * **`mainframe-phase-sequence`**: returns **`0.k.*.*`** for wiki **`0.k.0.0`**; edge lists in
- * **`compare-endpoint-edges`** / **`export-message-sequence`** still expand **every** wiki **`sends_to`**
- * target on that send (wiki table semantics; header does not encode cross-region picks).
+ * **`mainframe-phase-sequence`**: returns **`0.k.*.*`** for wiki **`0.k.0.0`** (logging only; compare/export may
+ * expand full **`sends_to`** instead of {@link headerToMask} — see **`packetProfileUsesWikiSendsToFanOut`** in **`recovered-endpoint-scheduler.ts`**).
  */
 export function dstWikiMaskForRecoveredSend(
   wikiSourceAddress: string,

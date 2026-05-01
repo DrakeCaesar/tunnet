@@ -8,6 +8,7 @@ import {
 } from "./endpoint-address-encoding.js";
 import {
   applyRecoveredStateTransitions,
+  packetProfileUsesWikiSendsToFanOut,
   RecoveredSchedulerState,
   advanceNetTick,
   evaluateEndpointSend,
@@ -189,15 +190,14 @@ function main(): void {
       }
       const dstMask = dstWikiMaskForRecoveredSend(endpoint.address, decision.header, decision.profile);
       const sourceAllowed = destinationsBySource.get(endpoint.address) ?? [];
-      const matchedDestinations =
-        decision.profile === "mainframe-phase-sequence"
-          ? sourceAllowed.filter((candidate) => candidate !== endpoint.address)
-          : allAddresses.filter(
-              (candidate) =>
-                candidate !== endpoint.address &&
-                matchMask(dstMask, candidate) &&
-                sourceAllowed.includes(candidate),
-            );
+      const matchedDestinations = packetProfileUsesWikiSendsToFanOut(decision.profile)
+        ? sourceAllowed.filter((candidate) => candidate !== endpoint.address)
+        : allAddresses.filter(
+            (candidate) =>
+              candidate !== endpoint.address &&
+              matchMask(dstMask, candidate) &&
+              sourceAllowed.includes(candidate),
+          );
       const exact = formatHeaderExact(decision.header);
       events.push({
         tick,

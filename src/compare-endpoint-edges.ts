@@ -19,7 +19,8 @@
  *
  * **Why sets often disagree:** the wiki side assumes **every** expanded `sends_to` target on each fire;
  * the recovered side usually emits **one header-derived mask per tick**, so receivers are a **subset** of
- * `sends_to` (regional mainframe sends use the full expanded list to match wiki table semantics). That alone can explain gaps without a phase bug.
+ * `sends_to`. For several {@link packetProfileUsesWikiSendsToFanOut} profiles, edge-compare mirrors the wiki
+ * table by expanding **full** `sends_to` per emit (binary may still route a subset on one tick). That alone can explain gaps without a phase bug.
  *
  * **Phases:** `phaseB` is consulted only for **`a === 4` / `(1,1,1)`** in {@link evaluateEndpointSend} when the
  * encoded tuple hits that path. `phaseA` is **not** read there — it only advances via
@@ -44,6 +45,7 @@ import {
   BinaryObservedPhaseA,
   MAINFRAME_SUBPHASE_MAX,
   applyRecoveredStateTransitions,
+  packetProfileUsesWikiSendsToFanOut,
   RecoveredSchedulerState,
   advanceNetTick,
   evaluateEndpointSend,
@@ -123,15 +125,14 @@ function collectRecoveredEdgesForTick(
     const header = decision.header;
     const profile = decision.profile;
     const sourceAllowed = destinationsBySource.get(endpoint.address) ?? [];
-    const matched =
-      profile === "mainframe-phase-sequence"
-        ? sourceAllowed.filter((candidate) => candidate !== endpoint.address)
-        : allAddresses.filter(
-            (candidate) =>
-              candidate !== endpoint.address &&
-              matchMask(dstWikiMaskForRecoveredSend(endpoint.address, header, profile), candidate) &&
-              sourceAllowed.includes(candidate),
-          );
+    const matched = packetProfileUsesWikiSendsToFanOut(profile)
+      ? sourceAllowed.filter((candidate) => candidate !== endpoint.address)
+      : allAddresses.filter(
+          (candidate) =>
+            candidate !== endpoint.address &&
+            matchMask(dstWikiMaskForRecoveredSend(endpoint.address, header, profile), candidate) &&
+            sourceAllowed.includes(candidate),
+        );
     for (const dst of matched) {
       edges.push(`${endpoint.address}>${dst}`);
     }
@@ -520,7 +521,7 @@ function main(): void {
     `[edge-compare] wiki model: send_rate>0, tick%send_rate==0, edges = full expanded sends_to (broadcast).`,
   );
   console.log(
-    `[edge-compare] mismatch note: wiki baseline may be wrong or incomplete. Recovered uses header mask × sends_to (subset), except mainframe-phase-sequence sends which use the full expanded sends_to list. phaseA advances only after status sends (${BinaryObservedPhaseA.statusAfterSend5}→${BinaryObservedPhaseA.statusAfterSend6}→${BinaryObservedPhaseA.statusAfterSend7}).`,
+    `[edge-compare] mismatch note: wiki baseline may be wrong or incomplete. Recovered uses header mask × sends_to (subset), except profiles in packetProfileUsesWikiSendsToFanOut() which mirror full wiki sends_to per emit. phaseA advances only after status sends (${BinaryObservedPhaseA.statusAfterSend5}→${BinaryObservedPhaseA.statusAfterSend6}→${BinaryObservedPhaseA.statusAfterSend7}).`,
   );
 
   console.log("[edge-compare] over full run (multiset edge counts + unique src>dst sets):");
