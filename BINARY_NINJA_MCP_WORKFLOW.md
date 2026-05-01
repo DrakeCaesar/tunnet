@@ -431,6 +431,66 @@ So **“can this address be resolved to a live slot right now?”** is exactly *
 
 Filtered hits include the ECS system name **`tunnet::net::endpoint::update`** inside the usual long Rust metadata blob (example chunk address **`0x142441181`**). Related: **`tunnet::net::endpoint::EndpointPlugin`** near **`0x142461581`**. Use Binary Ninja’s own string/xref UI on these substrings first; **`get_xrefs_to` on the raw chunk address** often returns nothing in this MCP bridge, so treat these as **navigation hints**, not automatic xref sources.
 
+### J) Packet TTL (hop lifetime) — BN research checklist
+
+**Repo context (not game truth):** `src/simulator.ts` implements a **topology scaffold**: if `Packet.ttl === undefined`, **`decrementTtl`** leaves the packet unchanged, so TTL never runs down (“infinite TTL”). When `ttl` is set, filters decrement on the operating port and wrong-address non-sensitive endpoint bounces decrement once; **`README_TS_SIM.md`** summarizes that **design** behavior. **None of this is proven from `tunnet.exe` yet** for the live slot / relay layout.
+
+**Goal:** recover from the binary, for **in-world** packets (slot buffers, **`0x58`** rows, relay forwards — not serde JSON):
+
+1. **Where TTL is set on create** — initial value and which code paths write it (compose vs relay vs inject).
+2. **What decrements TTL** — per hop, per device class, or only on specific gates.
+3. **What happens at expiry** — drop silently, enqueue an event, bounce with swapped tuple, etc.
+
+**Anchors already in this doc (start here):**
+
+- **`sub_140516d40` / `sub_140516f40`** (**§E.2**, **§E.10**): **`0x58`**-row layout; **`arg2`** packing into **`+0x00..+0x30`**, **`+0x40`**, **`+0x50`**. Check whether any **first-hop** builder stores a **separate hop/TTL byte** next to the five-byte tuple / header blob.
+- **`sub_1402f5840`**: after inbound merge / before outbound enqueue, scan **all** **`mov byte|word|dword [slot + disp], …`** on the **`0x98`**-strided packet blob (**§E.1a**). Rename in BN once a field looks like a **small integer** copied into every new outbound.
+- **`sub_14044eae0`** (**§E.3–E.4**, **§H**): relay forwarding — does TTL **copy unchanged**, **decrement once per forward**, or **reset**?
+- **`sub_1403a08e0`** (tape / graph relay after **`sub_1400af880`**, **§H**): same question when the tuple resolves.
+- **`sub_1404eb580`** (**§H** table): calls **`sub_1400af880`**; still a lead for **bounce / TTL** behavior not found in the smaller relay slices.
+
+**Mechanical BN moves (obey §1 one-request-at-a-time):**
+
+1. **`decompile_function("sub_140516d40")`** and **`get_xrefs_to(0x140516d40)`** — pick call sites that build **player-visible** traffic (not only test injectors), follow **stores** into the **`0x58`** row and into **`slot+…`** targets.
+2. **`decompile_function("sub_14044eae0")`** — search HLIL for **`add …, -1`**, **`sub …, 1`**, **`dec`** on a **`slot`-relative** address; follow the **fall-through vs branch** when the field hits **0**.
+3. **`get_xrefs_to`** on any **candidate field VA** once you have a **data xref** from a **`mov [reg+disp]`** pattern (or scan **`.text`** for **`C6 …`** / **`83 …`** style updates with the same **`disp32`** as your candidate slot offset — same trick as **`+0x1c5`** writers in **§G**).
+4. **Do not** use **`SendBack` / `PacketDrop`** **`.rdata`** xrefs as proof of wire TTL expiry (**§E.1b**): those are **serde / particles** labels unless a **non-serde** path is shown copying from them into a live packet.
+
+**When you have a hit, log this (for TypeScript parity):**
+
+| Field | Base pointer | Offset + width | Writers (fn @ VA) | Readers / decrement (fn @ VA) | On zero / underflow |
+
+#### J.1) BN session notes — “how TTL is set” (in progress)
+
+MCP was run against the stock **`tunnet.exe.bndb`** (see **§1** one-request-at-a-time). **Initial TTL on compose** is **not** pinned yet; **relay-side decrement** of a **candidate hop/TTL field** is partially visible.
+
+**Strings (navigation only):**
+
+- **`.rdata`** tutorial lines **`0x14243a630`** / **`0x14243a6f8`**: “Preserves TTL…” / “Decrements TTL…” — **workshop UI copy**, not a code xref target by itself.
+- **`0x14248f8c0`**: ASCII **` | ttl: \n`** — looks like a **`Debug` / `Display`** fragment for a Rust packet type. **`get_xrefs_to(0x14248f8c0)`** returned **no code xrefs** in MCP (only a data edge); use BN **Data** view / manual xref from the vtable if needed.
+
+**`sub_140516d40` (`0x140516d40`) — row append:**
+
+- HLIL copies **`arg2`** into a new **`0x58`** row: **`+0x00`…`+0x30`**, **`+0x40 ← arg2[4]`**, **`+0x50 ← *(arg1[2]+0x10)`** (cursor / generation). **Any TTL-like scalar is expected inside the `arg2` bundle** passed in by callers, not invented inside this helper.
+
+**`sub_14044eae0` (`0x14044eae0`, relay) — decrement before enqueue (`sub_140516d40`):**
+
+- **`get_xrefs_to(0x140516d40)`** includes **`sub_14044eae0`** @ **`0x14044f13a`**, **`0x14044fd7f`**, **`0x14044f758`**.
+- On the **`label_14044f160`** path, HLIL builds **`var_228`** then calls **`sub_140516d40(&var_b8, &var_228)`**. Immediately before that, it sets **`rdi_27 = rbp_5[1].q`** (second **`qword`** of the live packet slot **`rbp_5`**), then **`if (var_238_1.b != 0) rdi_27 -= 1`**, then folds **`rdi_27`** into **`var_218`**, which is part of **`var_228`**. **``var_238_1.b`** is tied to **`*(rbp_5 + 0x3a)`** on that spine.
+- **Working hypothesis:** **`slot[1]`** (second **`qword`**) is a **remaining hop / TTL counter** decremented **once** when relay packs a forward row **under that `+0x3a` condition** — **not** the same as “initial value at create”, but it constrains what the compose path must put in **`slot[1]`** on first send.
+
+**`sub_14037bf80` (`0x14037bf80`)** — neighbor row touch:
+
+- On match, HLIL does **`*(rsi_1 + 0xc) = arg4`** and **`*(rsi_1 + 0x10) = arg6`** (**`rsi_1`** points into a **`0x14`**-strided open-hash value). Relay callers pass **`arg4 = 1`** and **`arg6`** from an incremented counter sourced from **`*(r13_1 + idx*0x38 + 0x30)`** in the same function — **may be path bookkeeping**, not the same field as **`slot[1]`** above; keep separate until one dataflow graph merges them.
+
+**Next BN steps (initial TTL):**
+
+1. **`decompile_function("sub_1402f5840")`** and scroll HLIL around **`0x1402f66ea`** / **`0x1402f6808`** (the other **`sub_140516d40`** sites) — find **first** stores into the **`qword`** that later becomes **`rbp_5[1]`** on the relay slot.
+2. **`decompile_function("sub_1402f9a40")`** — slot / buffer fill after **`sub_1402f9a40`** returns into **`sub_1402f5840`**; look for a **constant** or **loaded config** written into the same offset as **`slot[1]`**.
+3. Optional: **`get_xrefs_to`** on the **`Debug` vtable`** that references **`0x14248f8c0`**, if BN UI shows one — MCP **`get_xrefs_to`** on the string alone was empty.
+
+Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch explicitly **reflects** or **drops** on the TTL field.
+
 ---
 
 ## 6) Goals: simulator vs “full game” parity
@@ -448,6 +508,7 @@ The **target** is a **reasonable replica** of Tunnet’s endpoint traffic in the
 1. **Public address → internal tuple** encoding: match the game for every tuple class the driver actually uses.
 2. **Who can receive a send**: candidate construction and RNG sampling (**`sub_140673740` / `sub_140673b40`**) aligned with **`sub_1400af880`** / neighbor tables—not random placeholders.
 3. **Same-tick ordering** where it changes who sends or what is seen first (receive vs scheduled send).
+4. **Wire packet TTL** (initial value, decrement sites, expiry): **`src/simulator.ts`** is a **scaffold** with **`ttl === undefined` ⇒ never expires**; recover real rules from the binary (**§5 J**).
 
 ### Binary notes (background, not all required for the simulator)
 
@@ -513,6 +574,7 @@ In `sub_1402f5840`, trace slot/state field updates (`+0x7a` and related payload 
 - receive vs scheduled send precedence (**partially documented §E.1a**: **`0x1402f5bfe` vs `0x1402f75bf`**, **`0x1402f5bdb` / `rdi_43` loop**)
 - wire-level **wrong-address bounce** vs normal send (**not** the **`SendBack`** serde xrefs — **§E.1b**; still trace **`sub_14044eae0` / `sub_1400af880`** families)
 - drop/reset transitions
+- **TTL / hop field** (if distinct from the above): initial write, decrements, expiry — see **§5 J**
 
 ---
 
@@ -531,6 +593,9 @@ If you see `Connection closed` / `Not connected`:
 ## 9) Current repo artifacts
 
 ### Core sources
+
+- **`src/simulator.ts`**
+  - **Topology tick simulator** (endpoints / relays / hubs / filters): optional **`Packet.ttl`**, bounce decrement, filter operating-port decrement, **`ttlExpired`** / **`bounced`** stats. **`ttl === undefined` ⇒ no countdown** (infinite-life scaffold). **Not** recovered from **`tunnet.exe`**; replace with **§5 J** once the wire field and rules are known.
 
 - **`src/recovered-endpoint-scheduler.ts`**
   - Recovered scheduler: `evaluateEndpointSend`, `applyRecoveredStateTransitions` (today: **`sub_1402f5840`** status ladder for `0x1c4` only).
