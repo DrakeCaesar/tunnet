@@ -3,6 +3,7 @@ import {
   Device,
   EndpointDevice,
   FilterDevice,
+  INFINITE_PACKET_TTL,
   Packet,
   PortRef,
   SimulationSnapshot,
@@ -33,11 +34,8 @@ function clonePacket(packet: Packet): Packet {
 }
 
 function decrementTtl(packet: Packet): Packet | null {
-  if (packet.ttl === undefined) {
-    return packet;
-  }
   const next = clonePacket(packet);
-  const ttl = (next.ttl ?? 0) - 1;
+  const ttl = next.ttl - 1;
   next.ttl = ttl;
   if (ttl < 0) {
     return null;
@@ -208,7 +206,7 @@ export class TunnetSimulator {
             id: ctx.packetIdCounter++,
             src: device.address,
             dest: inbound.src,
-            ttl: device.generator?.ttl,
+            ttl: device.generator?.ttl ?? INFINITE_PACKET_TTL,
             sensitive: false,
             subject: undefined,
           };
@@ -250,7 +248,7 @@ export class TunnetSimulator {
       id: ctx.packetIdCounter++,
       src: device.address,
       dest,
-      ttl: device.generator.ttl,
+      ttl: device.generator.ttl ?? INFINITE_PACKET_TTL,
       sensitive,
       subject: device.generator.subjectPrefix
         ? `${device.generator.subjectPrefix}${ctx.tick}`
@@ -404,7 +402,7 @@ export class TunnetSimulator {
       id: this.packetIdCounter++,
       src: srcAddress,
       dest: destAddress,
-      ttl: options?.ttl,
+      ttl: options?.ttl ?? INFINITE_PACKET_TTL,
       sensitive: options?.sensitive ?? false,
       subject: options?.subject,
     };

@@ -80,9 +80,9 @@ function deviceSettingsText(device: Device): string {
         `generator.interval=${device.generator.minIntervalTicks}-${device.generator.maxIntervalTicks}`,
       );
       parts.push(`generator.sensitiveChance=${device.generator.sensitiveChance}`);
-      if (device.generator.ttl !== undefined) {
-        parts.push(`generator.ttl=${device.generator.ttl}`);
-      }
+      parts.push(
+        `generator.ttl=${device.generator.ttl !== undefined ? device.generator.ttl : "inf"}`,
+      );
     }
     return parts.join(";");
   }

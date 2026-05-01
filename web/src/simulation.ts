@@ -1,10 +1,12 @@
+import { INFINITE_PACKET_TTL } from "../../src/types.js";
+
 export type Address = string;
 
 export interface Packet {
   id: number;
   src: Address;
   dest: Address;
-  ttl?: number;
+  ttl: number;
   sensitive: boolean;
   subject?: string;
 }
@@ -141,11 +143,8 @@ function clonePacket(packet: Packet): Packet {
 }
 
 function decrementTtl(packet: Packet): Packet | null {
-  if (packet.ttl === undefined) {
-    return packet;
-  }
   const next = clonePacket(packet);
-  const ttl = (next.ttl ?? 0) - 1;
+  const ttl = next.ttl - 1;
   next.ttl = ttl;
   if (ttl < 0) {
     return null;
@@ -302,7 +301,7 @@ export class TunnetSimulator {
             id: ctx.packetIdCounter++,
             src: device.address,
             dest: inbound.src,
-            ttl: device.generator?.ttl,
+            ttl: device.generator?.ttl ?? INFINITE_PACKET_TTL,
             sensitive: false,
             subject: undefined,
           });
@@ -340,7 +339,7 @@ export class TunnetSimulator {
       id: ctx.packetIdCounter++,
       src: device.address,
       dest: chooseOne(destinations, ctx.rnd),
-      ttl: device.generator.ttl,
+      ttl: device.generator.ttl ?? INFINITE_PACKET_TTL,
       sensitive: ctx.rnd() < device.generator.sensitiveChance,
       subject: device.generator.subjectPrefix ? `${device.generator.subjectPrefix}${ctx.tick}` : undefined,
     };

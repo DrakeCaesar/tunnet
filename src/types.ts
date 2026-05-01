@@ -1,10 +1,13 @@
 export type Address = string;
 
+/** Placeholder until real game TTLs are known; decrements stay at infinity in JS (`Infinity - 1 === Infinity`). */
+export const INFINITE_PACKET_TTL = Number.POSITIVE_INFINITY;
+
 export interface Packet {
   id: number;
   src: Address;
   dest: Address;
-  ttl?: number;
+  ttl: number;
   sensitive: boolean;
   subject?: string;
 }
