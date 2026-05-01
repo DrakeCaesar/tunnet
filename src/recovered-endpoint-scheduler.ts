@@ -71,14 +71,16 @@ export type RecoveredSchedulerState = {
 
 /**
  * Per-tick **packet-slot** context for **`sub_1402f5840`** **same-tick ordering** (one resolution per slot per tick).
- * See **`BINARY_NINJA_MCP_WORKFLOW.md`** (“Same-tick receive/send interaction”) + **MCP-verified** VAs
+ * See **`BINARY_NINJA_MCP_WORKFLOW.md`** §E + **§E.1a** (NetTock cadence, **`0x98`** slot list, deferred **`+0x7a`**) + VAs
  * **`0x1402f5bfe` / `0x1402f5c26` / `0x1402f5cc1` / `0x1402f75bf`**. Export/compare omit this until inbound
  * simulation exists; when set, {@link evaluateEndpointSend} suppresses a **scheduled** compose send for that tick.
  */
 export type RecoveredSlotTickContext = {
   /**
    * True when the receive or bounce path **claimed the slot** this tick, so the game does **not** also emit the
-   * normal scheduled **`sub_1402f9a40`** outcome as a **second** packet for that slot (**HLIL** single-pass rewrites).
+   * normal scheduled **`sub_1402f9a40`** outcome as a **second** packet for that slot. (**`BINARY_NINJA_MCP_WORKFLOW.md`**
+   * §E.1a: merge @ **`0x1402f75bf`** is after **`0x1402f5bfe`** on the same inner-loop spin; jump-table @ **`0x1402f5bdb`**
+   * can still arm **`sub_1402f9a40` later in the same `sub_1402f5840`** — model separately if needed.)
    */
   receiveOrBounceClaimedSlot: boolean;
 };

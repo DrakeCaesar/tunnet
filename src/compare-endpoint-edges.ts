@@ -6,7 +6,9 @@
  * Recovered behavior follows **`sub_1402f9a40` / `sub_1402f5840`** modeling in `recovered-endpoint-scheduler.ts`
  * plus numeric {@link encodeEndpointAddressForStrategy} only (no wiki topology overrides beyond encoding).
  *
- * Only **(sender, receiver)** edges are compared — not headers, subjects, or RNG pools.
+ * Only **(sender, receiver)** edges are compared — not headers or RNG pools. Optional
+ * **`--edge-subjects-file=`** writes recovered **`packetSubject` / `packetSubjectCandidates`** (union over
+ * the run) per unique **`src>dst`** pair for the same simulation as edge-compare.
  *
  * Wiki **edge-compare** baseline (not `simulator.ts`, which uses **one random** destination from the list):
  * - Emit when `send_rate > 0`, expanded `sends_to` is non-empty, and `tick % send_rate === 0`.
@@ -27,14 +29,16 @@
  * {@link applyRecoveredStateTransitions} after status-family sends. Use **`plus_one_all_octets_regional_mainframe`**
  * so wiki **`0.{1,2,3}.0.0`** maps to **`(4,1,1,1)`** (`sub_1402f9a40` **`r13 == 4`** gate @ **`0x1402f9ba7`**).
  *
- * CLI: `tsx src/compare-endpoint-edges.ts [ticks] [strategy] [phaseA] [phaseB]`
+ * CLI: `tsx src/compare-endpoint-edges.ts [ticks] [strategy] [phaseA] [phaseB] [--list-pairs] [--edge-subjects-file=out/edges.json]`
+ * With **pnpm**: `pnpm compare:edges -- 10000 … --list-pairs` — a forwarded **`--`** is stripped so **`ticks`** stays numeric.
  * Scan: `tsx src/compare-endpoint-edges.ts scan [ticks] [aMin] [aMax] [bMin] [bMax] [encoding...|all]`
  * - Trailing encodings: `identity`, `plus_one_all_octets`, `plus_one_all_octets_regional_mainframe`, `plus_one_first_octet`, or **`all`**.
  * - Omit encodings → defaults to **`identity` + `plus_one_all_octets` + `plus_one_all_octets_regional_mainframe`**; combined union vs wiki is printed.
  * - Omit phase bounds → ticks=10000, a 0..20, b 0..11.
  */
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import {
   type AddressEncodingStrategy,
   encodeEndpointAddressForStrategy,
@@ -50,6 +54,7 @@ import {
   advanceNetTick,
   evaluateEndpointSend,
   initialRecoveredSchedulerState,
+  type RecoveredDecision,
 } from "./recovered-endpoint-scheduler.js";
 
 type EndpointRow = {
@@ -107,6 +112,8 @@ function collectWikiEdgesForTick(
   return out;
 }
 
+type RecoveredEdgeContribution = { pair: string; decision: RecoveredDecision };
+
 function collectRecoveredEdgesForTick(
   netTick: number,
   endpoints: EndpointRow[],
@@ -114,8 +121,10 @@ function collectRecoveredEdgesForTick(
   allAddresses: string[],
   state: RecoveredSchedulerState,
   strategy: AddressEncodingStrategy,
-): string[] {
+  collectContributions: boolean,
+): { edges: string[]; contributions: RecoveredEdgeContribution[] } {
   const edges: string[] = [];
+  const contributions: RecoveredEdgeContribution[] = [];
   for (const endpoint of endpoints) {
     const encoded = encodeEndpointAddressForStrategy(parseEndpointAddressString(endpoint.address), strategy);
     const decision = evaluateEndpointSend(state, encoded, netTick);
@@ -134,11 +143,37 @@ function collectRecoveredEdgesForTick(
             sourceAllowed.includes(candidate),
         );
     for (const dst of matched) {
-      edges.push(`${endpoint.address}>${dst}`);
+      const pair = `${endpoint.address}>${dst}`;
+      edges.push(pair);
+      if (collectContributions) {
+        contributions.push({ pair, decision });
+      }
     }
     applyRecoveredStateTransitions(state, encoded, decision);
   }
-  return edges;
+  return { edges, contributions };
+}
+
+function mergeSubjectStringsFromDecision(target: Set<string>, d: RecoveredDecision): void {
+  if (d.packetSubjectCandidates?.length) {
+    for (const s of d.packetSubjectCandidates) {
+      if (s) target.add(s);
+    }
+  }
+  if (d.packetSubject != null && d.packetSubject !== "") {
+    target.add(d.packetSubject);
+  }
+}
+
+type EdgeSubjectAgg = { subjects: Set<string>; profiles: Set<string> };
+
+function getOrCreateEdgeSubjectAgg(map: Map<string, EdgeSubjectAgg>, pair: string): EdgeSubjectAgg {
+  let row = map.get(pair);
+  if (!row) {
+    row = { subjects: new Set(), profiles: new Set() };
+    map.set(pair, row);
+  }
+  return row;
 }
 
 function aggregateSets(edges: readonly string[]): {
@@ -191,28 +226,61 @@ function simulateRecoveredPairs(params: {
   strategy: AddressEncodingStrategy;
   phaseA: number;
   phaseB: number;
-}): { pairs: Set<string>; totalEdges: number; finalPhaseA: number; finalPhaseB: number } {
-  const { endpoints, destinationsBySource, allAddresses, ticks, strategy, phaseA, phaseB } = params;
+  collectEdgeSubjects?: boolean;
+}): {
+  pairs: Set<string>;
+  totalEdges: number;
+  finalPhaseA: number;
+  finalPhaseB: number;
+  edgeSubjectsByPair?: Map<string, EdgeSubjectAgg>;
+} {
+  const {
+    endpoints,
+    destinationsBySource,
+    allAddresses,
+    ticks,
+    strategy,
+    phaseA,
+    phaseB,
+    collectEdgeSubjects = false,
+  } = params;
   const state = initialRecoveredSchedulerState(phaseA, phaseB);
   const pairs = new Set<string>();
+  const edgeSubjectsByPair = collectEdgeSubjects ? new Map<string, EdgeSubjectAgg>() : undefined;
   let totalEdges = 0;
   let netTick = 0;
   for (let tick = 0; tick < ticks; tick += 1) {
     netTick = advanceNetTick(netTick);
-    const tickEdges = collectRecoveredEdgesForTick(
+    const { edges: tickEdges, contributions } = collectRecoveredEdgesForTick(
       netTick,
       endpoints,
       destinationsBySource,
       allAddresses,
       state,
       strategy,
+      collectEdgeSubjects,
     );
     totalEdges += tickEdges.length;
     for (const edge of tickEdges) {
       pairs.add(edge);
     }
+    if (edgeSubjectsByPair && contributions.length > 0) {
+      for (const { pair, decision } of contributions) {
+        const row = getOrCreateEdgeSubjectAgg(edgeSubjectsByPair, pair);
+        if (decision.profile) {
+          row.profiles.add(decision.profile);
+        }
+        mergeSubjectStringsFromDecision(row.subjects, decision);
+      }
+    }
   }
-  return { pairs, totalEdges, finalPhaseA: state.phaseA, finalPhaseB: state.phaseB };
+  return {
+    pairs,
+    totalEdges,
+    finalPhaseA: state.phaseA,
+    finalPhaseB: state.phaseB,
+    ...(edgeSubjectsByPair !== undefined ? { edgeSubjectsByPair } : {}),
+  };
 }
 
 const ENCODING_STRATEGIES: readonly AddressEncodingStrategy[] = [
@@ -434,8 +502,87 @@ function runScan(params: {
   );
 }
 
+function stripListPairsFlag(argv: string[]): { argv: string[]; listPairs: boolean } {
+  const listPairs = argv.includes("--list-pairs");
+  return { argv: argv.filter((a) => a !== "--list-pairs"), listPairs };
+}
+
+function stripEdgeSubjectsFileFlag(argv: string[]): { argv: string[]; edgeSubjectsFile: string | null } {
+  let edgeSubjectsFile: string | null = null;
+  const next: string[] = [];
+  const prefix = "--edge-subjects-file=";
+  for (const a of argv) {
+    if (a === "--edge-subjects-file") {
+      throw new Error(
+        "--edge-subjects-file requires a path: --edge-subjects-file=out/edge-pairs-subjects.json",
+      );
+    }
+    if (a.startsWith(prefix)) {
+      const pathPart = a.slice(prefix.length);
+      if (!pathPart) {
+        throw new Error("--edge-subjects-file= must be followed by a non-empty path");
+      }
+      edgeSubjectsFile = pathPart;
+      continue;
+    }
+    next.push(a);
+  }
+  return { argv: next, edgeSubjectsFile };
+}
+
+function writeEdgeSubjectsReport(params: {
+  outPath: string;
+  ticks: number;
+  strategy: AddressEncodingStrategy;
+  phaseA: number;
+  phaseB: number;
+  finalPhaseA: number;
+  finalPhaseB: number;
+  edgeSubjectsByPair: Map<string, EdgeSubjectAgg>;
+}): void {
+  const pairs = [...params.edgeSubjectsByPair.entries()]
+    .map(([pair, agg]) => ({
+      pair,
+      profiles: [...agg.profiles].sort(),
+      // Union of packetSubjectCandidates + packetSubject over ticks where this edge fired.
+      possibleSubjects: [...agg.subjects].sort(),
+    }))
+    .sort((a, b) => a.pair.localeCompare(b.pair));
+  const doc = {
+    meta: {
+      ticks: params.ticks,
+      strategy: params.strategy,
+      initialPhaseA: params.phaseA,
+      initialPhaseB: params.phaseB,
+      finalPhaseA: params.finalPhaseA,
+      finalPhaseB: params.finalPhaseB,
+    },
+    pairs,
+  };
+  const dir = path.dirname(params.outPath);
+  if (dir !== "." && dir !== "") {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(params.outPath, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
+}
+
+/** `pnpm run script -- args…` may pass a standalone `--` through to the child; ignore it. */
+function stripPnpmArgDelimiter(argv: string[]): string[] {
+  return argv.filter((a) => a !== "--");
+}
+
+function printSortedPairs(label: string, pairs: Set<string>): void {
+  const sorted = [...pairs].sort();
+  console.log(`[edge-compare] ${label} (${sorted.length}):`);
+  for (const p of sorted) {
+    console.log(`  ${p}`);
+  }
+}
+
 function main(): void {
-  const args = process.argv.slice(2);
+  const strippedPnpm = stripPnpmArgDelimiter(process.argv.slice(2));
+  const { argv: afterSubjects, edgeSubjectsFile } = stripEdgeSubjectsFileFlag(strippedPnpm);
+  const { argv: args, listPairs } = stripListPairsFlag(afterSubjects);
 
   const endpoints = loadEndpoints("data.json");
   const allAddresses = endpoints.map((e) => e.address);
@@ -498,16 +645,22 @@ function main(): void {
     wikiAllEdges.push(...collectWikiEdgesForTick(tick, endpoints, destinationsBySource));
   }
 
-  const { pairs: recPairs, totalEdges: recoveredTotalEdges, finalPhaseA, finalPhaseB } =
-    simulateRecoveredPairs({
-      endpoints,
-      destinationsBySource,
-      allAddresses,
-      ticks,
-      strategy,
-      phaseA,
-      phaseB,
-    });
+  const {
+    pairs: recPairs,
+    totalEdges: recoveredTotalEdges,
+    finalPhaseA,
+    finalPhaseB,
+    edgeSubjectsByPair,
+  } = simulateRecoveredPairs({
+    endpoints,
+    destinationsBySource,
+    allAddresses,
+    ticks,
+    strategy,
+    phaseA,
+    phaseB,
+    collectEdgeSubjects: edgeSubjectsFile !== null,
+  });
   const recoveredAllEdges = [...recPairs];
 
   const wikiAgg = aggregateSets(wikiAllEdges);
@@ -532,6 +685,32 @@ function main(): void {
     `  recovered totalEdges=${recoveredTotalEdges} uniquePairs=${recAgg.pairs.size} uniqueSenders=${recAgg.senders.size} uniqueReceivers=${recAgg.receivers.size}`,
   );
   console.log(`[edge-compare] same unique src>dst pairs: ${pairsMatch}`);
+
+  if (listPairs) {
+    if (pairsMatch) {
+      printSortedPairs("unique src>dst pairs (wiki = recovered)", wikiAgg.pairs);
+    } else {
+      printSortedPairs("unique src>dst pairs — wiki only", wikiAgg.pairs);
+      printSortedPairs("unique src>dst pairs — recovered only", recAgg.pairs);
+    }
+  }
+
+  if (edgeSubjectsFile !== null) {
+    if (!edgeSubjectsByPair) {
+      throw new Error("internal: edgeSubjectsByPair missing despite --edge-subjects-file");
+    }
+    writeEdgeSubjectsReport({
+      outPath: edgeSubjectsFile,
+      ticks,
+      strategy,
+      phaseA,
+      phaseB,
+      finalPhaseA,
+      finalPhaseB,
+      edgeSubjectsByPair,
+    });
+    console.log(`[edge-compare] wrote recovered edge subjects: ${edgeSubjectsFile}`);
+  }
 
   if (!pairsMatch) {
     const onlyWiki = setDifference(wikiAgg.pairs, recAgg.pairs);

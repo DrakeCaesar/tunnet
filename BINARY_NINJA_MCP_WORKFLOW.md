@@ -98,13 +98,12 @@ This means destination/message candidate selection is not a fixed hash; game use
 
 ### E) Same-tick receive/send interaction
 
-In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewritten in a single pass. Based on order and slot rewrites:
+In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewritten across nested loops (**§E.1a**–**§E.1b**). Summary:
 
-- normal scheduled send is not emitted as a second packet when receive/bounce path claims the slot
-- behavior is single-slot resolution for that tick
-- practical effect: receive/bounce path can override regular scheduled output that tick
-
-(Treat this as confirmed ordering model; exact branch-by-branch priority should still be validated per endpoint class while finalizing parity.)
+- **Merge tail (`0x1402f75bf`):** on the **`0x1402f965f`** inner-loop spine, HLIL places **`0x1402f5bfe` before** the **`label_1402f90e8` → `r8_13.b = 2` → `0x1402f75bf`** merge, so **`sub_1402f9a40` does not consume that fresh `= 2` on the same inner-loop spin**; the next **`0x1402f5bfe`** is a **later** evaluation (**often** `rdi_43` advance **inside** the same **`sub_1402f5840`**, or the next **`NetTock`**—see **§E.1a**).
+- **Jump-table / infection (`0x1402f5bdb`):** **`*(rbx_30 + 0x7a) = 2`** is followed by the **`+0x98`** slot walk and **`rdi_43 = rbp_3`**; the **next** inner-loop iteration can hit **`0x1402f5bfe`** with **`==2`** and call **`sub_1402f9a40` in the same `sub_1402f5840` invocation`** (**§E.1a**, CFG).
+- **Multi-slot endpoints:** extra packet records are **`+0x98`** apart (**§E.1a**); each has its own **`+0x7a`**.
+- **`SendBack` / `PacketDrop` strings:** MCP xrefs are **serde / JSON / particle UI** classifiers (**§E.1b**), not proof of where **wrong-address wire bounce** lives.
 
 **TypeScript hook:** `RecoveredSlotTickContext` + optional 4th argument to **`evaluateEndpointSend`** in **`src/recovered-endpoint-scheduler.ts`**. When **`receiveOrBounceClaimedSlot: true`**, the recovered model returns **`shouldSend: false`** with reason **`same-tick slot: receive/bounce claimed`** so export/compare can opt in once inbound simulation sets the flag. Call sites that omit the argument behave as before.
 
@@ -114,24 +113,76 @@ In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewr
 - **`0x1402f5cc1`**: `if (*(rbx_3 + 0x7a) != 2)` → packs from **`rax_11`** / **`sub_1404628b0`** / tape-style path **without** that **`sub_1402f9a40`** call — same slot, **non-compose** outbound.
 - **`0x1402f75bf`**: `*(rdi_14 + 0x7a) = r8_13.b` on inbound merge into **`rdi_14`** (packet slot); **`r8_13.b = 2`** is prepared @ **`0x1402f90ed`** on the path into that merge.
 
-So “game code” definitely splits **compose (`0x7a==2`) → `sub_1402f9a40`** vs **copy/other builder**; linking **inbound** to **suppressing** a **second** scheduled composer emit in one tick is the remaining **CFG-order** detail to nail in BN (per-endpoint walk order inside the same **`NetTock`** invocation).
+So “game code” definitely splits **compose (`0x7a==2`) → `sub_1402f9a40`** vs **copy/other builder**. **§E.1a** documents **HLIL order** (**`0x1402f5bfe` before `0x1402f75bf`**), **`NetTock` cadence**, the **`0x1402f5bdb` same-invocation compose** spine, and **§E.1b** debunks **`SendBack`** string xrefs as **serde/particles**.
 
 ### E.1) Reply / “reply-chain” subject and slot flag **`+0x7a`**
 
 In **`sub_1402f5840`**, the outbound builder **`sub_1402f9a40`** is invoked only when **`*(packet_slot + 0x7a) == 2`** (HLIL @ `0x1402f5bfe` → call @ `0x1402f5c26`). Other values take the branch that copies from **`rax_11`** instead (same function, @ `0x1402f5cc1`).
 
-After inbound handling, the receive path writes **`*(slot + 0x7a) = r8_13.b`** with **`r8_13.b = 2`** on the merge into that block (HLIL @ **`0x1402f75bf`**). So the “full” generator (**`sub_1402f9a40`**) runs when the slot was **marked in that mode**—**deferred relative to the receive that set it**, not on every scheduler pass. (Whether that is the next simulation tick or a later stage in the same tick depends on call order; it is **not** the same instant as the inbound event.)
+After inbound handling, the receive path writes **`*(slot + 0x7a) = r8_13.b`** with **`r8_13.b = 2`** on the merge into that block (HLIL @ **`0x1402f75bf`**). **HLIL order** puts **`0x1402f5bfe` before** this merge on the **`0x1402f965f`** spine, so **`sub_1402f9a40` does not read that `= 2` on the same inner-loop iteration** as the merge write. A **later** **`0x1402f5bfe`** (often **same `sub_1402f5840`**, next **`rdi_43`**, if the slot pointer repeats and **`0x7a` is still `2`**—or after **PING/PONG** paths that may rewrite **`0x7a`** to **`1`** @ **`0x1402f78a5`**) decides the actual composer. **§E.1a** documents **`NetTock` cadence**; **§E.1a** “CFG” documents the **infection `0x1402f5bdb`** case where **same-invocation compose is explicit in HLIL**.
 
 **Other `+0x7a` writers in the same function (HLIL anchors):**
 
 | Value | Site | Notes |
 |------:|------|--------|
-| **2** | `0x1402f5bdb` | After the **`var_348`-driven jump table** path (`0x1402f8c0d` area): forces compose mode when the deferred branch decides to arm **`sub_1402f9a40`** on a later pass (only if **`*(slot + 0x7a) != 2`** before the write). |
+| **2** | `0x1402f5bdb` | After **`sub_1400af880`** @ **`0x1402f8bce`** and the **`jump_table_1402f9a18`** dispatch @ **`0x1402f8c0d`**: writes **`*(rbx_30 + 0x7a) = 2`** when not already **`2`**. HLIL then runs the **`+0x98`** **`do while`** @ **`0x1402f5bef`**, sets **`rdi_43 = rbp_3`**, and **re-enters `while (true)` @ `0x1402f965f`** — so **`sub_1402f9a40` can run later in the *same* `sub_1402f5840`** on a **later `rdi_43`** pass if **`rbx_3` still points at that slot** (**§E.1a**). |
 | **1** | `0x1402f78a5` | **PING → PONG** staging: fills the slot buffer, then sets **`0x7a = 1`** when the slot was not already **`2`** (see `if (*(var_3a8_1 + 0x7a) != 2)` immediately before). |
 | **0** | `0x1402f85f3` | **“LAW ENFORCEMENT OPERATION”** / spam-template branch: clears **`0x7a`** after populating the slot for that outbound. |
 | **propagated** | `0x1402f65ac` | **`*(slot + 0x7a) = *(slot + 0x3a)`** (HLIL: **`rbx_5 = *(rbx_3 + 0x3a)`** @ **`0x1402f5f3f`**, then stored @ **`0x1402f65ac`**). There is a guard **`if (rbx_5 != 2)`** @ **`0x1402f5f46`** earlier on the same slot pointer. |
 
 So **`0x7a`** is both a **mode enum** (at least **0 / 1 / 2** observed) and, in one branch, a **copy of another slot byte at `+0x3a`**. **`+0x3a`** is the next place to xref when modeling reply / infection state without guessing.
+
+### E.1a) NetTock cadence, `0x98` slot list, deferred compose, and “next tick” behavior
+
+This subsection summarizes **`get_xrefs_to(0x1402f5840)`** + **`decompile_function sub_14026cc80`** + **`get_il sub_1402f5840` (HLIL)** so the **mechanism** for future emissions is explicit.
+
+**Who runs `sub_1402f5840`, and how often**
+
+- **Direct code xrefs** (MCP): **`sub_14026cc80`** @ **`0x14026d2d2`**, **`sub_140276b60`** @ **`0x140276dc0`**, **`sub_14058d950`** @ **`0x14058dbb0`**, **`sub_1405b8160`** @ **`0x1405b87bc`** — all Bevy-style system glue (panic blobs in the same neighborhood name **`Events<NetTockEvent>`**, **`NetNode`**, etc.).
+- **`sub_14026cc80`** (representative): loads **`rbp = *(arg2 + 0x270)`**, then **`*(arg2 + 0x270) += 1`** (world / schedule counter), eventually calls **`sub_1402f5840`**, then stores **`*(arg1 + 0x598) = rbp`**. So **`sub_1402f5840` is one net pass per scheduled system invocation**, not a tight inner callback loop by itself.
+
+**What the big driver walks (HLIL skeleton)**
+
+- **Outer step:** **`while (r12_1 != rax_8)`** @ **`0x1402f94fc`** — advances the **entity / endpoint queue** (`r12_1` steps; **`continue`** when **`r13_1 == 0`** @ **`0x1402f94ee`** / **`0x1402f95f2`**).
+- **Inner send index:** **`while (true)`** @ **`0x1402f965f`** with **`rdi_43`** — each iteration reaches the outbound gate **`if (*(rbx_3 + 0x7a) == 2)`** @ **`0x1402f5bfe`** early (**`rbx_3`** is the **`0x98`-strided packet blob** for the active row: **`var_e8_1 = rcx_9 * 0x98 + rbx_3`** @ **`0x1402f5bbf`**, **`result_2 = var_120_1 + rdi_43 * 5`** @ **`0x1402f5b8d`**).
+- **Secondary slots on the same endpoint:** **`rbx_30 = var_3a8_1`**, **`rbx_3 = rbx_30 + 0x98`**, **`do while (rbx_3 != var_e8_1)`** @ **`0x1402f5bef`–`0x1402f5be0`** — walks **more packet-slot structs** at **`+0x98`** strides (same function, infection / template tail). So one **NetNode** can own **multiple** **`0x98`** packet records; each has its **own** **`+0x7a`**.
+
+**How `+0x7a` drives the *next* emission**
+
+- **`+0x7a` lives in the slot struct in RAM** until another writer overwrites it (**§E.1** table).
+- The **only** full composer is **`sub_1402f9a40`**, gated by **`*(slot + 0x7a) == 2`** @ **`0x1402f5bfe`**. Whatever **`+0x7a`** is **when that `if` runs** picks **compose vs copy / tape** for that evaluation.
+
+**HLIL ordering on the `0x1402f965f` spine (merge path `0x1402f75bf`)**
+
+- **`0x1402f5bfe`** (**read `+0x7a` → maybe `sub_1402f9a40`**) appears **before** the merge tail **`0x1402f75bf`** (**`*(rdi_14 + 0x7a) = r8_13.b`**, with **`r8_13.b = 2`** from **`0x1402f90ed`** on the **`label_1402f90e8`** path).
+- So **on the same `rdi_43` inner-loop iteration**, **`sub_1402f9a40` cannot be triggered by the `= 2` just written at `0x1402f75bf`** — the **next** **`0x1402f5bfe`** is at least the **next time** control reaches that site (**often** after **`rdi_43`** advances to **`rbp_3`** @ **`0x1402f5b6a`**, still inside **`sub_1402f5840`**, if the same **`rbx_3` / `var_3a8_1`** is reused and **`0x7a` stayed `2`**; or a **later `NetTock`** if the slot is rewritten first, e.g. **`0x1402f78a5`** (**`0x7a = 1`**) on PING→PONG staging).
+
+**CFG: infection / jump-table path (`0x1402f5bdb`) — same-invocation `sub_1402f9a40` is possible**
+
+- From **`label_1402f88e7`** through **`sub_1400af880`** @ **`0x1402f8bce`**, HLIL hits **`*(rbx_30 + 0x7a) = 2`** @ **`0x1402f5bdb`** (same VA as the table row in **§E.1**), then executes the large template / **`arg12`** writer, then **`rbx_30 = var_3a8_1`**, **`rbx_3 = rbx_30 + 0x98`**, **`do while (rbx_3 != var_e8_1)`** @ **`0x1402f5bef`**, then **`if (rbp_3 == r13_1) break`**, else **`rdi_43 = rbp_3`** @ **`0x1402f5b6a`** and **falls through to `while (true)` @ `0x1402f965f`** (**`get_il sub_1402f5840`**, lines **`0x1402f8bce`–`0x1402f9700`** region).
+- Therefore **`0x7a` is armed to `2` and then a *new* inner-loop iteration can reach `0x1402f5bfe` with `==2`** without leaving **`sub_1402f5840`** — **not** deferred to the next **`NetTock`** for that branch class.
+
+**Wire-level “bounce wrong destination”**
+
+- Still **not** located in **`sub_1402f5840`** by name. **`sub_14079a770`** @ **`0x1402f7cb1`** remains a **credit / strip** helper in the subject-line tail, not a proven reflect-to-sender routine (**§E.1a** legacy note). **§E.1b** explains why **`SendBack`** / **`PacketDrop`** **`.rdata`** hits are **misleading** for net parity.
+
+### E.1b) `SendBack` / `PacketDrop` **`.rdata`** hits (MCP `get_xrefs_to`) — serde & particles, not the relay
+
+**`get_xrefs_to(0x142473c18)`** (“`variant identifierSendBackPacketDropPacket`”):
+
+| Function | Site | Role |
+|----------|------|------|
+| **`sub_1404d9170`** | **`0x1404d9173`** | **`Display` / `Debug` tailcall** into **`sub_1423afb20`** with that static string — **Rust formatting**, not gameplay dispatch. |
+
+**`get_xrefs_to(0x142473c88)`** (“`DropInboundDropOutboundSendBackOutbound`” …):
+
+| Function | Site | Role |
+|----------|------|------|
+| **`sub_1403698e0`** | **`0x14036999a`** | **`serde_json`** enum serialization: **`sub_14032b9a0`** compares against **`"DropInbound…"` / `"SendBackOutbound"` / `"DropOutbound…"`** byte slices when writing JSON. |
+| **`sub_14054cbc0`** | **`0x14054cbed`** | Same pattern: **JSON variant tagging** for a small discriminant in **`arg1`**. |
+| **`sub_14047e340`** | **`0x14047e4fe`** etc. | **Parser**: walks bytes in **`arg2`**, compares windows to **`"SendBackOutbound"`** / **`"DropOutbound…"`** / **`"DropInbound…"`**, sets **`arg1[1]`** to **`0 / 1 / 2`**. Callers include **`sub_14054c8f0`** @ **`0x14054c990`**, **`0x14054c9ae`** — **particle / UI JSON**, not **`sub_1402f5840`**. |
+
+**Conclusion:** those strings label **serde + particle packet-kind JSON**, **not** the in-world **wrong-address bounce** implementation. Finding **real bounce** still means tracing **relay / address filter** code (e.g. **`sub_14044eae0`**, **`sub_1400af880`** families) **without** relying on these xrefs.
 
 ### E.2) Five-byte `result_2` row (pointer into stride-5 table)
 
@@ -360,6 +411,22 @@ This function is the right anchor for recovering **“which NetNode row matches 
 
 **`sub_1403b4c60`** (call at `0x1403b55bf`): large Bevy-style system with **world queries**, **`sub_140bd6610`**, **`sub_1400aeb60`**, **`sub_1400ae830`**, **`sub_1400af880`** (second address batch), **`sub_142244e00`** / **`sub_141fcee80`**, strings **`electricsnd/plug.ogg`** / **`snd/plug.ogg`**, and **`sub_140300e30`**. Same **`0x60`** NetNode row walk (`*(r13+0xd0)`, `rcx*0x60`, `+0x38` / `+0x40` generation checks) as the scheduler. Full decompile scan: **no** `+0x1c4` / `+0x1c5` HLIL.
 
+### H.1) What **`sub_1400af880` success/failure** does for **relay / tape** (MCP `decompile_function`)
+
+**Return bundle `arg1` (HLIL `sub_1400af880`):**
+
+- **Success:** **`*arg1 = 0`**, **`*(arg1 + 8)`** filled with the resolved **row / buffer pointer** (the **`sub_142220430`** fast path or the **`arg3+0x120` / `0x60`-stride** walk @ **`0x1400af918`–`0x1400af98e`**).
+- **Failure — tuple not in bitset / generation:** **`arg1[1] = 0`**, **`arg1[2] = arg4`**, **`arg1[3] = arg5`** (original coords preserved), **`*arg1 ≠ 0`** (non-zero **`rax_9`** @ **`0x1400af9b1`**).
+- **Failure — `sub_142220430` empty:** **`arg1[1] = 1`**, **`*(arg1 + 8) = rcx_3`**, **`*arg1 ≠ 0`** @ **`0x1400af9a6`–`0x1400af9b1`**.
+
+So **“can this address be resolved to a live slot right now?”** is exactly **`*arg1 == 0`** after the call.
+
+**`sub_1403a08e0`** (**tape / graph relay**, call @ **`0x1403a10dd`**): inside the open-hash probe loop over **`&data_142429eb0`**, it calls **`sub_1400af880(&var_1b8, …)`** then **`if (var_1b8.d == 0)`** only then **`sub_142244e00` → `sub_141fcee80`** (enqueue-style path). If **`var_1b8.d != 0`**, it **skips** that **`142244e00` / `141fcee80`** pair for that candidate — **no outbound for unresolved tuple** on that hop. That is **filtering**, not a **`SendBack`** string; it explains **“wrong / unknown address → don’t emit on this relay path”** for **tape**.
+
+**`sub_14044eae0`** (**`tunnet::net::relay::Relay`**, **§E.3–E.4**): HLIL shows **no** call to **`sub_1400af880`**. “Does this packet belong on this port?” is **`sub_1406b6550`** on **`slot + 0x35`** vs staged **`rsi_3[…]`** bytes, **`&slot[3]`**, PING/PONG magic **`0x474e4950` / `0x474e4f50`**, and open-hash **`sub_140766420`** neighbor rows. **`if (sub_1406b6550(...) == 0) continue`**-style paths **skip** relay work when compares fail — again **no delivery on mismatch**, not serde **`SendBack`**.
+
+**Still open for “bounce TTL packet back”:** a path that **builds a return tuple** (swap src/dst, decrement TTL) on purpose. That was **not** found in these **`sub_1400af880` / `sub_14044eae0` / `sub_1403a08e0`** slices; keep searching **`sub_1404eb580`** (also calls **`sub_1400af880`** @ **`0x1404ec9df`**, **`0x1404ed536`**) and **infection / monitor** systems if captures show explicit **reflect** behavior.
+
 ### I) Rust type-string anchors (MCP `list_strings_filter`)
 
 Filtered hits include the ECS system name **`tunnet::net::endpoint::update`** inside the usual long Rust metadata blob (example chunk address **`0x142441181`**). Related: **`tunnet::net::endpoint::EndpointPlugin`** near **`0x142461581`**. Use Binary Ninja’s own string/xref UI on these substrings first; **`get_xrefs_to` on the raw chunk address** often returns nothing in this MCP bridge, so treat these as **navigation hints**, not automatic xref sources.
@@ -443,8 +510,8 @@ For a **static inventory of every `.text` call to `sub_140673b40`** and the deco
 
 In `sub_1402f5840`, trace slot/state field updates (`+0x7a` and related payload fields) to resolve:
 
-- receive vs scheduled send precedence
-- bounce vs normal send precedence
+- receive vs scheduled send precedence (**partially documented §E.1a**: **`0x1402f5bfe` vs `0x1402f75bf`**, **`0x1402f5bdb` / `rdi_43` loop**)
+- wire-level **wrong-address bounce** vs normal send (**not** the **`SendBack`** serde xrefs — **§E.1b**; still trace **`sub_14044eae0` / `sub_1400af880`** families)
 - drop/reset transitions
 
 ---
