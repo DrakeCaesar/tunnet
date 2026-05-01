@@ -486,10 +486,107 @@ MCP was run against the stock **`tunnet.exe.bndb`** (see **§1** one-request-at-
 **Next BN steps (initial TTL):**
 
 1. **`decompile_function("sub_1402f5840")`** and scroll HLIL around **`0x1402f66ea`** / **`0x1402f6808`** (the other **`sub_140516d40`** sites) — find **first** stores into the **`qword`** that later becomes **`rbp_5[1]`** on the relay slot.
-2. **`decompile_function("sub_1402f9a40")`** — slot / buffer fill after **`sub_1402f9a40`** returns into **`sub_1402f5840`**; look for a **constant** or **loaded config** written into the same offset as **`slot[1]`**.
+2. **`decompile_function("sub_1402f9a40")`** — see **§J.3** (compose **`+0x7a == 2`** skips **`rax_11`** reload; map **`arg1` (`&var_308`)** stores through **`r13 == 4`** / **`switch (*(arg2+0x1c5))`** to the wire dword that matches captured TTL).
 3. Optional: **`get_xrefs_to`** on the **`Debug` vtable`** that references **`0x14248f8c0`**, if BN UI shows one — MCP **`get_xrefs_to`** on the string alone was empty.
 
+#### J.2) Chamber **`1.*.1.0`** endpoints — bridge **first-octet** remap **and TTL** (topology hint for BN)
+
+- **Address form:** endpoints in the wiki pattern **`1.b.1.0`** (e.g. **`1.3.1.0`**) are **in-chamber** identities. The **`0.b.1.0`** pattern is **not** used as the canonical in-chamber address for those sites — **`1.*.1.0`** is.
+- **Bridge — addressing:** the chamber **bridge** rewrites the **first octet** on forwarded packets: **egress (out of chamber)** **`1 → 0`**, **ingress (into chamber)** **`0 → 1`**. Packets seen **outside** can therefore carry **`0.*.1.0`**-shaped addressing for the same logical chamber endpoint.
+- **Bridge — TTL:** the same **bridge** code paths can **set or change TTL** (initial remaining hops / counter), not only the **relay** decrement described in **§J.1**. Treat **bridge / chamber forward** as a primary place to find **immediate constants** and **stores** into the TTL field alongside the **first-octet** transform.
+- **BN:** correlate **first-dword / first-byte** transforms and **TTL writes** on the same spine as **`sub_14044eae0`**, **`sub_140516d40`**, and any **`sub_1402f5840`** slot fill that runs when a packet **crosses** a chamber boundary.
+
 Cross-link: **§H** “bounce TTL packet back” remains **open** until a branch explicitly **reflects** or **drops** on the TTL field.
+
+#### J.3) `0.3.0.0` / regional mainframe **source** packets — `sub_1402f9a40` vs tape (`rax_11`)
+
+**Why there is no `"0.3.0.0"` string anchor:** MCP `list_strings_filter("0.3.0.0")` on the stock **`tunnet.exe.bndb`** returns **no hits**; the address is not stored as that ASCII quad in **`.rdata`**.
+
+**Single composer entry:** `get_xrefs_to(0x1402f9a40)` → **only** **`sub_1402f5840` @ `0x1402f5c26`**, immediately after **`if (*(rbx_3 + 0x7a) == 2)`** @ **`0x1402f5bfe`**. First argument is **`&var_308`** (stack scratch the HLIL names **`var_308`**, not the raw **`rbx_3`** slot base).
+
+**After `sub_1402f9a40` returns (`0x1402f5c38` …):**
+
+- If **`*(var_3a8_1 + 0x7a) != 2`**, HLIL frees **`+0x58`**, copies **`var_308` / `var_2f8` / `var_2e8` / `var_2d8`** into **`var_3a8_1[4..7]`**, then forces **`var_308.d = 0x3020101`** @ **`0x1402f5c93`** (header reset for the next stage).
+- If **`+0x7a` stays `2`**, that whole block is **skipped** — **`var_308` is not reloaded from `rax_11`** on the next gate either: **`if (*(rbx_3 + 0x7a) != 2)`** @ **`0x1402f5cc1`** is the tape path **`var_300.d = rax_11[1].d`**, **`var_308 = *rax_11`** @ **`0x1402f5cd2`–`0x1402f5cdc`**. So for **compose mode that remains `0x7a == 2`**, **initial TTL / header dwords must come from what `sub_1402f9a40` wrote into `&var_308`**, not from the **`rax_11`** table used on the **`0x7a != 2`** branch.
+
+**`+0x3a` vs `sub_140516d40` @ `0x1402f66ea`:** **`if (*(rbx_3 + 0x3a) != 2)`** @ **`0x1402f5f46`** guards the large spine that ends in **`sub_140516d40(arg14, &var_308)`** @ **`0x1402f66ea`** (and the parallel tail @ **`0x1402f6808`**). When **`*(rbx_3 + 0x3a) == 2`**, that **`sub_140516d40`** block is skipped — other tails push **`var_308`** with **`memcpy(..., &var_308, 0x90)`** instead (e.g. **`0x1402f5ed1`**, **`0x1402f83a1`**, with nearby **`var_308.w = 0xf` / `0x14`** staging).
+
+**5-byte row / regional tuple (ties repo TS to BN):** In **`sub_1402f9a40`**, **`r13 = zx.q(*arg3)`** @ **`0x1402f9a70`** (**arg3** is **`result_2`** from **`sub_1402f5840`**, i.e. **`var_120_1 + rdi_43 * 5`**). **`if (r13.d == 4)`** @ **`0x1402f9ba7`** plus **`arg3[1..3]`** byte checks @ **`0x1402f9e46`** matches **`src/endpoint-address-encoding.ts`** **`plus_one_all_octets_regional_mainframe`** **`(4,1,1,1)`** for wiki **`0.1.0.0` / `0.2.0.0` / `0.3.0.0`** (same 5-byte prefix; **which** regional mainframe is live is **which `NetNode` / slot** is iterating, not a different first-row byte).
+
+##### J.3.1) `*(arg2 + 0x1c5)` switch ↔ **`MainframeHeaderU32`** ↔ two `arg1` (`&var_308`) tails
+
+**Phase index:** **`uint64_t rax_37 = zx.q(*(arg2 + 0x1c5))`** @ **`0x1402fa00b`** in **`sub_1402f9a40`** (second arg **`arg2`** is the **`rsi_2`** / **`arg10[2]`** world node pointer from **`sub_1402f5840`**). This is the same **sub-phase** the repo models as **`RecoveredSchedulerState.phaseB`** / **`*(node + 0x1c5)`** in **`src/recovered-endpoint-scheduler.ts`**.
+
+**`var_10b` constants match `src/packet-header-format.ts` `MainframeHeaderU32` 1:1** (HLIL **`switch (rax_37)`** @ **`0x1402fa02a`**):
+
+| **`rax_37` (phaseB)** | **`var_10b` in `sub_1402f9a40`** | **`MainframeHeaderU32` key** |
+|---:|---:|---|
+| 0 | `0x1020104` | `phase0` |
+| 1 | `0x4020104` | `phase1` |
+| 2 | `0x1020104` | `phase2` |
+| 3 | `0x2020104` | `phase3` |
+| 4 | `0x3020104` | `phase4` |
+| 5 | `0x4020104` | `phase5` |
+
+The **`a === 4`** branch of **`evaluateEndpointSend`** uses the **same numeric literals** for **`header`** as this BN **`switch`** (**`recovered-endpoint-scheduler.ts`**, regional **`a === 4`** / **`phaseB` 0..5** block).
+
+**Two different HLIL paths write `arg1` (`&var_308`):**
+
+1. **`label_1402faadc`** (**cases 0 and 1**, and **case 1** jumps here after setting **`var_10b`**): **`arg1[3].d = rcx_8`**, **`*(arg1 + 0x34) = rcx_9`**, **`*(arg1 + 0x35) = var_10b`**, **`*(arg1 + 0x39) = var_107_3`**, **`*(arg1 + 0x3a) = var_106.d`**, **`*(arg1 + 0x3e) = …`**, plus **`arg1[2/1/0]`** string pointers (**`0x1402fab2f`–`0x1402fab61`**). Here **`var_10b`** is stored **explicitly at byte offset `+0x35`** (HLIL may overlap **`rcx_9`** at **`+0x34`** in the real layout—confirm in disasm if needed).
+
+2. **`label_1402faba8`** (**cases 2–5** after **`sub_14067a670`** / subject blob setup): **`result[3] = rcx_8.o`**, **`result[2] = rax_2.o`**, **`result[1] = var_130`**, **`*result = var_140_1.o`** (**`0x1402fac04`–`0x1402fac10`**). This path **does not** execute the **`*(arg1 + 0x35) = var_10b`** store from **`label_1402faadc`**; the **`0x3020104`**-class value still lives in **`var_10b`** for **`case 4`** @ **`0x1402faa50`** but is folded through **`var_130` / `var_b8` / `sub_14067a670`** before the final **`int128`** writes.
+
+**`sub_1423a1b30` (`0x1423a1b30`) — `String` triple overwrites the start of `var_308`:** HLIL is **`memcpy` + `*arg1 = _Size`**, **`arg1[1] = ptr`**, **`arg1[2] = _Size`** (**`0x1423a1b82`–`0x1423a1b8e`**). In **`sub_1402f5840`**, **`sub_1423a1b30(&var_308, rbx_3 + 0x18)`** @ **`0x1402f5f85`** runs on the **`*(rbx_3 + 0x3a) != 2`** spine **after** **`sub_1402f9a40`** may have filled **`&var_308`**. Immediately **before** that call, HLIL does **`var_208 = *(rbx_3 + 0x35)`** @ **`0x1402f5f6f`** and **`var_348 = rbx_3[3].d`** @ **`0x1402f5f5a`** — so the **32-bit “header-ish” dword at slot offset `+0x35`** is captured into **`var_208`** even though **`var_308`** is about to be repurposed as a **Rust `String`** buffer for **`rbx_3 + 0x18`**.
+
+**Header vs TTL:** **`var_10b` / `MainframeHeaderU32`** are **not** the hop counter. See **§J.4** for **where `rax_11[1].d` lands on the outbound ring**, **`sub_14037d450`** / **`sub_140643f00`**, and **`sub_1406b6550`** roles.
+
+##### J.4) Deep slice — tuple filter, hash probe, neighbor **swap**, ring row layout, **TTL dword at +0x18**
+
+**`sub_1406b6550` (`0x1406b6550`) — not TTL, tuple gate:** HLIL at the real entry (**`0x1406b6550`**) walks **four nested `switch`es** on **`arg1[0..3]`** and compares to **`arg2[0..3]`** (first bytes of the **`result_2`** / **`var_120_1 + rdi_43*5`** row). **`sub_1402f5840`** uses it as **`sub_1406b6550(&var_318, result_2, …)`** / **`(&var_313, …)`** / **`(result_2, &var_308, …)`** — **“does this 5-byte template match these prefix words?”**, not arithmetic on TTL.
+
+**`sub_140765640` (`0x140765640`) — hash only:** Mixes **`arg2[0..4]`** with fixed XOR constants and **SipHash-like rounds** (**`0x140765655`–`0x14076582f`**), returns a **table index**. Used by **`sub_14037d450`** and the **`rbp_9[0xc]`** probe loops in **`sub_1402f5840`** to find **open-hash buckets** — **not** TTL.
+
+**`sub_14032dfb0` (`0x14032dfb0`) — lookup key builder:** **`__builtin_memset(arg1,0,0x18)`**, seeds **`arg1[3]`**, then **`var_38 = arg2.d`**, **`var_34 = (arg2>>32).b`**, and a **`while`** calling **`sub_140658670`** — builds the **`zmm8_1`** bundle passed into **`sub_14037d450`** from **`zx.q(rcx_94) | zx.q(var_313:1.d)<<8`** style operands (**`sub_1402f5840` @ `0x1402f6864`**).
+
+**`sub_14037d450` (`0x14037d450`) — neighbor row exchange:** **`sub_140765640(&arg2[4], &var_e0)`** then scans **`0x10`**-aligned SIMD tags over **`arg2[3]`** rows with **`*0x38` stride** (**`0x14037d529`**). On **`sub_1406b6550(&var_e0, rbx_2, …)`** hit, HLIL copies **three qwords** **`*(rbx_2+8)`**, **`*(rbx_2+0x18)`**, **`*(rbx_2+0x28)`** into **`arg1`** (e.g. **`&var_268`** in **`sub_1402f5840` @ `0x1402f68c6`**), then **writes `arg4` (`&var_308`) back through the same three offsets** on **`rbx_2`** — **swap packet scratch with a matched neighbor template row**.
+
+**`sub_140643f00` (`0x140643f00`) — bucket metadata + 5-byte key insert + decrement:** Called as **`sub_140643f00(rbp_11 + 8, rax_50, pack, var_278)`** @ **`0x1402f911b`**. HLIL does **open-hash tombstone walking**, then:
+
+- **`arg1[1] -= zx.q(rbx_2)`** @ **`0x140643f8f`** where **`rbx_2 ∈ {0,1}`** — **in-place decrement of the second qword of the `arg1` record** (counter / generation on the **table header** at **`rbp_11+8`**, not the subject string).
+- **`*(rcx_7 + rdx_4 - 5) = arg3.d`**, **`*(rcx_7 + rdx_4 - 1) = (arg3>>32).b`** @ **`0x140643fc4`–`0x140643fc8`** with **`rdx_4 = neg(rdx_2)*5`** — writes the **packed `var_308` qword** (**`zx.q(var_308:4.d)<<32 | var_308.d`** @ **`0x1402f6333`**) into the **5-byte stride** backing store behind **`rcx_7`**.
+
+**Concrete outbound ring row (tape / beep / PINGPONG path):** In **`sub_1402f5840` @ `0x1402f5f01`–`0x1402f5f2a`**, with **`rcx_34 = rdx_12 * 5`** and base **`rax_28`**, HLIL stores **five qwords** per **`rdx_12` slot** (stride **0x28** bytes):
+
+| **Offset in row** | **Value** |
+|---:|---|
+| **`+0x00`** | **`rsi_4`** — pointer into **`.rdata`** (**`"PINGPONG"` / `beep_sendN` / …** @ **`0x1402f5d84`–`0x1402f5d9b`**) |
+| **`+0x08`** | **`0xa`** |
+| **`+0x10`** | **`var_208.q`** — **`var_208`** was **`*(rbx_3 + 0x35)`** @ **`0x1402f5f6f`** (slot header dword widened) |
+| **`+0x18`** | **`var_200`** — and **`var_200 = var_300.d`** @ **`0x1402f5da5`**, with **`var_300.d = rax_11[1].d`** on the **`0x7a != 2`** tape path @ **`0x1402f5cd2`** |
+| **`+0x20`** | **`rbx_4`** — **`*(arg12[2] + 0x10)`** cursor |
+
+So on this spine the **hop/TTL seed from `rax_11[1].d`** is **not** merged into the **`0x3020104` header word**; it occupies **its own qword lane at ring row `+0x18`**, next to the **header qword at `+0x10`**.
+
+**`sub_140516d40` (`0x140516d40`) vs this ring:** **`sub_140516d40`** still consumes **`&var_308`** as a **separate 0x50 `arg2` bundle** for **`0x58` rows** — map which **int128 lane** in that bundle corresponds to **ring `+0x10`/`+0x18`** by stack overlap / ordering (next BN: **MLIL** from **`var_308`/`var_300`** through **`sub_140516d40`** vs **`memcpy` 0x90`** tails).
+
+##### J.5) Goal: **initial TTL per packet** — all sends vs some, and what BN already implies
+
+**End state you want:** for **each** logical emit (per **tick**, **endpoint**, **destination row** / **`rdi_43`**, and **profile**: tape vs compose vs **`memcpy`**), know the **numeric initial TTL** (or **“none / infinite”**) the game attaches **before** filters/endpoints decrement it (your simulator already matches **decrement sites**).
+
+**It is not one global constant for every packet:**
+
+| **Source (HLIL spine)** | **Initial TTL–like dword** | **“All packets?”** |
+|---|---|---|
+| **Tape / `0x7a != 2`** | **`rax_11[1].d` → `var_300.d`**, then e.g. ring row **`+0x18`** on the beep/PINGPONG path (**§J.4** table) | **Only sends that take this reload.** **`rax_11`** is **`var_128_1 + 0x10 + rdi_43*0x30`** — value can **differ per destination index** **`rdi_43`**, so TTL is **data-driven per row**, not automatically the same for every packet from that endpoint. |
+| **Compose / `sub_1402f9a40` (`0x7a == 2`)** | When **`+0x7a` stays `2`**, HLIL **skips** **`var_300 ← rax_11[1].d`** (**§J.3**). TTL must come from **composer + neighbor swap** (**`sub_14037d450`** copies **`*(rbx_2+0x18)`** into **`var_268`**, etc.) or from **later** **`memcpy` / `sub_140516d40`** packing — **not** the same **`rax_11`** load. | **Only packets that actually run the compose gate** (regional mainframe / infection-style tails you care about). |
+| **`sub_140516d40` / `memcpy` 0x90`** | **`0x50`** bundle vs **0x90** slab — **second dword/qword lane** still needs **one-to-one mapping** to ring **`+0x18`** / slot **`+0x35`** (**§J.4** footnote). | **Subset** of emits (wrong branch class if you assume every send hits **`sub_140516d40` @ `0x1402f66ea`** — **`+0x3a == 2`** skips that block, **§J.3**). |
+
+**Practical way to answer “each packet” in the tools:**
+
+1. **Instrument or capture** one run per **profile** (tape-only, compose-only, portal **`memcpy`**) and log **two dwords**: **header** (your existing **`header` / `headerHexU32`**) and **candidate TTL** read from the **same row** offset you believe is **`+0x18`** once the **`0x58` / `0x28` / `0x90`** map is finalized.
+2. In BN, finish **§J.4**’s open item: **stack map** from **`var_300` / `var_308`** through **`sub_140516d40`**’s **`arg2[0..4]`** so **`rax_11[1].d`** and **ring `+0x18`** agree on the **same** field name in **`tunnet.exe`**.
+
+**Repo note:** until **`MessageEvent`** (or export JSON) carries **`ttlInitial`**, **`pnpm sched:sequence`** cannot regress **per-packet TTL**; add a field once the mapping row is chosen.
 
 ---
 
