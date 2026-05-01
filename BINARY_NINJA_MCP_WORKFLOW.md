@@ -106,6 +106,14 @@ In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewr
 
 (Treat this as confirmed ordering model; exact branch-by-branch priority should still be validated per endpoint class while finalizing parity.)
 
+### E.1) Reply / “reply-chain” subject and slot flag **`+0x7a`**
+
+In **`sub_1402f5840`**, the outbound builder **`sub_1402f9a40`** is invoked only when **`*(packet_slot + 0x7a) == 2`** (HLIL @ `0x1402f5bfe` → call @ `0x1402f5c26`). Other values take the branch that copies from **`rax_11`** instead (same function, @ `0x1402f5cc1`).
+
+After inbound handling, the receive path writes **`*(slot + 0x7a) = 2`** in the block that follows **`r8_13.b = 2`** (e.g. HLIL @ `0x1402f75bf`). So the “full” generator (**`sub_1402f9a40`**) runs when the slot was **marked in that mode**—**deferred relative to the receive that set it**, not on every scheduler pass. (Whether that is the next simulation tick or a later stage in the same tick depends on call order; it is **not** the same instant as the inbound event.)
+
+Inside **`sub_1402f9a40`**, when **`r13.d == 2`** (first dword of the **`arg3`** row) and **`(b,c,d) == (4,2,1)`** (`rcx_1.b`, `r12.b`, **`var_a0.b`** checks @ `0x1402f9d58`), the packet subject is **`__builtin_strncpy(..., "Re: Re: Re: Re: ...", 0x13)`** @ **`0x1402f9d8f`**, with **`*(arg1 + 0x28) = 0x13`**. The same literal appears in `.rdata` inside **`data_1424246e0`** (BN string filter **`Re: Re:`**). No **`sub_140673b40`** pool is used for that subject.
+
 ### F) Confirmed `0x1c4` phase advancement points
 
 Within `sub_1402f5840`, the following state transitions are directly visible:

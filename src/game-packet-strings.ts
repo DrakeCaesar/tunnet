@@ -17,6 +17,38 @@
  * **`out/packet-string-pools.json`**.
  */
 
+/**
+ * **`sub_1402f9a40`** reply branch (`r13.d == 2`, tuple `(4,2,1)` on the five-dword row passed as **`arg3`**):
+ * `__builtin_strncpy(..., "Re: Re: Re: Re: ...", 0x13)` @ **`0x1402f9d8f`** (subject length **`0x13`** on the outbound layout).
+ * The same ASCII appears inside the compound `.rdata` blob at **`data_1424246e0`** (between the Killswitch literals and **`Token`**; see BN **list_strings_filter** `"Re: Re:"`).
+ */
+export const REPLY_CHAIN_PACKET_SUBJECT = "Re: Re: Re: Re: ..." as const;
+
+/**
+ * Single compound `.rdata` row (length **270**) used for infected / “hacked” spam subjects — the game
+ * indexes `(ptr, len)` pairs into this blob (see `sub_1402f5840` / HLIL around **`0x1402f8d39`**).
+ *
+ * **Intentionally unused** here: we do not model hacker endpoints. Kept so tooling and humans can
+ * match **`out/sorted.jsonl`** / BN without re-parsing the exe.
+ */
+export const HACKED_ENDPOINT_SUBJECT_RDATA_BLOB =
+  "Congrats! U won!1 simple trick to get **RICH**Free credits! $$$**Perfectly s4fe packet**[URGENT] Open me!U have been hacked!!!Susan shared a document with uRe:Hello :)1nvoice dueD1rect d3positR3sponse requiredEmployee raises!!!Totally n0t a v1rusbeep_infectedbeep_credit" as const;
+
+/**
+ * Trivial one-row “pool” wrapper around {@link HACKED_ENDPOINT_SUBJECT_RDATA_BLOB} (same bytes as the game blob).
+ * Still **not** wired into {@link pick*} or the scheduler.
+ */
+export const HACKED_ENDPOINT_SUBJECT_POOL = [HACKED_ENDPOINT_SUBJECT_RDATA_BLOB] as const;
+
+/**
+ * Compound `.rdata` row (length **88**) at **`data_1424246e0`**: **`Killswitch (n/4)`** countdown strings,
+ * then **`Re: Re: Re: Re: ...`**, then **`Token`**. The scheduler uses slices of this via **`sub_14067a670`**
+ * (mainframe / killswitch path); the **`Re:`** substring is also the fixed reply subject in **`sub_1402f9a40`**
+ * ({@link REPLY_CHAIN_PACKET_SUBJECT}).
+ */
+export const KILLSWITCH_REPLY_TOKEN_RDATA_BLOB =
+  "Killswitch (4/4)Killswitch (3/4)Killswitch (2/4)Killswitch (1/4)Re: Re: Re: Re: ...Token" as const;
+
 /** `sub_140673b40` @ `0x1402fb97c/0x1402fb91a/0x1402fa3b1/0x1402fb9db`. */
 export const TRACK_BROADCAST_SUBJECTS_BY_HALF_TICK_MOD4 = [
   "Track #1",

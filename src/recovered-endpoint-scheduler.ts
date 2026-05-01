@@ -26,6 +26,7 @@ import {
   supplyAmmunitionSubjectCandidates,
   supplyFieldRationsSubjectCandidates,
   trackBroadcastSubjectForTick,
+  REPLY_CHAIN_PACKET_SUBJECT,
 } from "./game-packet-strings.js";
 
 export type EndpointAddress = {
@@ -177,7 +178,19 @@ export function evaluateEndpointSend(
     if (!(b === 4 && c === 2 && d === 1)) {
       return { shouldSend: false, header: null, profile: null, reason: "a=2 requires tuple (4,2,1)" };
     }
-    return { shouldSend: true, header: rawAddrHeader(addr), profile: "reply-chain", reason: "a=2 fixed path" };
+    /**
+     * Binary: header **`var_10b = *arg3`** and subject **`REPLY_CHAIN_PACKET_SUBJECT`** (`sub_1402f9a40` @ `0x1402f9bc1`–`0x1402f9e1c`).
+     * **`sub_1402f5840`** calls **`sub_1402f9a40`** only when **`*(packet_slot + 0x7a) == 2`** (slot mode after receive / staging).
+     * This exporter does not model **`0x7a`** or inbound queues yet, so **`shouldSend`** here is still a stand-in schedule, not full parity.
+     */
+    return {
+      shouldSend: true,
+      header: rawAddrHeader(addr),
+      profile: "reply-chain",
+      reason: "a=2 reply path (subject from sub_1402f9a40)",
+      packetSubject: REPLY_CHAIN_PACKET_SUBJECT,
+      packetSubjectCandidates: [REPLY_CHAIN_PACKET_SUBJECT],
+    };
   }
 
   if (a !== 1) {
