@@ -106,13 +106,200 @@ In endpoint processing within `sub_1402f5840`, packet slot/state fields are rewr
 
 (Treat this as confirmed ordering model; exact branch-by-branch priority should still be validated per endpoint class while finalizing parity.)
 
+**TypeScript hook:** `RecoveredSlotTickContext` + optional 4th argument to **`evaluateEndpointSend`** in **`src/recovered-endpoint-scheduler.ts`**. When **`receiveOrBounceClaimedSlot: true`**, the recovered model returns **`shouldSend: false`** with reason **`same-tick slot: receive/bounce claimed`** so export/compare can opt in once inbound simulation sets the flag. Call sites that omit the argument behave as before.
+
+**MCP / BN check (`decompile_function sub_1402f5840`, stock `tunnet.exe.bndb`):**
+
+- **`0x1402f5bfe`**: `if (*(rbx_3 + 0x7a) == 2)` immediately before **`sub_1402f9a40`** @ **`0x1402f5c26`** (full header/subject composer).
+- **`0x1402f5cc1`**: `if (*(rbx_3 + 0x7a) != 2)` → packs from **`rax_11`** / **`sub_1404628b0`** / tape-style path **without** that **`sub_1402f9a40`** call — same slot, **non-compose** outbound.
+- **`0x1402f75bf`**: `*(rdi_14 + 0x7a) = r8_13.b` on inbound merge into **`rdi_14`** (packet slot); **`r8_13.b = 2`** is prepared @ **`0x1402f90ed`** on the path into that merge.
+
+So “game code” definitely splits **compose (`0x7a==2`) → `sub_1402f9a40`** vs **copy/other builder**; linking **inbound** to **suppressing** a **second** scheduled composer emit in one tick is the remaining **CFG-order** detail to nail in BN (per-endpoint walk order inside the same **`NetTock`** invocation).
+
 ### E.1) Reply / “reply-chain” subject and slot flag **`+0x7a`**
 
 In **`sub_1402f5840`**, the outbound builder **`sub_1402f9a40`** is invoked only when **`*(packet_slot + 0x7a) == 2`** (HLIL @ `0x1402f5bfe` → call @ `0x1402f5c26`). Other values take the branch that copies from **`rax_11`** instead (same function, @ `0x1402f5cc1`).
 
-After inbound handling, the receive path writes **`*(slot + 0x7a) = 2`** in the block that follows **`r8_13.b = 2`** (e.g. HLIL @ `0x1402f75bf`). So the “full” generator (**`sub_1402f9a40`**) runs when the slot was **marked in that mode**—**deferred relative to the receive that set it**, not on every scheduler pass. (Whether that is the next simulation tick or a later stage in the same tick depends on call order; it is **not** the same instant as the inbound event.)
+After inbound handling, the receive path writes **`*(slot + 0x7a) = r8_13.b`** with **`r8_13.b = 2`** on the merge into that block (HLIL @ **`0x1402f75bf`**). So the “full” generator (**`sub_1402f9a40`**) runs when the slot was **marked in that mode**—**deferred relative to the receive that set it**, not on every scheduler pass. (Whether that is the next simulation tick or a later stage in the same tick depends on call order; it is **not** the same instant as the inbound event.)
+
+**Other `+0x7a` writers in the same function (HLIL anchors):**
+
+| Value | Site | Notes |
+|------:|------|--------|
+| **2** | `0x1402f5bdb` | After the **`var_348`-driven jump table** path (`0x1402f8c0d` area): forces compose mode when the deferred branch decides to arm **`sub_1402f9a40`** on a later pass (only if **`*(slot + 0x7a) != 2`** before the write). |
+| **1** | `0x1402f78a5` | **PING → PONG** staging: fills the slot buffer, then sets **`0x7a = 1`** when the slot was not already **`2`** (see `if (*(var_3a8_1 + 0x7a) != 2)` immediately before). |
+| **0** | `0x1402f85f3` | **“LAW ENFORCEMENT OPERATION”** / spam-template branch: clears **`0x7a`** after populating the slot for that outbound. |
+| **propagated** | `0x1402f65ac` | **`*(slot + 0x7a) = *(slot + 0x3a)`** (HLIL: **`rbx_5 = *(rbx_3 + 0x3a)`** @ **`0x1402f5f3f`**, then stored @ **`0x1402f65ac`**). There is a guard **`if (rbx_5 != 2)`** @ **`0x1402f5f46`** earlier on the same slot pointer. |
+
+So **`0x7a`** is both a **mode enum** (at least **0 / 1 / 2** observed) and, in one branch, a **copy of another slot byte at `+0x3a`**. **`+0x3a`** is the next place to xref when modeling reply / infection state without guessing.
+
+### E.2) Five-byte `result_2` row (pointer into stride-5 table)
+
+In **`sub_1402f5840`**, the pointer passed as **`arg3`** to **`sub_1402f9a40`** is:
+
+- **`result_2 = var_120_1 + rdi_43 * 5`** @ **`0x1402f5b8d`**, with **`rdi_43`** the per-endpoint send index in the inner loop.
+
+**`var_120_1`** is loaded from a **`0x58`-byte strided table** (same family as other Bevy component rows in this function):
+
+- **`var_120_1 = *(*(r8_52 + 8) + *(rcx_297 + result + 8) * 0x58 + 0x40)`** @ **`0x1402f961a`**.
+
+So the **base of the 5-byte rows** is a **pointer at field `+0x40`** of the row selected by **`*(rcx_297 + result + 8)`** (entity/context index into **`rcx_297`**). Populating that **`+0x40`** field is the right anchor for replacing **`encodeEndpointAddressForStrategy`** heuristics with binary-accurate tuples (spawn / map / asset systems, not **`sub_142244e00`**’s **`var_308`** fill).
+
+**Mechanical writer of `0x58` rows:** **`sub_140516d40`** (`0x140516d40`) grows the same table shape: for index **`rdx`** it stores **`arg2[0..3]`** into **`+0x00..+0x30`**, **`arg2[4]`** into **`+0x40`**, and a length/cursor field into **`+0x50`**. **`get_xrefs_to(0x140516d40)`** (MCP) includes **`sub_1402f5840`** (two call sites), **`sub_14044eae0`**, **`sub_1403a7a00`**, **`sub_1404f0910`**, **`sub_1404f3a90`**, **`sub_14074aa00`**. So **`+0x40`** is filled whenever those paths pass the packed **`arg2`** blob—often alongside **`sub_140516d40(&…, &var_228)`**-style locals built from a live packet slot.
+
+### E.3) Staging halfword **`+0x3a` / `+0x3b`** (`sub_14044eae0`)
+
+The large relay **`sub_14044eae0`** (`0x14044eae0`, callers **`sub_140444950`**, **`sub_140584790`**, **`sub_1405e5170`**) walks the same **`0x60`** NetNode rows and **`0x58`** side tables as **`sub_1402f5840`**. On several paths it **skips work when `*(packet_slot + 0x3a) == 2`** (HLIL **`continue`** right after the test, e.g. @ **`0x14044efa4`**, **`0x14044f179`**, **`0x14044f39e`**).
+
+HLIL often loads **`int16_t` at `slot + 0x3a`** (e.g. **`0x14044f0a3`**, **`0x14044f6c3`**) into locals that become part of the **`var_228`** bundle passed to **`sub_140516d40`**. **`+0x3b`** appears as a separate byte in the same flows (**`*(slot + 0x3b)`** @ **`0x14044fa14`** and packed into **`var_1ee:1`** @ **`0x14044fd60`**).
+
+Concrete staging literals in the same function:
+
+- **PING** inject: **`var_1ee = 0`** @ **`0x14044f8fc`** (with **`var_1ec_3 = 0`**) before writing the outbound slice at **`slot + 8`**.
+- **PONG** inject: **`var_1ee = 1`** @ **`0x1404500e1`** before the same style of slot write.
+
+Together with **`§E.1`**, this supports treating **low `+0x3a`** values **0 / 1 / 2** as the same **staging / compose** family as **`+0x7a`**, with **`+0x7a := +0x3a`** on the **`0x1402f65ac`** path.
+
+### E.4) Who calls **`sub_14044eae0`** (Rust names from panic metadata)
+
+Three direct callers are visible in BN:
+
+| Function | Call site | Role |
+|----------|-----------|------|
+| **`sub_140444950`** | **`0x140444b73`** | Bevy system glue: resolves world resources with **`sub_14225f810`**, reads **`*(table + 0x10)`** / **`*(table + 0x40)`** pairs (same shape as the **`0x58`** row metadata elsewhere), then **`sub_14044eae0`**. On failure, panic blobs name **`Events<NetTockEvent>`** with **`Fragile`** sign, and **`tunnet::net::relay::Relay`** alongside **`tunnet::story::Story`**, **`setup_doors`**, **`QueryState<(Entity, &NetNode, …)`**. |
+| **`sub_1405e5170`** | **`0x1405e53a6`** | Same control flow as **`sub_140444950`** (increment **`*(world + 0x270)`**, same resource lookups, same **`sub_14044eae0`** argument layout); different static descriptor pointer in the panic path. |
+| **`sub_140584790`** | **`0x14058489a`** | Thin wrapper: packs stack locals and **`return sub_14044eae0(...)`** (no extra logic in the decompile snippet). |
+
+So the **relay / PING-PONG / `0x3a` gate** logic is not an orphan—it sits under **`tunnet::net::relay::Relay`**-flavored schedules and the same **`NetTockEvent`** family as the main tick driver.
+
+### E.5) Graph routing **`sub_1403a7a00`** (propagating **`+0x40`**)
+
+**`sub_1403a7a00`** is a large **NetNode walk + 3D distance / path** system (**`sub_1400b0930`**, **`sub_14037cea0`**, **`sub_140764ba0`** over a **`0x58`-strided open-addressed table** whose SIMD probe base is **`&data_142429eb0`** (**`var_160_1`**, HLIL **`neg.q(…) * 0x58`** steps @ **`0x1403a8a05`** / **`0x1403a80b5`**). Do **not** confuse this with **`sub_14037e9d0 → sub_1406425d0`** (**`0xc`** inline cells — **§E.12**). It:
+
+- Loads **`rbp_25 = *(rdx_27 + rbp_24 + 0x40)`** @ **`0x1403a88e4`** — the **existing neighbor row’s `+0x40` pointer** (same field **`sub_1402f5840`** later dereferences for **`result_2`**).
+- Matches candidate rows (**`r13_9`**) and calls **`sub_140516d40(&var_a0, &var_298)`** @ **`0x1403a8e7d`**, where **`var_298`** is filled from the **matched `0x58` slot** (headers, **`+0x3a`**, **`+0x3b`**, etc.).
+
+So at least on this path, **`+0x40`** is not minted from thin air: it is **copied forward from table data already attached to other nodes / candidates** when the graph search commits a row.
+
+### E.6) Remaining **`sub_140516d40`** callers (full xref list)
+
+**`sub_1404f0910`** (`0x1404f0910`, call @ **`0x1404f0b1b`**)
+
+- Same **`0x60` / `0x58`** walk as the scheduler.
+- **`rbp_1 = *(*(node + 8) + index * 0x58 + 0x40)`** @ **`0x1404f0a59`** — reuses the **existing** five-byte table pointer.
+- **`r14 = *(netnode + 0x58)`** drives a loop; each iteration builds a **“Dummy packet”** string (**`strncpy` @ `0x1404f0aa9`**), a **static** header blob (**`"ffaeb6"`** @ **`0x1404f0ae3`**, small **`memcpy`**), then **`sub_140516d40(&var_78, &var_128)`**.
+- Looks like **test / injector traffic** (same world shape as **`tunnet::net::tester::SendButton`** query chunks seen near other net systems). It **does not** show allocation of a brand-new **`+0x40`** target—only **appends `0x58` rows** using a **stack template**.
+
+**`sub_1404f3a90`** (`0x1404f3a90`, multiple **`sub_140516d40`** sites e.g. **`0x1404f4513`**, **`0x1404f48ef`**, **`0x1404f4a13`**, **`0x1404f4d3d`**)
+
+- Another **multi-endpoint** walker with **`*(slot + 0x3a) != 2`** gates and **`*(slot + 0x7a)`** handling like **`sub_1402f5840`** / **`sub_14044eae0`**.
+- **`r8_1`**, **`rdi_5`**, **`rdx_6`** are loaded from **three** **`*(… * 0x58 + 0x40)`** slots @ **`0x1404f3e4b`**, **`0x1404f3e50`**, **`0x1404f3e5b`** — always **existing** table pointers.
+- **`sub_14079fa10`** + manual stores **`0x1404f4b36`–`0x1404f4b81`** mirror **`sub_140516d40`’s** **`0x58`** write pattern (**`+0x40` ← `var_278`**, packed from the **per-connection block** at **`rcx_11`** inside a sibling’s heap buffer). This is a **connection commit / copy** path, not first-time worldgen.
+
+**`sub_14074aa00`** (`0x14074aa00`, **`sub_140516d40`** @ **`0x14074b501`**)
+
+- Very large Bevy-style system (many query parameters); touches **`0x1cf`** flags, **`sub_1400ae2a0`**, **`0x98`**-strided packet slots, **`*(slot + 0x7a)`**, and the usual **`0x60` / `0x58`** NetNode tables.
+- **`sub_140516d40(&var_7c0, &var_7a8)`** feeds **`var_7a8`** from **`r15_5`** packet/relay state.
+- **Side buffer** (HLIL **`var_b70_1`**, rows spaced by **`0x68`**) gets **`*(row + 0x40) = …`** @ **`0x14074b60f`** — a **packed 64-bit** built from SIMD lanes (decompiler artifact around pointer-sized data).
+- **Direct slot writes:** **`*(slot + 0x40) = rbx_29`**, **`*(slot + 0x48) = r8_25`** @ **`0x14074ca69`–`0x14074ca6e`** (`rbx_29` / `r8_25` from **`var_7a8`**).
+- **Closest “bootstrap” pattern so far:** **`rbx_30 = *(0x58_row + 0x40)`** @ **`0x14074cc5f`**, then a loop @ **`0x14074cc73`–`0x14074cc84`** **zeroes** **`rbx_30 + i * 0x20 + {0x10,0x18}`** for **`i in 0 .. *(netnode+0x58)`** — clears destination-side memory **through** the pointer already stored at **`+0x40`**, i.e. **prepares** the buffer the scheduler later reads as **`result_2`**. The instruction that **first assigned** that pointer is **not pinned** in the snippets above; **`sub_140292f00`** / **`sub_14079f290`** in the same function only handle **contiguous buffer growth**—the original **`+0x40`** store likely occurs earlier in this system or in **build/spawn** code still to be found.
+
+### E.7) **`sub_14074aa00`** — who registers it (pathfinding / nav)
+
+**`get_xrefs_to(0x14074aa00)`** yields three code refs:
+
+| Caller | Call site | Notes |
+|--------|-----------|--------|
+| **`sub_14058e470`** | **`0x14058e726`** | Argument packer only; forwards many query handles into **`sub_14074aa00`**. |
+| **`sub_1405be400`** | **`0x1405bea00`** | Full Bevy **`sub_14225f810`** resource resolution; panic metadata includes **`tunnet::net::transport::Handles`**, **`tunnet::map::setup`**, **`tunnet::hud::nav`**, and **`QueryState<(Entity, &mut Transform, &mut tunnet::npc::path_finding::PathFinding`, …** — same broad family as **`§E.5`** graph work but wired as a **scheduled system** over **net handles**. |
+| **`sub_14073eeb0`** | **`0x14073f496`** | Parallel layout (larger **`arg1`** offsets); same **`Handles` / `map::setup` / `PathFinding`** string chunk on the failure path that reaches **`sub_14074aa00`**. |
+
+So **`sub_14074aa00`** is not the main **`NetTock`** emitter; it is **pathfinding + transport handle maintenance** that also **clears / repacks** slot memory tied to **`+0x40`** (**`§E.6`**).
+
+### E.8) **`sub_1404f3a90`** — extra callers
+
+**`get_xrefs_to(0x1404f3a90)`**:
+
+| Caller | Call site | Notes |
+|--------|-----------|--------|
+| **`sub_1404d4100`** | **`0x1404d43a4`** | Bevy glue (increment **`*(world+0x270)`**, **`sub_14225f810`** lookups). Failure strings include **`Compass`**, **`Credits`**, **`SendButton`**, etc.—success path calls **`sub_1404f3a90`** with packed **`NetNode`** query state. |
+| **`sub_1405849d0`** | **`0x140584ae4`** | Thin **`return sub_1404f3a90(...)`** wrapper (same pattern as **`sub_140584790`** → **`sub_14044eae0`**). |
+| **`sub_1405e7bb0`** | **`0x1405e7e65`** | **Twin of `sub_1404d4100`**: same **`arg1+0x120` / `rbx+8` / `0x1b0..0x1c8`** resource walk, same **`sub_1404f3a90`** argument packing, same **`*(arg1+0x298)`** tick counter write—only the static panic descriptor pointer differs (**`data_1424741f0`** vs **`data_14243dd28`** on some branches). Second **Bevy schedule strip** for the same net-slot logic. |
+
+The same **`update_preview_connections`** subsystem is now tied to **`sub_1401597f0` → `sub_140175c50`** (see **§E.11**). The **`.rdata`** substring @ **`0x142453b81`** still yields **empty** MCP **`get_xrefs_to`** on the string VA—navigate via those functions instead. **`get_xrefs_to(0x1404d4100)`** may also return **no code refs** (vtable / registration path); use **`sub_1404d4100`** / **`sub_1405e7bb0`** as **direct navigation** targets.
+
+**`DeferredConnection` / `NewNode` / `remove_new_nodes`** appear only in **`.rdata` blobs** in this session (e.g. string hits @ **`0x14243fd81`**, **`0x142440881`**); **`get_xrefs_to`** on those VAs returns **empty** in MCP—use BN’s **Data** view. Resolving them to a **`sub_140516d40`** or **`+0x40`** writer still needs UI xrefs or a **`mov`** scan on **`.text`** for **`0x58`**-row stores.
+
+### E.9) Helpers around **`sub_14074aa00`** (int queue + schedule preludes)
+
+**`sub_140292f00`** (`0x140292f00`)
+
+- Small **`i32`** buffer helper: **`sub_1407a03f0`** then **`memmove` / `memcpy`** with **`<< 2`** (element size **4**).
+- **`get_xrefs_to`**: **`sub_140293600`** @ **`0x14029361a`**, **`sub_14074aa00`** @ **`0x14074ccc1`**.
+- In **`sub_14074aa00`**, it runs when **`rax_4[3] == *rax_4`** (length == capacity) **before** appending another **`i32`**; after it runs, the code stores into **`rax_4[1]`** and bumps **`rax_4[3]`**, and when **`rax_4[3] + 1 >= 0x21`** it **rolls the base index** **`rax_4[2]`** and clears **`rax_4[5]`**—a **fixed-capacity (~0x20 slot) ring / dequeue** of **`u32`** used alongside **`sub_14079f290`** growth for pointer side tables @ **`0x14074cd47`–`0x14074cd8f`**. It is **not** an allocator for **`+0x40`** five-byte row bases.
+
+**`sub_14055dfe0`** (`0x14055dfe0`) — prelude on **`sub_1405e7bb0`**
+
+- When **`*(arg1+0x2a0)`** and schedule counters match **`arg2`**, loops **`0x138`**-byte steps, calls **`sub_1400a9240(arg1+0x40, …)`** to copy component chunks from the world, **`sub_142286e00`** on **`arg1+0x250` / `+0x270`**, etc. **ECS system-parameter refresh** before the user system body runs.
+
+**`sub_14055e8a0`** (`0x14055e8a0`) — prelude on **`sub_1405be400`**
+
+- Same idea with **different `arg1` offsets** (**`0xda`..`0xdc`**, **`sub_1400a01a0`**, **`sub_1400913f0`**, **`sub_140090480`**, **`sub_14008ec40`**, …)—**another system struct layout**, same **`0x138`** stride and **`sub_142286e00`** string moves.
 
 Inside **`sub_1402f9a40`**, when **`r13.d == 2`** (first dword of the **`arg3`** row) and **`(b,c,d) == (4,2,1)`** (`rcx_1.b`, `r12.b`, **`var_a0.b`** checks @ `0x1402f9d58`), the packet subject is **`__builtin_strncpy(..., "Re: Re: Re: Re: ...", 0x13)`** @ **`0x1402f9d8f`**, with **`*(arg1 + 0x28) = 0x13`**. The same literal appears in `.rdata` inside **`data_1424246e0`** (BN string filter **`Re: Re:`**). No **`sub_140673b40`** pool is used for that subject.
+
+### E.10) **`0x58` table growth: `sub_14079fa10`** vs append helpers **`sub_140516d40` / `sub_140516f40`**
+
+**`sub_14079fa10`** is a **generic Rust `Vec`-style reserve** for arrays whose elements are **`0x58` bytes** wide: HLIL scales the old length by **`0x58`**, calls **`sub_14079e410`** with **`new_capacity * 0x58`**, and updates the usual triple (**ptr / len / cap**). It does **not** choose **`+0x40`** tuple bases; it only **reallocates backing storage** when something else has already decided how many **`0x58`** rows exist.
+
+**`get_xrefs_to(0x14079fa10)`** is large; notable **net-adjacent** callees include **`sub_140516d40`** (**`0x140516da2`**, **`0x140516e36`**), **`sub_140516f40`** (**`0x140516f75`**, **`0x140516f95`**), **`sub_1404f3a90`**, the **`sub_1402f0840` / `sub_1402f0e70` / …** family next to **`sub_1402f5840`**, and **`sub_140380650`** (many sites). Treat it as **shared grow plumbing** for **`0x58`-strided** tables, not as the **first** writer of **`*(row+0x40)`**.
+
+**`sub_140516d40`** and **`sub_140516f40`** are **the same algorithm class**: HLIL for **`sub_140516d40`** already branches on **`*(arg1[2] + 0x48)`** and calls **`sub_14079fa10`** on either **`arg1[2]+0x18`** or **`arg1[2]+0x30`** before writing the **`0x58`** row (**`+0x40` ← packed `arg2[4]`**). **`sub_140516f40`** repeats that **dual-`Vec`** choice with only **field-store ordering** differences. **`get_xrefs_to(0x140516f40)`** returns **only** **`sub_140380650`** (many internal call sites). **`get_xrefs_to(0x140380650)`** returns **only** **`sub_140175c50`** @ **`0x14017664f`**. The related **`sub_140386c30`** helper is called from **`sub_140175c50`** @ **`0x140176bd6`** **and** from the twin walker **`sub_14016d910`** @ **`0x14016f587`** (§E.11). So **`sub_140516d40`** covers **NetTock / relay / graph / pathfinding** (§E.5–E.6), while **`sub_140516f40`** is **specialized codegen** for **`sub_140380650`** inside **`sub_140175c50`** only.
+
+### E.11) **`update_preview_connections`** — `sub_1401597f0` / **`sub_140175c50`** / **`data_142429eb0`**
+
+**Rust string (BN `list_strings_filter`)**: **`tunnet::net::build::update_preview_connections`** @ **`0x142453b81`** (embedded in a longer **`NetNode` / `BuildingSurface`** query blob). MCP **`get_xrefs_to`** on that VA is **empty**; treat **`0x142453b81`** as a **label** and use code symbols below.
+
+**Bevy registration / body (two near-parallel systems)**
+
+- **`sub_1401597f0`** (`0x1401597f0`): failure strings include **`bevy_ecs::event::Events<tunnet::net::build::BuildNodeEvent>`**, **`QueryState<… &mut tunnet::net::transport::NetNode>`**, **`chunk::LoadedChunk`**, **`tunnet::npc::Handles`**, etc. It calls **`sub_140175c50`** @ **`0x140159b05`** with packed world queries (**`arg1+0xe8`** / **`0x1b8`** layout branch).
+- **`sub_140156d80`** (`0x140156d80`): **same `BuildNodeEvent` + `NetNode` query** panic blobs, but **`arg1+0xd0`** / **`rsi+0x420`** offsets and a different static descriptor (**`data_142409b78`** vs **`data_14243dd28`** on some paths). It calls **`sub_14016d910`** @ **`0x140157178`** — a **second mega-walker** in the same **build-preview** family as **`sub_140175c50`**.
+- **`get_xrefs_to(0x140175c50)`**: **`sub_1401597f0`** @ **`0x140159b05`**, **`sub_140588270`** @ **`0x1405883ed`**, **`sub_1405ebbe0`** @ **`0x1405ebf0a`**.
+- **`get_xrefs_to(0x14016d910)`**: **`sub_140156d80`** @ **`0x140157178`**, **`sub_14058b220`** @ **`0x14058b461`**, **`sub_1405c8230`** @ **`0x1405c8642`** — same **schedule-twin** idea as **`175c50`**.
+
+**What **`sub_140175c50`** does (selected HLIL anchors)**
+
+- Iterates **`NetNode`**-style tables (**`0x60`** stride on **`*(world + 0xd0)`**, **`0x58`** child counts, **`unwrap`** panics on **`Option`**).
+- **Reads existing **`+0x40`** pointers** from **`0x58`** rows when walking neighbors, e.g. **`0x140175ec1`**, **`0x140176278`**, **`0x140176ee8`** — preview logic **reuses** graph storage already attached to nodes; it does not invent **`+0x40`** from **`sub_142353b40`**.
+- **`sub_140380650`** @ **`0x14017664f`**: large **`0x8000`**-buffer **`memcpy`** / command recording; inner **`sub_140516f40`** sites maintain the preview **`0x58`** table (**`get_xrefs_to(0x140380650)`** is **only** **`sub_140175c50`**).
+- **`sub_140386c30`** @ **`0x140176bd6`** (**`sub_140175c50`**) and @ **`0x14016f587`** (**`sub_14016d910`**): **shared** alternate command-builder path (same **build** subsystem, two walkers).
+- **`sub_14037e9d0`**: **open-addressed find/insert** (**`sub_140765b70`** hash, **`sub_1406425d0`** on miss — see **§E.12**). Called from **`sub_140175c50`** @ **`0x140176139`** with **`&data_142429eb0`** wired into the stack **`arg1`** bundle @ **`0x14017602f`**. That is **not** the same layout as **`sub_1403a7a00`’s** **`0x58`**-wide path cells (**§E.5** / **§E.12**): both reuse the **`data_142429eb0`** label as a **static anchor**, but **`37e9d0 → 6425d0`** stores **`0xc`**-byte **inline** payloads, not **`sub_140516d40`** row **`+0x40`** pointers.
+
+**`sub_142353b40` — not a five-byte-row allocator**
+
+- Decompile shows **`TlsGetValue` / `TlsSetValue`**, a **`0x20`**-byte TLS object, and **`BCryptGenRandom`**. It returns **`&tls_block[1]`** (two **`u64`** words of RNG state).
+- **`sub_140175c50`** @ **`0x140175fb3`** uses **`sub_142353b40(nullptr)`**, then **`zmm0_1 = *rax; *rax += 1`** — **consumes thread-local randomness** for hashing/probing, **not** as the heap pointer stored at **`*(0x58_row + 0x40)`** for **`sub_1402f5840`’s `result_2`**.
+
+**Still open:** the **first** heap store of **`*(row+0x40)`** for a **brand-new** runtime **`NetNode`** remains elsewhere (**`sub_14074aa00`**-class slot repack, **spawn / component insert**, or another builder — **not** **`sub_1406425d0`**); **`sub_140175c50`** mostly **propagates** existing **`+0x40`** and appends via **`sub_140516f40`**.
+
+### E.12) **`sub_1406425d0` / `sub_14062eb10`** — **`0xc`** inline map (not **`+0x40`** / not **`0x58`** rows)
+
+**`sub_1406425d0`** (`0x1406425d0`)
+
+- Scans the **16-byte occupancy bitmap** at **`arg1[3]`** (SIMD **`_mm_movemask_epi8`**) to find a free **tombstone / empty** byte, then writes the **high-byte** of the **hash** (**`(arg2 >> 0x39).b`**) into the **paired** mirror slots @ **`0x14064266f` / `0x140642673`** (Robin-Hood / secondary-index pattern).
+- Stores the caller’s **`arg3`** payload as **two little-endian words** @ **`0x140642691` / `0x140642698`** — offset math uses **`neg.q(rdx_2) * 3`** with **`<< 2`**, i.e. **12 bytes per logical value** adjacent to the control bytes.
+- When the table is full, calls **`sub_14062eb10(arg1, arg4)`** @ **`0x1406426b1`** before retrying.
+
+**`sub_14062eb10`** (`0x14062eb10`)
+
+- **Load-factor / growth**: if **`arg1[2]`** (live count) exceeds about half the **mask** **`arg1[0]`**, allocates a **new** **`(capacity * 0xc + …)`** byte buffer (**`mulu …, 0xc`** @ **`0x14062ef1d`**), **`memset(0xff)`** the bitmap tail, **reinserts** every live **`0xc`** cell (**loop @ `0x14062f039`–`0x14062f02e`**), and swaps **`arg1[3]`** to the new storage (**`0x14062f0ed`**).
+
+**`get_xrefs_to(0x1406425d0)`**
+
+- **`sub_14037e9d0`** @ **`0x14037eade`** (the **`175c50`** / **`16d910`** **`37e9d0`** insert path).
+- **Nine** immediate sites inside **`sub_14016d910`** (**`0x14016e64c`** … **`0x14016e7ec`**) — build-preview **coordinate / key** churn, **independent** of **`sub_140516d40`**.
+
+**Contrast with `sub_1403a7a00`:** HLIL there steps **`neg.q(…) * 0x58`** (**`0x1403a8a05`**, **`0x1403a80b5`**) over **`var_160_1 → &data_142429eb0`**, i.e. **path-cache records** sized like **`sub_140516d40`** **`0x58`** rows. That is a **different** open-addressing implementation than **`6425d0`’s** **`0xc`** map, even though both stack bundles mention **`&data_142429eb0`**.
 
 ### F) Confirmed `0x1c4` phase advancement points
 

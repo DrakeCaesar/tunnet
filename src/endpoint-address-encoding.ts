@@ -4,6 +4,9 @@ import type { EndpointAddress } from "./recovered-endpoint-scheduler.js";
  * Numeric mapping from wiki-style dotted quads into {@link EndpointAddress} for tooling.
  * General **`plus_one_*`** rows are still hypotheses; BN shows the scheduler reads a **5-byte row**
  * (`sub_1402f5840` @ **`0x1402f5b8d`** → **`sub_1402f9a40`** arg3), not the wiki string directly.
+ * **`sub_142244e00`** in the same loop (**`0x1402f9689`**, …) resolves **(coord-like `arg3`,`arg4`)** through an
+ * **`arg2`** lookup into **`var_308`** for queued packet bytes — **not** the same memory as the **5-byte**
+ * **`result_2`** stride table.
  */
 export type AddressEncodingStrategy =
   | "identity"

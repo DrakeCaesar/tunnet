@@ -8,9 +8,9 @@
  *
  * Only **(sender, receiver)** edges are compared — not headers, subjects, or RNG pools.
  *
- * Wiki periodic model (aligned with `web/src/builder/compile.ts` + fixed interval):
+ * Wiki **edge-compare** baseline (not `simulator.ts`, which uses **one random** destination from the list):
  * - Emit when `send_rate > 0`, expanded `sends_to` is non-empty, and `tick % send_rate === 0`.
- * - Each emit adds one edge per destination in the expanded list (broadcast interpretation of the table).
+ * - Each emit adds one edge per destination in the expanded list (broadcast interpretation for **set** parity).
  *
  * Recovered model: same as `export-message-sequence.ts` (one header-derived mask × expanded `sends_to`, state transitions).
  *
