@@ -1,10 +1,31 @@
 import {
   pickAdFamilySubjectPlaceholder,
+  pickConfidentialSubjectPlaceholder,
+  pickSearchArchitectsSubjectPlaceholder,
   pickSearchInvestmentSubjectPlaceholder,
+  pickSearchPrayerSubjectPlaceholder,
+  pickSchoolCasualSubjectPlaceholder,
+  pickSchoolHomeworkSubjectPlaceholder,
+  pickSchoolSupplySubjectPlaceholder,
   pickStatusFamilySubjectPlaceholder,
   adFamilySubjectCandidates,
+  confidentialSubjectCandidates,
+  meetingMinutesSubjectCandidates,
+  searchArchitectsSubjectCandidates,
   searchInvestmentSubjectCandidates,
+  searchJoinUsSubjectCandidates,
+  searchPrayerSubjectCandidates,
+  searchQuerySubjectCandidates,
+  searchRequestSubjectCandidates,
+  schoolCasualSubjectCandidates,
+  schoolHomeworkSubjectCandidates,
+  schoolStudentExchangeSubjectCandidates,
+  schoolSupplySubjectCandidates,
+  statusReportMeetingHeaderSubjectCandidates,
   statusFamilySubjectCandidates,
+  supplyAmmunitionSubjectCandidates,
+  supplyFieldRationsSubjectCandidates,
+  trackBroadcastSubjectForTick,
 } from "./game-packet-strings.js";
 
 export type EndpointAddress = {
@@ -115,6 +136,11 @@ function rawAddrHeader(addr: EndpointAddress): number {
   return ((addr.d & 0xff) << 24) | ((addr.c & 0xff) << 16) | ((addr.b & 0xff) << 8) | (addr.a & 0xff);
 }
 
+/** Which third-of-half-tick bucket **`sub_1402f9a40`** uses for **`c=3`,`d=3`** ammo / confidential / field-rations (HLIL `rax_70 % 3`). */
+function supplyTripleBucketFromTick(tick: number): 0 | 1 | 2 {
+  return ((tick >>> 1) % 3) as 0 | 1 | 2;
+}
+
 export function evaluateEndpointSend(
   state: RecoveredSchedulerState,
   addr: EndpointAddress,
@@ -170,7 +196,15 @@ export function evaluateEndpointSend(
         const k = (tick >> 1) & 3;
         const base = b << 8;
         const header = k === 0 ? base | 0x4040001 : k === 1 ? base | 0x3020001 : k === 2 ? base | 0x2040001 : base | 0x4030001;
-        return { shouldSend: true, header, profile: "track-broadcast", reason: "track-broadcast rotation" };
+        const packetSubject = trackBroadcastSubjectForTick(tick);
+        return {
+          shouldSend: true,
+          header,
+          profile: "track-broadcast",
+          reason: "track-broadcast rotation",
+          packetSubject,
+          packetSubjectCandidates: [packetSubject],
+        };
       }
 
       if (d === 2 && b >= 2 && b <= 4) {
@@ -178,7 +212,41 @@ export function evaluateEndpointSend(
           return { shouldSend: false, header: null, profile: null, reason: "school-chat even tick gate" };
         }
         const header = (((tick >> 1) & 3) === 0) ? ((b << 8) | 0x2040001) : ((b << 8) | 0x1020001);
-        return { shouldSend: true, header, profile: "school-chat", reason: "school-chat gate branch" };
+        return {
+          shouldSend: true,
+          header,
+          profile: "school-chat",
+          reason: "school-chat gate branch",
+          packetSubject: pickSchoolHomeworkSubjectPlaceholder(tick),
+          packetSubjectCandidates: schoolHomeworkSubjectCandidates(),
+        };
+      }
+
+      if (d === 3 && b >= 2 && b <= 4) {
+        if ((tick & 1) !== 0) {
+          return { shouldSend: false, header: null, profile: null, reason: "school-chat d=3 even tick gate" };
+        }
+        if ((tick & 2) === 0) {
+          const header = (b << 8) | 0x1020001;
+          return {
+            shouldSend: true,
+            header,
+            profile: "school-chat",
+            reason: "school-chat d=3 homework (HLIL test_bit false)",
+            packetSubject: pickSchoolHomeworkSubjectPlaceholder(tick),
+            packetSubjectCandidates: schoolHomeworkSubjectCandidates(),
+          };
+        }
+        const rax151 = Math.floor(tick / 4) & 3;
+        const header = (rax151 << 8) + 0x3010101;
+        return {
+          shouldSend: true,
+          header,
+          profile: "school-chat",
+          reason: "school-chat d=3 Student Exchange (HLIL test_bit true)",
+          packetSubject: "Student Exchange Program",
+          packetSubjectCandidates: schoolStudentExchangeSubjectCandidates(),
+        };
       }
 
       if (d === 4 && b >= 2 && b <= 4) {
@@ -230,45 +298,176 @@ export function evaluateEndpointSend(
         return { shouldSend: false, header: null, profile: null, reason: "c=2 even tick gate" };
       }
       const header = (((tick >> 1) & 3) === 0) ? ((b << 8) | 0x2040001) : ((b << 8) | 0x1020001);
-      return { shouldSend: true, header, profile: "school-chat", reason: "c=2 branch selection" };
+      if (((tick >> 1) & 3) === 0) {
+        return {
+          shouldSend: true,
+          header,
+          profile: "school-chat",
+          reason: "c=2 branch selection",
+          packetSubject: pickSchoolSupplySubjectPlaceholder(tick),
+          packetSubjectCandidates: schoolSupplySubjectCandidates(),
+        };
+      }
+      return {
+        shouldSend: true,
+        header,
+        profile: "school-chat",
+        reason: "c=2 branch selection",
+        packetSubject: pickSchoolCasualSubjectPlaceholder(tick),
+        packetSubjectCandidates: schoolCasualSubjectCandidates(),
+      };
     }
 
     case 3: {
-      if (!(d === 1 || d === 2)) {
-        return { shouldSend: false, header: null, profile: null, reason: "c=3 requires d=1 or d=2" };
+      if (!(d === 1 || d === 2 || d === 3)) {
+        return { shouldSend: false, header: null, profile: null, reason: "c=3 requires d=1, d=2, or d=3" };
       }
       if ((tick & 1) !== 0) {
         return { shouldSend: false, header: null, profile: null, reason: "c=3 even tick gate" };
+      }
+
+      if (d === 3) {
+        const bucket = supplyTripleBucketFromTick(tick);
+        const base = b << 8;
+        if (bucket === 0) {
+          return {
+            shouldSend: true,
+            header: base | 0x2030001,
+            profile: "search-family",
+            reason: "c=3 d=3 ammunition pool (HLIL rax_70%3==0)",
+            packetSubject: "We need ammunition",
+            packetSubjectCandidates: supplyAmmunitionSubjectCandidates(),
+          };
+        }
+        if (bucket === 1) {
+          return {
+            shouldSend: true,
+            header: base | 0x2040001,
+            profile: "search-family",
+            reason: "c=3 d=3 field rations pool (HLIL rax_70%3==1)",
+            packetSubject: "We need field rations",
+            packetSubjectCandidates: supplyFieldRationsSubjectCandidates(),
+          };
+        }
+        return {
+          shouldSend: true,
+          header: 0x1010201,
+          profile: "search-family",
+          reason: "c=3 d=3 confidential pool (HLIL rax_70%3==2)",
+          packetSubject: pickConfidentialSubjectPlaceholder(tick),
+          packetSubjectCandidates: confidentialSubjectCandidates(),
+        };
       }
 
       if (d === 2) {
         const k = (tick >> 1) & 3;
         const base = b << 8;
         const header = k === 0 ? 0x1010301 : k === 1 ? base | 0x1030001 : k === 2 ? base | 0x1020001 : base | 0x2020001;
+        if (k === 0) {
+          const packetSubject = "Search request";
+          return {
+            shouldSend: true,
+            header,
+            profile: "search-family",
+            reason: "search-family rotation",
+            packetSubject,
+            packetSubjectCandidates: searchRequestSubjectCandidates(),
+          };
+        }
+        if (k === 1) {
+          const packetSubject = "Search query";
+          return {
+            shouldSend: true,
+            header,
+            profile: "search-family",
+            reason: "search-family rotation",
+            packetSubject,
+            packetSubjectCandidates: searchQuerySubjectCandidates(),
+          };
+        }
+        if (k === 2) {
+          return {
+            shouldSend: true,
+            header,
+            profile: "search-family",
+            reason: "search-family rotation",
+            packetSubject: pickSearchArchitectsSubjectPlaceholder(tick),
+            packetSubjectCandidates: searchArchitectsSubjectCandidates(),
+          };
+        }
         return {
           shouldSend: true,
           header,
           profile: "search-family",
-          reason: "search-family rotation",
+          reason: "search-family rotation k=3 investment pool",
           packetSubject: pickSearchInvestmentSubjectPlaceholder(tick),
           packetSubjectCandidates: searchInvestmentSubjectCandidates(),
         };
       }
 
       if ((tick & 0b10) === 0) {
-        return { shouldSend: true, header: dynamicJoinUsHeader(tick), profile: "search-family", reason: "join-us dynamic branch" };
+        const packetSubject = "Join us!";
+        return {
+          shouldSend: true,
+          header: dynamicJoinUsHeader(tick),
+          profile: "search-family",
+          reason: "join-us dynamic branch",
+          packetSubject,
+          packetSubjectCandidates: searchJoinUsSubjectCandidates(),
+        };
       }
-      return { shouldSend: true, header: dynamicPrayerHeader(tick), profile: "search-family", reason: "prayer dynamic branch" };
+      return {
+        shouldSend: true,
+        header: dynamicPrayerHeader(tick),
+        profile: "search-family",
+        reason: "prayer dynamic branch",
+        packetSubject: pickSearchPrayerSubjectPlaceholder(tick),
+        packetSubjectCandidates: searchPrayerSubjectCandidates(),
+      };
     }
 
     case 4: {
+      if (d === 4 && b >= 2 && b <= 4) {
+        if ((tick & 1) !== 0) {
+          return { shouldSend: false, header: null, profile: null, reason: "c=4 d=4 even tick gate" };
+        }
+        const meetingBranch = (tick & 2) !== 0;
+        if (meetingBranch) {
+          const rax224 = Math.floor(tick / 4) & 3;
+          const header = rax224 < 4 ? (rax224 << 8) + 0x4040101 : 0x4040001;
+          return {
+            shouldSend: true,
+            header,
+            profile: "short-fixed",
+            reason: "c=4 d=4 Meeting minutes (HLIL test_bit tick bit1)",
+            packetSubject: "Meeting minutes",
+            packetSubjectCandidates: meetingMinutesSubjectCandidates(),
+          };
+        }
+        return {
+          shouldSend: true,
+          header: (b << 8) | 0x1010001,
+          profile: "short-fixed",
+          reason: "c=4 d=4 Status Report (HLIL)",
+          packetSubject: "Status Report",
+          packetSubjectCandidates: statusReportMeetingHeaderSubjectCandidates(),
+        };
+      }
+
       if (d !== 1) {
-        return { shouldSend: false, header: null, profile: null, reason: "c=4 requires d=1" };
+        return { shouldSend: false, header: null, profile: null, reason: "c=4 requires d=1 (token) or d=4 (meeting/status)" };
       }
       if ((tick & 3) !== 0) {
         return { shouldSend: false, header: null, profile: null, reason: "c=4 every-4-ticks gate" };
       }
-      return { shouldSend: true, header: 0x1030203, profile: "short-fixed", reason: "c=4 fixed packet" };
+      return {
+        shouldSend: true,
+        header: 0x1030203,
+        profile: "short-fixed",
+        reason: "c=4 fixed packet",
+        packetSubject: "Token",
+        packetSubjectCandidates: ["Token"],
+      };
     }
 
     default:

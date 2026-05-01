@@ -243,7 +243,17 @@ function main(): void {
         profile: decision.profile,
         packetSubject: decision.packetSubject ?? null,
         packetSubjectCandidates: decision.packetSubjectCandidates ?? null,
-        packetSubjectPickIsPlaceholder: decision.profile === "status-family",
+        packetSubjectPickIsPlaceholder:
+          decision.profile === "status-family" ||
+          decision.profile === "ad-family" ||
+          (decision.profile === "search-family" &&
+            decision.packetSubjectCandidates !== undefined &&
+            decision.packetSubjectCandidates !== null &&
+            decision.packetSubjectCandidates.length > 1) ||
+          (decision.profile === "school-chat" &&
+            decision.packetSubjectCandidates !== undefined &&
+            decision.packetSubjectCandidates !== null &&
+            decision.packetSubjectCandidates.length > 1),
       });
       applyRecoveredStateTransitions(state, encoded, decision);
     }

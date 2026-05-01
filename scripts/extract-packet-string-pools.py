@@ -7,10 +7,12 @@ each call (same codegen family as Binary Ninja disassembly for ``sub_1402f9a40``
 
 **Limitations (still useful “all pools in this pattern”):**
 
-- On the stock Steam build this targets **25** ``call`` sites; **22** decode with
-  **``decodeStatus: ok``**. **3** remain **``fail``** (linear scan cannot reach the slot
-  table: **``0x2fb46a``**, **``0x2fb782``**, **``0x2fb82c``**) — use Binary Ninja / CFG or
-  extend the decoder. Re-run after patches; RVAs can shift.
+- On the stock Steam build this targets **25** ``call`` sites; **all 25** are emitted as
+  **``decodeStatus: ok``**. **22** use the linear MSVC slot-table peel; **3** use a
+  **manual table** keyed by call RVA (**``0x2fb46a``**, **``0x2fb782``**, **``0x2fb82c``**)
+  where HLIL builds rows via **``r14``** / XMM spill / alternate prologues (verified against
+  ``lea`` targets and ``mov`` length immediates in ``tunnet.exe``). Re-run after patches;
+  RVAs can shift — update **``MANUAL_SUB_140673B40_POOLS``** if codegen moves.
 - Only resolves **RIP-relative ``lea rax, [rip+disp]``** rows plus the matching
   ``mov [rsi|rbx|rdi+r],`` / ``mov qword [rsp+disp],`` noise we recognize.
 - **Does not** map a pool to HLIL / “packet profile” — you get **RVA of the call site**
@@ -35,6 +37,25 @@ from pathlib import Path
 from struct import unpack
 from typing import Any
 
+# Call-site RVAs (image-base-relative) where linear backward peel fails; strings verified
+# from ``.text`` ``lea rax,[rip+disp]`` + following ``mov [r14+disp], imm`` lengths.
+MANUAL_SUB_140673B40_POOLS: dict[int, list[str]] = {
+    0x2FB46A: [
+        "Firmware update",
+        "Test",
+        "Contribute to science",
+        "[PATCH] Fix netcode",
+    ],
+    0x2FB782: [
+        "Emergency Announcement",
+        "We Want You!",
+    ],
+    0x2FB82C: [
+        "Call To Prayer",
+        "We haven't seen you at church today",
+    ],
+}
+
 
 def pe_load(path: Path) -> tuple[bytes, int, list[tuple[str, int, int, int, int]]]:
     p = path.read_bytes()
@@ -45,20 +66,23 @@ def pe_load(path: Path) -> tuple[bytes, int, list[tuple[str, int, int, int, int]
     sec_off = e_lfanew + 24 + size_opt
     opt = e_lfanew + 24
     img = unpack("<Q", p[opt + 24 : opt + 32])[0]
+    # Per IMAGE_SECTION_HEADER: VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData
     secs: list[tuple[str, int, int, int, int]] = []
     for i in range(nsec):
         o = sec_off + i * 40
         name = p[o : o + 8].split(b"\0", 1)[0].decode(errors="replace")
-        vsz, va, rsz, raw = unpack("<IIII", p[o + 8 : o + 24])
-        secs.append((name, va, vsz, raw, rsz))
+        virt_size, virt_addr, raw_size, raw_ptr = unpack("<IIII", p[o + 8 : o + 24])
+        secs.append((name, virt_addr, virt_size, raw_ptr, raw_size))
     return p, img, secs
 
 
 def abs_to_file_off(p: bytes, img: int, secs: list[tuple[str, int, int, int, int]], abs_addr: int) -> int | None:
     rva = abs_addr - img
-    for _n, sva, _vsz, raw, rsz in secs:
-        if sva <= rva < sva + rsz:
-            return raw + (rva - sva)
+    for _n, vaddr, vsize, raw_ptr, raw_size in secs:
+        if vaddr <= rva < vaddr + vsize:
+            delta = rva - vaddr
+            if delta < raw_size:
+                return raw_ptr + delta
     return None
 
 
@@ -72,9 +96,9 @@ def read_str(p: bytes, off: int | None, ln: int) -> str | None:
 
 
 def find_text(p: bytes, secs: list[tuple[str, int, int, int, int]]) -> tuple[bytes, int] | tuple[None, None]:
-    for name, va, _vsz, raw, rsz in secs:
+    for name, vaddr, _vsize, raw_ptr, raw_size in secs:
         if name == ".text":
-            return p[raw : raw + rsz], va
+            return p[raw_ptr : raw_ptr + raw_size], vaddr
     return None, None
 
 
@@ -278,6 +302,18 @@ def decode_call_site(
     j_e8: int,
 ) -> dict[str, Any]:
     call_rva = text_va + j_e8
+    manual = MANUAL_SUB_140673B40_POOLS.get(call_rva)
+    if manual is not None:
+        parsed = parse_mov_edx_pool(text, j_e8)
+        return {
+            "callRva": call_rva,
+            "callRvaHex": f"0x{call_rva:x}",
+            "poolSize": len(manual),
+            "strings": list(manual),
+            "decodeStatus": "ok",
+            "decodeError": None,
+            "rcxNote": (parsed[2] if parsed is not None else None) or "manual_nonlinear_builder",
+        }
     parsed = parse_mov_edx_pool(text, j_e8)
     if parsed is None:
         return {

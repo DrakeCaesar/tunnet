@@ -10,30 +10,109 @@
  * **Selection:** the game uses internal RNG (`sub_140673b40` / `sub_1406734a0`).
  * Until that state is ported, **`pick*Placeholder`** functions pick deterministically
  * from the tick (stand-in — replace when RNG is matched).
+ *
+ * **Gaps:** `scripts/extract-packet-string-pools.py` covers all **25** Tunnet **`sub_140673b40`**
+ * callsites (three via a **manual** table for nonlinear builders). Some scheduler paths build
+ * copy text via **`sub_14067a670`** only (no **`sub_140673b40`** row pool) — those are not in
+ * **`out/packet-string-pools.json`**.
  */
+
+/** `sub_140673b40` @ `0x1402fb97c/0x1402fb91a/0x1402fa3b1/0x1402fb9db`. */
+export const TRACK_BROADCAST_SUBJECTS_BY_HALF_TICK_MOD4 = [
+  "Track #1",
+  "Track #2",
+  "Track #3",
+  "Track #4",
+] as const;
 
 /** Before **`sub_140673b40`** at **`0x1402fb0cf`** (status / mainframe branch). */
 export const STATUS_FAMILY_THREE_SUBJECT_POOL = [
-  "Mainframe update",
-  "Please forward to your endpoints",
   "Status report",
+  "Please forward to your endpoints",
+  "Mainframe update",
 ] as const;
 
 /** Before **`sub_140673b40`** at **`0x1402fa5bd`** (ad-style branch in same function). */
 export const AD_FAMILY_THREE_SUBJECT_POOL = [
-  "BEST PRICES",
-  "HUGE DISCOUNT!",
   "SALES",
+  "HUGE DISCOUNT!",
+  "BEST PRICES",
 ] as const;
 
-/**
- * Before **`sub_140673b40`** at **`0x1402fbbb3`** (search-rotation–adjacent branch;
- * same function — wire only where HLIL matches this path).
- */
+/** Before **`sub_140673b40`** at **`0x1402fb2f8`** (`search-family` half-tick mod4 = 0). */
+export const SEARCH_REQUEST_SINGLETON_SUBJECT_POOL = ["Search request"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fb29b`** (`search-family` half-tick mod4 = 1). */
+export const SEARCH_QUERY_SINGLETON_SUBJECT_POOL = ["Search query"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fa286`** (`search-family` half-tick mod4 = 2). */
+export const SEARCH_ARCHITECTS_FOUR_SUBJECT_POOL = [
+  "Where is everyone?",
+  "Who are the Architects?",
+  "Did anyone survive the Apocalypse?",
+  "Where are the Architects?",
+] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fa147`** (`search-family` join-us branch). */
+export const SEARCH_JOIN_US_SINGLETON_SUBJECT_POOL = ["Join us!"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fb82c`** (`search-family` prayer branch). */
+export const SEARCH_PRAYER_TWO_SUBJECT_POOL = [
+  "Call To Prayer",
+  "We haven't seen you at church today",
+] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fa873`** (school-chat variant). */
+export const SCHOOL_HOMEWORK_TWO_SUBJECT_POOL = ["Do my homework", "What's 6 * 7?"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fb042`** (`c=2` / `school-chat` header variant). */
+export const SCHOOL_SUPPLY_TWO_SUBJECT_POOL = [
+  "One bottle of corn oil, please",
+  "One battery, please",
+] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fa799`** (`c=2` / `school-chat` long pool). */
+export const SCHOOL_CASUAL_FIFTEEN_SUBJECT_POOL = [
+  "corn bread recipe",
+  "how do I delete this",
+  "teddy bear pattern",
+  "happy birthday?",
+  "how to recharge battery?",
+  ":)",
+  "need corn oil",
+  "do you get these messages?",
+  "3615 TUNNET",
+  "Bless you!!!",
+  "Good morning",
+  "I have lost 6 pounds since June",
+  "family pictures",
+  "how do i use the computer?",
+  "hello",
+] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fafcd`** (`c=1`, **`d=3`**, **`test_bit(tick,1)`** true — Student Exchange path). */
+export const SCHOOL_STUDENT_EXCHANGE_SINGLETON_POOL = ["Student Exchange Program"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fa471`** (`c=3`, **`d=3`**, third-of-half-tick gate — field rations). */
+export const SUPPLY_FIELD_RATIONS_SINGLETON_POOL = ["We need field rations"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fb572`** (`c=3`, **`d=3`**, third-of-half-tick gate — ammunition). */
+export const SUPPLY_AMMUNITION_SINGLETON_POOL = ["We need ammunition"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fb62f`** / **`0x1402fb74c`** (two HLIL paths — same two literals). */
+export const CONFIDENTIAL_TWO_SUBJECT_POOL = ["CONFIDENTIAL", "TOP SECRET"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402faecf`** (`c=4`, **`d=4`**, **`test_bit(tick,1)`** false — Status Report capitalized). */
+export const STATUS_REPORT_MEETING_HEADER_POOL = ["Status Report"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fbab8`** (`c=4`, **`d=4`**, **`test_bit(tick,1)`** true — Meeting minutes). */
+export const MEETING_MINUTES_SINGLETON_POOL = ["Meeting minutes"] as const;
+
+/** Before **`sub_140673b40`** at **`0x1402fbbbb`** (`search-family`, fourth rotation slot **`k=3`**). */
 export const SEARCH_INVESTMENT_THREE_SUBJECT_POOL = [
-  "My money is working for me",
-  "Economists hate this simple trick",
   "INVEST NOW!",
+  "Economists hate this simple trick",
+  "My money is working for me",
 ] as const;
 
 /** Same strings as `STATUS_FAMILY_THREE_SUBJECT_POOL` for spread / JSON. */
@@ -45,8 +124,105 @@ export function adFamilySubjectCandidates(): readonly string[] {
   return AD_FAMILY_THREE_SUBJECT_POOL;
 }
 
+export function trackBroadcastSubjectForTick(tick: number): string {
+  const idx = (tick >>> 1) & 3;
+  return TRACK_BROADCAST_SUBJECTS_BY_HALF_TICK_MOD4[idx];
+}
+
+export function searchRequestSubjectCandidates(): readonly string[] {
+  return SEARCH_REQUEST_SINGLETON_SUBJECT_POOL;
+}
+
+export function searchQuerySubjectCandidates(): readonly string[] {
+  return SEARCH_QUERY_SINGLETON_SUBJECT_POOL;
+}
+
+export function searchArchitectsSubjectCandidates(): readonly string[] {
+  return SEARCH_ARCHITECTS_FOUR_SUBJECT_POOL;
+}
+
+export function pickSearchArchitectsSubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 1) % SEARCH_ARCHITECTS_FOUR_SUBJECT_POOL.length;
+  return SEARCH_ARCHITECTS_FOUR_SUBJECT_POOL[idx];
+}
+
+export function searchJoinUsSubjectCandidates(): readonly string[] {
+  return SEARCH_JOIN_US_SINGLETON_SUBJECT_POOL;
+}
+
+export function searchPrayerSubjectCandidates(): readonly string[] {
+  return SEARCH_PRAYER_TWO_SUBJECT_POOL;
+}
+
+export function pickSearchPrayerSubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 4) & 1;
+  return SEARCH_PRAYER_TWO_SUBJECT_POOL[idx];
+}
+
+export function schoolHomeworkSubjectCandidates(): readonly string[] {
+  return SCHOOL_HOMEWORK_TWO_SUBJECT_POOL;
+}
+
+export function pickSchoolHomeworkSubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 1) & 1;
+  return SCHOOL_HOMEWORK_TWO_SUBJECT_POOL[idx];
+}
+
+export function schoolSupplySubjectCandidates(): readonly string[] {
+  return SCHOOL_SUPPLY_TWO_SUBJECT_POOL;
+}
+
+export function pickSchoolSupplySubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 3) & 1;
+  return SCHOOL_SUPPLY_TWO_SUBJECT_POOL[idx];
+}
+
+export function schoolCasualSubjectCandidates(): readonly string[] {
+  return SCHOOL_CASUAL_FIFTEEN_SUBJECT_POOL;
+}
+
+export function pickSchoolCasualSubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 1) % SCHOOL_CASUAL_FIFTEEN_SUBJECT_POOL.length;
+  return SCHOOL_CASUAL_FIFTEEN_SUBJECT_POOL[idx];
+}
+
+export function schoolStudentExchangeSubjectCandidates(): readonly string[] {
+  return SCHOOL_STUDENT_EXCHANGE_SINGLETON_POOL;
+}
+
+export function supplyFieldRationsSubjectCandidates(): readonly string[] {
+  return SUPPLY_FIELD_RATIONS_SINGLETON_POOL;
+}
+
+export function supplyAmmunitionSubjectCandidates(): readonly string[] {
+  return SUPPLY_AMMUNITION_SINGLETON_POOL;
+}
+
+export function confidentialSubjectCandidates(): readonly string[] {
+  return CONFIDENTIAL_TWO_SUBJECT_POOL;
+}
+
+/** Matches **`sub_140673b40`** row order at **`0x1402fb62f`** (decode aligns with **`out/packet-string-pools.json`**). */
+export function pickConfidentialSubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 5) & 1;
+  return CONFIDENTIAL_TWO_SUBJECT_POOL[idx];
+}
+
+export function statusReportMeetingHeaderSubjectCandidates(): readonly string[] {
+  return STATUS_REPORT_MEETING_HEADER_POOL;
+}
+
+export function meetingMinutesSubjectCandidates(): readonly string[] {
+  return MEETING_MINUTES_SINGLETON_POOL;
+}
+
 export function searchInvestmentSubjectCandidates(): readonly string[] {
   return SEARCH_INVESTMENT_THREE_SUBJECT_POOL;
+}
+
+export function pickSearchInvestmentSubjectPlaceholder(tick: number): string {
+  const idx = (tick >>> 3) % SEARCH_INVESTMENT_THREE_SUBJECT_POOL.length;
+  return SEARCH_INVESTMENT_THREE_SUBJECT_POOL[idx];
 }
 
 /**
@@ -62,10 +238,4 @@ export function pickStatusFamilySubjectPlaceholder(tick: number): string {
 export function pickAdFamilySubjectPlaceholder(tick: number): string {
   const idx = (tick >>> 3) % 3;
   return AD_FAMILY_THREE_SUBJECT_POOL[idx];
-}
-
-/** Search-family `d === 2` rotation fires on even ticks; align with `(tick >> 1)`. */
-export function pickSearchInvestmentSubjectPlaceholder(tick: number): string {
-  const idx = (tick >>> 1) % 3;
-  return SEARCH_INVESTMENT_THREE_SUBJECT_POOL[idx];
 }

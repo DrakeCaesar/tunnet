@@ -37,12 +37,13 @@ def pe_sections(path: Path) -> tuple[int, list[tuple[str, int, int, int, int]]]:
     size_opt = unpack("<H", d[coff_off + 16 : coff_off + 18])[0]
     sec_off = e_lfanew + 24 + size_opt
     img = unpack("<Q", d[e_lfanew + 24 + 24 : e_lfanew + 24 + 32])[0]
+    # VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData
     secs: list[tuple[str, int, int, int, int]] = []
     for i in range(nsec):
         o = sec_off + i * 40
         name = d[o : o + 8].split(b"\0", 1)[0].decode(errors="replace")
-        vsz, va, rsz, raw = unpack("<IIII", d[o + 8 : o + 24])
-        secs.append((name, va, vsz, raw, rsz))
+        virt_size, virt_addr, raw_size, raw_ptr = unpack("<IIII", d[o + 8 : o + 24])
+        secs.append((name, virt_addr, virt_size, raw_ptr, raw_size))
     return img, secs
 
 
@@ -103,12 +104,12 @@ def main() -> int:
     eff_min = 1 if args.min_len <= 0 else args.min_len
 
     with args.out.open("w", encoding="utf-8") as out_fp:
-        for name, va, _vsz, raw, rsz in secs:
+        for name, va, _vsize, raw_ptr, raw_size in secs:
             if name not in want:
                 continue
-            buf = raw_blob[raw : raw + rsz]
+            buf = raw_blob[raw_ptr : raw_ptr + raw_size]
             for start, end, chunk in extract_runs(buf, args.min_len):
-                file_off = raw + start
+                file_off = raw_ptr + start
                 rva = va + start
                 va_abs = img + rva
                 try:
