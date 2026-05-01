@@ -2,9 +2,6 @@
 
 export const ANALYSIS_DATA_DIR = "analysis/data";
 
-/** Cleaned endpoint bundle used by recovered-scheduler CLIs and comparisons. */
-export const ENDPOINTS_JSON = `${ANALYSIS_DATA_DIR}/endpoints.json`;
-
 /** Raw wiki-table JSON array (`sends-to`, `packets-per-tick`, …). Input to `normalize-endpoint-data`. */
 export const WIKI_ENDPOINTS_DIRTY_JSON = `${ANALYSIS_DATA_DIR}/wiki-endpoints.dirty.json`;
 

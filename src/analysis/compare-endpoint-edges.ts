@@ -1,8 +1,8 @@
 /**
- * Compare **author wiki table** traffic (`analysis/data/endpoints.json` `send_rate` + `sends_to`) vs **recovered**
+ * Compare **author wiki table** traffic (`src/wiki-endpoint-data.ts` / web builder dataset: `send_rate` + `sends_to`) vs **recovered**
  * scheduler (`evaluateEndpointSend` + header masks) over N ticks.
  *
- * **`analysis/data/endpoints.json` is not ground truth** — it is a convenience baseline and may disagree with the game or BN.
+ * That table **is not ground truth** — it is a convenience baseline and may disagree with the game or BN.
  * Recovered behavior follows **`sub_1402f9a40` / `sub_1402f5840`** modeling in `src/analysis/recovered-endpoint-scheduler.ts`
  * plus numeric {@link encodeEndpointAddressForStrategy} only (no wiki topology overrides beyond encoding).
  *
@@ -40,7 +40,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
+import { wikiSchedulerEndpointRows } from "./wiki-endpoint-rows.js";
 import {
   type AddressEncodingStrategy,
   encodeEndpointAddressForStrategy,
@@ -76,12 +76,6 @@ function matchMask(mask: string, candidate: string): boolean {
     if (m[i] !== c[i]) return false;
   }
   return true;
-}
-
-function loadEndpoints(path = ENDPOINTS_JSON): EndpointRow[] {
-  const raw = readFileSync(path, "utf8");
-  const parsed = JSON.parse(raw) as { endpoints: EndpointRow[] };
-  return parsed.endpoints;
 }
 
 function buildDestinationList(src: string, masks: string[], allAddresses: string[]): string[] {
@@ -617,7 +611,7 @@ function main(): void {
   const { argv: afterSubjects, edgeSubjectsFile } = stripEdgeSubjectsFileFlag(strippedPnpm);
   const { argv: args, listPairs } = stripListPairsFlag(afterSubjects);
 
-  const endpoints = loadEndpoints();
+  const endpoints = wikiSchedulerEndpointRows();
   const allAddresses = endpoints.map((e) => e.address);
   const destinationsBySource = new Map<string, string[]>();
   for (const endpoint of endpoints) {

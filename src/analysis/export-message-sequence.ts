@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
+import { wikiSchedulerEndpointRows } from "./wiki-endpoint-rows.js";
 import { dstWikiMaskForRecoveredSend, formatHeaderExact } from "./packet-header-format.js";
 import {
   type AddressEncodingStrategy,
@@ -70,12 +70,6 @@ function matchMask(mask: string, candidate: string): boolean {
     if (m[i] !== c[i]) return false;
   }
   return true;
-}
-
-function loadEndpoints(path = ENDPOINTS_JSON): EndpointRow[] {
-  const raw = readFileSync(path, "utf8");
-  const parsed = JSON.parse(raw) as { endpoints: EndpointRow[] };
-  return parsed.endpoints;
 }
 
 function buildDestinationList(src: string, masks: string[], allAddresses: string[]): string[] {
@@ -169,7 +163,7 @@ function main(): void {
   const initialPhaseA = state.phaseA;
   const initialPhaseB = state.phaseB;
 
-  const endpoints = loadEndpoints();
+  const endpoints = wikiSchedulerEndpointRows();
   const allAddresses = endpoints.map((e) => e.address);
   const destinationsBySource = new Map<string, string[]>();
   for (const endpoint of endpoints) {

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { ENDPOINTS_JSON } from "./endpoint-data-paths.js";
 import {
   type AddressEncodingStrategy,
   encodeEndpointAddressForStrategy,
@@ -34,12 +32,6 @@ type ComparisonSummary = {
 };
 
 export type { AddressEncodingStrategy } from "./endpoint-address-encoding.js";
-
-function loadEndpointRows(path = ENDPOINTS_JSON): EndpointRow[] {
-  const raw = readFileSync(path, "utf8");
-  const parsed = JSON.parse(raw) as { endpoints: EndpointRow[] };
-  return parsed.endpoints;
-}
 
 function createRng(seed: number): () => number {
   let state = seed >>> 0;
@@ -130,11 +122,10 @@ function simulateRecoveredModel(
 
 export function compareRecoveredAgainstCurrentImplementation(
   ticks = 4096,
-  dataPath = ENDPOINTS_JSON,
+  endpoints: EndpointRow[],
   encodingStrategy: AddressEncodingStrategy = "plus_one_all_octets_regional_mainframe",
   initialRecoveredState: RecoveredSchedulerState = { phaseA: 0, phaseB: 0 },
 ): ComparisonSummary {
-  const endpoints = loadEndpointRows(dataPath);
   const recovered = simulateRecoveredModel(endpoints, ticks, encodingStrategy, initialRecoveredState);
   const legacy = simulateLegacyIntervalModel(endpoints, ticks);
 

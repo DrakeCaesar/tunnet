@@ -1117,7 +1117,7 @@ If you see `Connection closed` / `Not connected`:
   - **`initialRecoveredSchedulerState(phaseA?, phaseB?)`**: builds `{ phaseA, phaseB }` mirroring game **`0x1c4` / `0x1c5`** at simulation start (“save” line-in).
 
 - **`src/analysis/scheduler-comparison.ts`**
-  - **`compareRecoveredAgainstCurrentImplementation(ticks, dataPath, encodingStrategy, initialRecoveredState?)`** — fourth argument is initial **`RecoveredSchedulerState`** (default **`{ phaseA: 0, phaseB: 0 }`**).
+  - **`compareRecoveredAgainstCurrentImplementation(ticks, endpoints, encodingStrategy, initialRecoveredState?)`** — **`endpoints`** are wiki rows (**`src/wiki-endpoint-data.ts`** via **`wikiSchedulerEndpointRows()`**); fourth argument is initial **`RecoveredSchedulerState`** (default **`{ phaseA: 0, phaseB: 0 }`**).
 
 - **`src/analysis/export-message-sequence.ts`**
   - Writes **`out/message-sequence.json`**. Each event includes **`header`** (number) plus **`headerHexU32`**, **`headerBytesLe`**, **`headerBytesBe`** from **`formatHeaderExact`** (see below).
