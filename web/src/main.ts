@@ -1,5 +1,6 @@
 import "./style.css";
 import { mountBuilderView } from "./builder/canvas";
+import { panelSectionTitle, uiPanel } from "./ui/panels";
 
 function mountLayout(): HTMLDivElement {
   const app = document.querySelector<HTMLDivElement>("#app");
@@ -20,12 +21,14 @@ async function main(): Promise<void> {
     mountBuilderView({ root: builderRoot });
   } catch (err) {
     const builderRoot = mountLayout();
-    builderRoot.innerHTML = `
-      <div class="card">
-        <div class="section-title">Builder startup error</div>
-        <pre class="details">${String(err)}</pre>
-      </div>
-    `;
+    builderRoot.replaceChildren();
+    const wrap = uiPanel();
+    wrap.append(panelSectionTitle("Builder startup error"));
+    const pre = document.createElement("pre");
+    pre.className = "details";
+    pre.textContent = String(err);
+    wrap.append(pre);
+    builderRoot.append(wrap);
   }
 }
 

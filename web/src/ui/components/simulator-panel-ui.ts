@@ -1,10 +1,12 @@
-import type { SimulationStats, Topology } from "./simulation";
+import type { SimulationStats, Topology } from "../../simulation";
 import {
   SPEED_EXP_DEFAULT,
   SPEED_EXP_MAX,
   SPEED_EXP_MIN,
   formatSpeedLabel,
-} from "./sim-controls";
+} from "../../sim-controls";
+
+export type SimulatorPanelLayoutVariant = "hud" | "sidebar";
 
 export interface SimulatorPanelElements {
   root: HTMLElement;
@@ -21,9 +23,13 @@ export interface SimulatorPanelElements {
 }
 
 export type SimulatorPanelMountOptions = {
+  layoutVariant?: SimulatorPanelLayoutVariant;
   /** When false, step-back control is hidden (no tick history). */
   stepBack?: boolean;
   speedExponent?: number;
+  packetIpsButtonText?: string;
+  dropBoardEmptyText?: string;
+  initialMetaHtml?: string;
 };
 
 function escapeHtml(s: string): string {
@@ -32,6 +38,13 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+export function setSimulatorPanelLayoutVariant(
+  root: HTMLElement,
+  variant: SimulatorPanelLayoutVariant,
+): void {
+  root.dataset.uiLayout = variant;
 }
 
 export function formatTopologyDropLabel(topology: Topology, deviceId: string): string {
@@ -74,8 +87,17 @@ export function simulatorPanelMarkup(prefix: string, opts: SimulatorPanelMountOp
     ? Math.max(SPEED_EXP_MIN, Math.min(SPEED_EXP_MAX, Math.round(opts.speedExponent as number)))
     : SPEED_EXP_DEFAULT;
   const backCls = opts.stepBack === false ? ` class="hidden"` : "";
+  const layout: SimulatorPanelLayoutVariant = opts.layoutVariant ?? "sidebar";
+  const emptyHint =
+    opts.dropBoardEmptyText ??
+    "Run or step the simulation to accumulate per-device drop counts. Stop clears the list.";
+  const metaHtml =
+    opts.initialMetaHtml !== undefined && opts.initialMetaHtml !== ""
+      ? escapeHtml(opts.initialMetaHtml)
+      : "";
+  const ipsBtn = escapeHtml(opts.packetIpsButtonText ?? "IPs");
   return `
-    <div id="${prefix}-panel-simulation" class="builder-floating-simulation sv-shared-sim-panel" aria-label="Simulation controls">
+    <div id="${prefix}-panel-simulation" class="ui-sim-panel builder-floating-simulation" data-ui-layout="${layout}" aria-label="Simulation controls">
       <div class="builder-sim-toolbar">
         <button id="${prefix}-sim-play-pause" type="button" aria-label="Play/Pause" title="Play/Pause">▶</button>
         <button id="${prefix}-sim-reset" type="button" aria-label="Stop" title="Stop">⏹</button>
@@ -89,7 +111,7 @@ export function simulatorPanelMarkup(prefix: string, opts: SimulatorPanelMountOp
             <span class="builder-sim-skip-bar">⏹</span><span class="builder-sim-skip-tri">◀</span>
           </span>
         </button>
-        <button id="${prefix}-sim-toggle-packet-ips" type="button">IPs</button>
+        <button id="${prefix}-sim-toggle-packet-ips" type="button">${ipsBtn}</button>
         <div class="builder-sim-speed-inline" aria-label="Tick speed">
           <div class="builder-sim-speed-inline-top">
             <span class="builder-sim-speed-inline-label">Speed</span>
@@ -98,12 +120,12 @@ export function simulatorPanelMarkup(prefix: string, opts: SimulatorPanelMountOp
           <input id="${prefix}-sim-speed" class="builder-sim-speed-inline-range" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${exp}" />
         </div>
       </div>
-      <div id="${prefix}-sim-meta" class="builder-sim-meta"></div>
+      <div id="${prefix}-sim-meta" class="builder-sim-meta">${metaHtml}</div>
       <div id="${prefix}-sim-drop-board" class="builder-sim-drop-board" aria-label="Entities that dropped packets">
         <div class="builder-sim-drop-board-title">Drops this run</div>
         <ol id="${prefix}-sim-drop-board-list" class="builder-sim-drop-board-list"></ol>
         <div id="${prefix}-sim-drop-board-empty" class="builder-sim-drop-board-empty">
-          Run or step the simulation to accumulate per-device drop counts. Stop clears the list.
+          ${escapeHtml(emptyHint)}
         </div>
       </div>
     </div>
@@ -148,10 +170,17 @@ function sameDropBoardRenderOrder(a: string[], b: string[]): boolean {
   return true;
 }
 
+/** Optional hooks when drop-row labels or selection rules differ from topology-only labels (builder expanded view). */
+export type SimulatorDropBoardHooks = {
+  rowMeta?: (deviceId: string) => { label: string; rootId: string } | null;
+  rowSelected?: (deviceId: string) => boolean;
+};
+
 export class SimulatorDropBoardController {
   private readonly listEl: HTMLOListElement;
   private readonly emptyEl: HTMLDivElement;
   private readonly getTopology: () => Topology;
+  private readonly hooks: SimulatorDropBoardHooks | undefined;
   private readonly countByDeviceId = new Map<string, number>();
   private readonly rowLiByDeviceId = new Map<string, HTMLLIElement>();
   private renderedOrder: string[] = [];
@@ -159,10 +188,16 @@ export class SimulatorDropBoardController {
   traceDeviceId: string | null = null;
   onPick: ((deviceId: string) => void) | null = null;
 
-  constructor(listEl: HTMLOListElement, emptyEl: HTMLDivElement, getTopology: () => Topology) {
+  constructor(
+    listEl: HTMLOListElement,
+    emptyEl: HTMLDivElement,
+    getTopology: () => Topology,
+    hooks?: SimulatorDropBoardHooks,
+  ) {
     this.listEl = listEl;
     this.emptyEl = emptyEl;
     this.getTopology = getTopology;
+    this.hooks = hooks;
     this.wireInput();
   }
 
@@ -228,6 +263,19 @@ export class SimulatorDropBoardController {
       const count = entriesMap.get(deviceId);
       if (count === undefined) continue;
       if (topology.devices[deviceId] === undefined) continue;
+
+      let labelText: string;
+      let rootIdForPick: string;
+      if (this.hooks?.rowMeta) {
+        const meta = this.hooks.rowMeta(deviceId);
+        if (!meta) continue;
+        labelText = meta.label;
+        rootIdForPick = meta.rootId;
+      } else {
+        labelText = formatTopologyDropLabel(topology, deviceId);
+        rootIdForPick = deviceId;
+      }
+
       seen.add(deviceId);
       renderedOrder.push(deviceId);
 
@@ -249,13 +297,14 @@ export class SimulatorDropBoardController {
       const btn = li.querySelector<HTMLButtonElement>(".builder-sim-drop-board-row")!;
       const countSpan = btn.querySelector<HTMLSpanElement>(".builder-sim-drop-board-count")!;
       const labelSpan = btn.querySelector<HTMLSpanElement>(".builder-sim-drop-board-label")!;
-      btn.dataset.dropRootId = deviceId;
+      btn.dataset.dropRootId = rootIdForPick;
       btn.dataset.dropDeviceId = deviceId;
       const countStr = String(count);
       if (countSpan.textContent !== countStr) countSpan.textContent = countStr;
-      const labelText = formatTopologyDropLabel(topology, deviceId);
       if (labelSpan.textContent !== labelText) labelSpan.textContent = labelText;
-      btn.classList.toggle("is-selected", this.traceDeviceId === deviceId);
+      const selected =
+        this.hooks?.rowSelected?.(deviceId) ?? this.traceDeviceId === deviceId;
+      btn.classList.toggle("is-selected", selected);
     }
 
     const needsDomReorder =

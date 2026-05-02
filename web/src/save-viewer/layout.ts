@@ -1,74 +1,155 @@
+import {
+  button,
+  panelHint,
+  panelMeta,
+  panelSectionTitle,
+  simButtonsWrap,
+  simSendRateLabel,
+  simSendRateRow,
+  svButtonRow,
+  uiPanelSidebar,
+} from "../ui/panels";
+
 export function mountLayout(): HTMLDivElement {
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) throw new Error("Missing #app root");
-  app.innerHTML = `
-    <div class="sv-root">
-      <div class="sv-sidebar">
-        <div class="card">
-          <div class="section-title">Load save file</div>
-          <div class="hint">Choose a Tunnet save JSON (nodes + edges + entities). This browser remembers it for the next visit. Full paths appear only when the host exposes them (otherwise just the file name).</div>
-          <input id="sv-file-input" class="sv-file-input" type="file" accept=".json,application/json" />
-          <div id="sv-last-save-path" class="meta sv-last-save-path">—</div>
-          <div class="sv-button-row sim-buttons">
-            <button id="sv-reload-save" type="button" disabled title="Reload the last picked save from browser storage">Reload</button>
-          </div>
-        </div>
-        <div class="card">
-          <div class="section-title">Simulation</div>
-          <div id="sv-sim-status" class="meta sv-sim-status"></div>
-          <div id="sv-sim-panel-host"></div>
-        </div>
-        <div class="card">
-          <div class="section-title">View</div>
-          <div class="sim-buttons">
-            <button id="sv-zoom-in" type="button">Zoom in</button>
-            <button id="sv-zoom-out" type="button">Zoom out</button>
-            <button id="sv-zoom-fit" type="button">Fit</button>
-            <button id="sv-view-toggle" type="button">Switch to 3D</button>
-            <button id="sv-fps-toggle" type="button">Pilot mode: off</button>
-            <button id="sv-gravity-toggle" type="button">Gravity: on</button>
-            <button id="sv-ssao-toggle" type="button">SSAO: on</button>
-            <button id="sv-block-ao-toggle" type="button">Block AO: on</button>
-            <button id="sv-hemi-ao-toggle" type="button">Hemi AO: off</button>
-            <button id="sv-reset-camera" type="button">Reset camera</button>
-          </div>
-          <label class="sim-send-rate-label" for="sv-teleport-endpoint">Teleport to endpoint</label>
-          <div class="sim-send-rate-row sv-inline-action-row">
-            <input id="sv-teleport-endpoint" type="text" value="0.3.0.0" spellcheck="false" />
-            <button id="sv-teleport-button" type="button">Teleport</button>
-          </div>
-          <label class="sim-send-rate-label" for="sv-cull-height">3D cull plane (top cut)</label>
-          <div class="sim-send-rate-row">
-            <input id="sv-cull-height" type="range" min="0" max="1000" step="1" value="1000" />
-            <span id="sv-cull-height-value" class="meta">max</span>
-          </div>
-          <div id="sv-load-progress-wrap" class="hidden">
-            <label class="sim-send-rate-label" for="sv-load-progress">3D load progress</label>
-            <div class="sim-send-rate-row">
-              <progress id="sv-load-progress" max="1000" value="0"></progress>
-              <span id="sv-load-progress-value" class="meta">0%</span>
-            </div>
-            <div id="sv-load-progress-text" class="hint">idle</div>
-          </div>
-          <div class="hint">Mouse wheel to zoom. Drag on graph to pan (hand).</div>
-        </div>
-        <div class="card">
-          <div class="section-title">Legend</div>
-          <div class="sv-legend"></div>
-          <div id="sv-selected-device" class="meta sv-selected-device">Click a device in 2D view to inspect it.</div>
-          <div class="hint">Bridge and antenna are placeholders and currently behave like relay in simulation.</div>
-        </div>
-        <div class="card">
-          <div class="section-title">World data</div>
-          <div id="sv-world-summary" class="meta">Load a save file to inspect world sections.</div>
-        </div>
-      </div>
-      <div class="sv-canvas-wrap">
-        <svg id="sv-wires" class="sv-wires"></svg>
-        <svg id="sv-packet-overlay" class="builder-packet-overlay" aria-hidden="true"></svg>
-        <div id="sv-3d-view" class="sv-3d-view hidden" aria-hidden="true"></div>
-      </div>
-    </div>
-  `;
+  app.replaceChildren();
+
+  const root = document.createElement("div");
+  root.className = "sv-root";
+
+  const sidebar = document.createElement("div");
+  sidebar.className = "sv-sidebar";
+
+  const loadPanel = uiPanelSidebar();
+  const fileInput = document.createElement("input");
+  fileInput.id = "sv-file-input";
+  fileInput.className = "sv-file-input";
+  fileInput.type = "file";
+  fileInput.accept = ".json,application/json";
+  const lastSavePathEl = panelMeta("—", "sv-last-save-path");
+  lastSavePathEl.id = "sv-last-save-path";
+  loadPanel.append(
+    panelSectionTitle("Load save file"),
+    panelHint(
+      "Choose a Tunnet save JSON (nodes + edges + entities). This browser remembers it for the next visit. Full paths appear only when the host exposes them (otherwise just the file name).",
+    ),
+    fileInput,
+    lastSavePathEl,
+    svButtonRow(
+      button("sv-reload-save", "Reload", {
+        disabled: true,
+        title: "Reload the last picked save from browser storage",
+      }),
+    ),
+  );
+
+  const simPanelWrap = uiPanelSidebar();
+  const simStatusEl = panelMeta();
+  simStatusEl.id = "sv-sim-status";
+  simStatusEl.classList.add("sv-sim-status");
+  const simPanelHost = document.createElement("div");
+  simPanelHost.id = "sv-sim-panel-host";
+  simPanelWrap.append(panelSectionTitle("Simulation"), simStatusEl, simPanelHost);
+
+  const viewPanel = uiPanelSidebar();
+  const teleportInput = document.createElement("input");
+  teleportInput.id = "sv-teleport-endpoint";
+  teleportInput.type = "text";
+  teleportInput.value = "0.3.0.0";
+  teleportInput.spellcheck = false;
+  const teleportRow = simSendRateRow(teleportInput, button("sv-teleport-button", "Teleport"));
+  teleportRow.classList.add("sv-inline-action-row");
+  const cullInput = document.createElement("input");
+  cullInput.id = "sv-cull-height";
+  cullInput.type = "range";
+  cullInput.min = "0";
+  cullInput.max = "1000";
+  cullInput.step = "1";
+  cullInput.value = "1000";
+  const cullValueSpan = document.createElement("span");
+  cullValueSpan.id = "sv-cull-height-value";
+  cullValueSpan.className = "meta";
+  cullValueSpan.textContent = "max";
+
+  const loadProgressWrap = document.createElement("div");
+  loadProgressWrap.id = "sv-load-progress-wrap";
+  loadProgressWrap.className = "hidden";
+  const loadProgress = document.createElement("progress");
+  loadProgress.id = "sv-load-progress";
+  loadProgress.max = 1000;
+  loadProgress.value = 0;
+  const loadProgressValue = document.createElement("span");
+  loadProgressValue.id = "sv-load-progress-value";
+  loadProgressValue.className = "meta";
+  loadProgressValue.textContent = "0%";
+  const loadProgressText = document.createElement("div");
+  loadProgressText.id = "sv-load-progress-text";
+  loadProgressText.className = "hint";
+  loadProgressText.textContent = "idle";
+  loadProgressWrap.append(
+    simSendRateLabel("sv-load-progress", "3D load progress"),
+    simSendRateRow(loadProgress, loadProgressValue),
+    loadProgressText,
+  );
+
+  viewPanel.append(
+    panelSectionTitle("View"),
+    simButtonsWrap(
+      button("sv-zoom-in", "Zoom in"),
+      button("sv-zoom-out", "Zoom out"),
+      button("sv-zoom-fit", "Fit"),
+      button("sv-view-toggle", "Switch to 3D"),
+      button("sv-fps-toggle", "Pilot mode: off"),
+      button("sv-gravity-toggle", "Gravity: on"),
+      button("sv-ssao-toggle", "SSAO: on"),
+      button("sv-block-ao-toggle", "Block AO: on"),
+      button("sv-hemi-ao-toggle", "Hemi AO: off"),
+      button("sv-reset-camera", "Reset camera"),
+    ),
+    simSendRateLabel("sv-teleport-endpoint", "Teleport to endpoint"),
+    teleportRow,
+    simSendRateLabel("sv-cull-height", "3D cull plane (top cut)"),
+    simSendRateRow(cullInput, cullValueSpan),
+    loadProgressWrap,
+    panelHint("Mouse wheel to zoom. Drag on graph to pan (hand)."),
+  );
+
+  const legendPanel = uiPanelSidebar();
+  const legendHost = document.createElement("div");
+  legendHost.className = "sv-legend";
+  const selectedDeviceEl = panelMeta("Click a device in 2D view to inspect it.", "sv-selected-device");
+  selectedDeviceEl.id = "sv-selected-device";
+  legendPanel.append(
+    panelSectionTitle("Legend"),
+    legendHost,
+    selectedDeviceEl,
+    panelHint("Bridge and antenna are placeholders and currently behave like relay in simulation."),
+  );
+
+  const worldPanel = uiPanelSidebar();
+  const worldSummaryEl = panelMeta("Load a save file to inspect world sections.");
+  worldSummaryEl.id = "sv-world-summary";
+  worldPanel.append(panelSectionTitle("World data"), worldSummaryEl);
+
+  sidebar.append(loadPanel, simPanelWrap, viewPanel, legendPanel, worldPanel);
+
+  const canvasWrap = document.createElement("div");
+  canvasWrap.className = "sv-canvas-wrap";
+  const wires = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  wires.id = "sv-wires";
+  wires.setAttribute("class", "sv-wires");
+  const packetOverlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  packetOverlay.id = "sv-packet-overlay";
+  packetOverlay.setAttribute("class", "builder-packet-overlay");
+  packetOverlay.setAttribute("aria-hidden", "true");
+  const view3d = document.createElement("div");
+  view3d.id = "sv-3d-view";
+  view3d.className = "sv-3d-view hidden";
+  view3d.setAttribute("aria-hidden", "true");
+  canvasWrap.append(wires, packetOverlay, view3d);
+
+  root.append(sidebar, canvasWrap);
+  app.appendChild(root);
   return app;
 }

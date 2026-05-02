@@ -145,20 +145,36 @@ body {
   font-size: var(--font-size-19);
 }
 
-.card {
+/* Shared panel chrome: builder sidebar/main, save viewer cards, error surfaces. */
+.card,
+.ui-panel {
   background: #141923;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   padding: 10px;
 }
 
-.section-title {
+.ui-panel--sidebar {
+  /* Sidebar stacks rely on parent flex/grid; keep padding from base .ui-panel. */
+  min-width: 0;
+}
+
+.section-title,
+.ui-panel__section-title {
   font-size: var(--font-size-12);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #c0c8d8;
   margin-bottom: 6px;
+}
+
+.ui-panel__section + .ui-panel__section {
+  margin-top: 12px;
+}
+
+.ui-panel__body {
+  min-width: 0;
 }
 
 .meta {
@@ -1197,50 +1213,10 @@ textarea {
   height: auto;
 }
 
-.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto;
-  align-content: start;
-}
-
-.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-toolbar {
-  grid-column: 1;
-  grid-row: auto;
-}
-
-.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-meta {
-  grid-column: 1;
-  grid-row: auto;
-}
-
-.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-drop-board {
-  grid-column: 1;
-  grid-row: auto;
-  margin-top: 4px;
-  padding-top: 8px;
-  padding-left: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-left: none;
-  align-self: stretch;
-  max-height: none;
-  min-height: 0;
-}
-
 /*
- * Stacked sidebar layout: the drop-board parent has no definite height, so flex: 1 1 0
- * on the list collapses it to zero. Size the list from its rows and cap height for scroll.
+ * Stacked simulation layout (save viewer sidebar + builder sidebar dock): driven by data-ui-layout on .ui-sim-panel.
+ * See also `.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"]` under save viewer rules.
  */
-.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-drop-board-list {
-  flex: 0 1 auto;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
-  max-height: min(280px, 45vh);
-}
-
-.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-drop-board-row {
-  min-width: 0;
-}
 
 .builder-delete-drop-zone {
   width: 100%;
@@ -2300,8 +2276,8 @@ textarea {
   min-height: 1.35em;
 }
 
-/* Reuse builder simulation panel styles in the save-viewer sidebar (stacked single column + drop list). */
-.sv-sidebar .sv-shared-sim-panel {
+/* Simulation panel sidebar variant: builder dock + save viewer (same layout rules). */
+.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"] {
   width: 100%;
   max-width: none;
   box-sizing: border-box;
@@ -2313,17 +2289,17 @@ textarea {
   padding: var(--builder-hud-gap, 8px);
 }
 
-.sv-sidebar .sv-shared-sim-panel .builder-sim-toolbar {
+.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"] .builder-sim-toolbar {
   grid-column: 1;
   grid-row: auto;
 }
 
-.sv-sidebar .sv-shared-sim-panel .builder-sim-meta {
+.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"] .builder-sim-meta {
   grid-column: 1;
   grid-row: auto;
 }
 
-.sv-sidebar .sv-shared-sim-panel .builder-sim-drop-board {
+.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"] .builder-sim-drop-board {
   grid-column: 1;
   grid-row: auto;
   margin-top: 4px;
@@ -2336,7 +2312,11 @@ textarea {
   align-self: stretch;
 }
 
-.sv-sidebar .sv-shared-sim-panel .builder-sim-drop-board-list {
+/*
+ * Stacked sidebar layout: the drop-board parent has no definite height, so flex: 1 1 0
+ * on the list collapses it to zero. Size the list from its rows and cap height for scroll.
+ */
+.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"] .builder-sim-drop-board-list {
   flex: 0 1 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2344,7 +2324,7 @@ textarea {
   max-height: min(280px, 45vh);
 }
 
-.sv-sidebar .sv-shared-sim-panel .builder-sim-drop-board-row {
+.ui-sim-panel.builder-floating-simulation[data-ui-layout="sidebar"] .builder-sim-drop-board-row {
   min-width: 0;
 }
 

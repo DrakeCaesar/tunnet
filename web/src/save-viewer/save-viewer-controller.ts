@@ -17,7 +17,7 @@ import {
   mountSimulatorPanel,
   renderSimulatorMetaGridHtml,
   SimulatorDropBoardController,
-} from "../simulator-panel-ui";
+} from "../ui/components/simulator-panel-ui";
 import { setWorldSsaoEnabled } from "./world-ao-ssao";
 import { setWorldGridLineResolution } from "./world-grid-lines";
 import {
@@ -166,6 +166,7 @@ export function startSaveViewerController(): void {
 
   const simSpeedExpInitial = loadSpeedExponentFromStorage();
   const panel = mountSimulatorPanel(simPanelHost, "sv", {
+    layoutVariant: "sidebar",
     stepBack: true,
     speedExponent: simSpeedExpInitial,
   });

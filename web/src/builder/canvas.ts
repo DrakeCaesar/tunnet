@@ -67,6 +67,19 @@ import {
   SPEED_EXP_MAX,
   SPEED_EXP_MIN,
 } from "../sim-controls";
+import { capturePrimaryDragOnWindow } from "../ui/input/pointer-drag";
+import {
+  mountSimulatorPanel,
+  renderSimulatorMetaGridHtml,
+  SimulatorDropBoardController,
+  setSimulatorPanelLayoutVariant,
+} from "../ui/components/simulator-panel-ui";
+import {
+  startRelayRotateDrag,
+  startSnappedRotateDragAroundPivot,
+  tryStartTextEntityResizeDrag,
+  type RotateDragChrome,
+} from "../ui/canvas-entities";
 
 const BUILDER_CANVAS_SCALE_KEY = "tunnet.builder.canvasScale";
 const BUILDER_PAGE_STATE_KEY = "tunnet.builder.pageState";
@@ -872,11 +885,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       data-bwignore="true"
       data-form-type="other"
     >
-      <aside class="builder-sidebar card">
+      <aside class="builder-sidebar ui-panel">
         <div id="builder-controls-sidebar-host" class="builder-controls-sidebar-host"></div>
       </aside>
       <div class="builder-sidebar-resizer" role="button" tabindex="0" aria-label="Close side panel" title="Close side panel"></div>
-      <main class="builder-main card">
+      <main class="builder-main ui-panel">
         <div class="builder-canvas-wrap">
           <svg id="builder-wire-overlay" class="builder-wire-overlay"></svg>
           <svg id="builder-packet-overlay" class="builder-packet-overlay" aria-hidden="true"></svg>
@@ -920,40 +933,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
               </div>
             </div>
           </div>
-          <div id="builder-panel-simulation" class="builder-floating-simulation" aria-label="Simulation controls">
-            <div class="builder-sim-toolbar">
-              <button id="builder-sim-play-pause" type="button" aria-label="Play/Pause" title="Play/Pause">▶</button>
-              <button id="builder-sim-reset" type="button" aria-label="Stop" title="Stop">⏹</button>
-              <button id="builder-sim-step" type="button" aria-label="Step forward" title="Step forward">
-                <span class="builder-sim-skip builder-sim-skip--forward" aria-hidden="true">
-                  <span class="builder-sim-skip-tri">▶</span><span class="builder-sim-skip-bar">⏹</span>
-                </span>
-              </button>
-              <button id="builder-sim-back" type="button" aria-label="Step back" title="Step back" disabled>
-                <span class="builder-sim-skip builder-sim-skip--back" aria-hidden="true">
-                  <span class="builder-sim-skip-bar">⏹</span><span class="builder-sim-skip-tri">◀</span>
-                </span>
-              </button>
-              <button id="builder-sim-toggle-packet-ips" type="button">${packetLabelToggleButtonText(builderPageState.packetLabelMode)}</button>
-              <div class="builder-sim-speed-inline" aria-label="Tick speed">
-                <div class="builder-sim-speed-inline-top">
-                  <span class="builder-sim-speed-inline-label">Speed</span>
-                  <span id="builder-sim-speed-value" class="builder-sim-speed-inline-value">${formatSpeedLabel(
-                    SPEED_EXP_DEFAULT,
-                  )}</span>
-                </div>
-                <input id="builder-sim-speed" class="builder-sim-speed-inline-range" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
-              </div>
-            </div>
-            <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
-            <div id="builder-sim-drop-board" class="builder-sim-drop-board" aria-label="Entities that dropped packets">
-              <div class="builder-sim-drop-board-title">Drops this run</div>
-              <ol id="builder-sim-drop-board-list" class="builder-sim-drop-board-list"></ol>
-              <div id="builder-sim-drop-board-empty" class="builder-sim-drop-board-empty">
-                Run or step the simulation to accumulate per-entity drop counts. Stop clears the list.
-              </div>
-            </div>
-          </div>
+          <div id="builder-sim-panel-host"></div>
           <div id="builder-panel-layouts" class="builder-floating-loadouts builder-floating-loadouts-detached">
             <div id="builder-layout-slots" class="builder-layout-slots builder-layout-slots--floating"></div>
           </div>
@@ -972,7 +952,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const controlsFloatingHostEl = root.querySelector<HTMLDivElement>("#builder-controls-floating-host")!;
   const panelLayoutsEl = root.querySelector<HTMLDivElement>("#builder-panel-layouts")!;
   const panelScaleEl = root.querySelector<HTMLDivElement>("#builder-panel-scale")!;
-  const panelSimulationEl = root.querySelector<HTMLDivElement>("#builder-panel-simulation")!;
+  const simPanelMountHost = root.querySelector<HTMLDivElement>("#builder-sim-panel-host")!;
+  const simPanel = mountSimulatorPanel(simPanelMountHost, "builder", {
+    layoutVariant: "hud",
+    stepBack: true,
+    speedExponent: builderPageState.simSpeedExponent,
+    packetIpsButtonText: packetLabelToggleButtonText(builderPageState.packetLabelMode),
+    dropBoardEmptyText:
+      "Run or step the simulation to accumulate per-entity drop counts. Stop clears the list.",
+    initialMetaHtml: "Initializing…",
+  });
+  const panelSimulationEl = simPanel.root;
   const panelTemplatesEl = root.querySelector<HTMLDivElement>("#builder-panel-templates")!;
   const panelPerformanceEl = root.querySelector<HTMLDivElement>("#builder-panel-performance")!;
   const templatesEl = root.querySelector<HTMLDivElement>("#builder-templates")!;
@@ -992,17 +982,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const scaleYInnerValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-inner4-value")!;
   const scaleYCoreValueEl = root.querySelector<HTMLSpanElement>("#builder-scale-y-core1-value")!;
   const layoutSlotsEl = root.querySelector<HTMLDivElement>("#builder-layout-slots")!;
-  const simPlayPauseBtn = root.querySelector<HTMLButtonElement>("#builder-sim-play-pause")!;
-  const simBackBtn = root.querySelector<HTMLButtonElement>("#builder-sim-back")!;
-  const simStepBtn = root.querySelector<HTMLButtonElement>("#builder-sim-step")!;
-  const simResetBtn = root.querySelector<HTMLButtonElement>("#builder-sim-reset")!;
-  const simTogglePacketIpsBtn = root.querySelector<HTMLButtonElement>("#builder-sim-toggle-packet-ips")!;
-  const simSpeedEl = root.querySelector<HTMLInputElement>("#builder-sim-speed")!;
-  const simSpeedValueEl = root.querySelector<HTMLSpanElement>("#builder-sim-speed-value")!;
-  simSpeedEl.value = String(builderPageState.simSpeedExponent);
-  const simMetaEl = root.querySelector<HTMLDivElement>("#builder-sim-meta")!;
-  const simDropListEl = root.querySelector<HTMLOListElement>("#builder-sim-drop-board-list")!;
-  const simDropEmptyEl = root.querySelector<HTMLDivElement>("#builder-sim-drop-board-empty")!;
+  const simPlayPauseBtn = simPanel.playPauseBtn;
+  const simBackBtn = simPanel.backBtn;
+  const simStepBtn = simPanel.stepBtn;
+  const simResetBtn = simPanel.resetBtn;
+  const simTogglePacketIpsBtn = simPanel.togglePacketIpsBtn;
+  const simSpeedEl = simPanel.speedRange;
+  const simSpeedValueEl = simPanel.speedValueSpan;
+  const simMetaEl = simPanel.metaEl;
   const canvasWrapEl = wireOverlayEl.parentElement as HTMLDivElement | null;
   const boxEl = document.createElement("div");
   boxEl.className = "builder-box-selection";
@@ -1194,12 +1181,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (builderDevPerfVisible) {
         controlsFloatingHostEl.append(panelPerformanceEl);
       }
+      setSimulatorPanelLayoutVariant(panelSimulationEl, "hud");
       return;
     }
     controlsSidebarHostEl.append(panelLayoutsEl, panelScaleEl, panelSimulationEl, panelTemplatesEl);
     if (builderDevPerfVisible) {
       controlsSidebarHostEl.append(panelPerformanceEl);
     }
+    setSimulatorPanelLayoutVariant(panelSimulationEl, "sidebar");
   }
 
   function setPanelSectionCollapsed(sectionId: BuilderPanelSectionId, collapsed: boolean): void {
@@ -1667,14 +1656,39 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simTickDeliveredEntityRootIds = new Set<string>();
   let simTickCollisionDropEntityInstanceIds = new Set<string>();
   let simTickCollisionDropEntityRootIds = new Set<string>();
-  /** Drop counts per simulator device (builder instance id); mirrors are not merged. */
-  let simDropCountByDeviceId = new Map<string, number>();
-  /** Reused list rows so rapid stat refresh does not replace buttons (clicks still land). */
-  const simDropRowLiByDeviceId = new Map<string, HTMLLIElement>();
-  /** Last rendered rank order; DOM moves only when sort-by-count produces a different sequence (stable ranks → no motion). */
-  let simDropBoardRenderedOrder: string[] = [];
-  /** Instance to trace from the viewport center when picked from the drop list. */
-  let simDropTraceDeviceId: string | null = null;
+  const simDropBoardRef: { board: SimulatorDropBoardController | null } = { board: null };
+  const simDropBoard = new SimulatorDropBoardController(
+    simPanel.dropListEl,
+    simPanel.dropEmptyEl,
+    () => compileBuilderPayload(state).topology as unknown as Topology,
+    {
+      rowMeta(deviceId) {
+        const expanded = expandBuilderState(state, { builderView: true });
+        const inst = expanded.entities.find((e) => e.instanceId === deviceId);
+        const rootId = inst?.rootId ?? simRootIdFromDeviceId(deviceId);
+        if (!rootId) return null;
+        return { label: formatSimDropRowLabelForExpanded(expanded, deviceId), rootId };
+      },
+      rowSelected(deviceId) {
+        const b = simDropBoardRef.board;
+        if (!b || b.traceDeviceId !== deviceId) return false;
+        if (selection?.kind !== "entity") return false;
+        const expanded = expandBuilderState(state, { builderView: true });
+        const inst = expanded.entities.find((e) => e.instanceId === deviceId);
+        const rootId = inst?.rootId ?? simRootIdFromDeviceId(deviceId);
+        return rootId !== null && selection.rootId === rootId;
+      },
+    },
+  );
+  simDropBoardRef.board = simDropBoard;
+  simDropBoard.onPick = (deviceId) => {
+    const expanded = expandBuilderState(state, { builderView: true });
+    const inst = expanded.entities.find((e) => e.instanceId === deviceId);
+    const rootId = inst?.rootId ?? simRootIdFromDeviceId(deviceId);
+    if (!rootId) return;
+    setSelection({ kind: "entity", rootId }, { dropTraceFromView: true, dropTraceDeviceId: deviceId });
+    renderBuilderPacketCircles(simPacketProgress);
+  };
   applyBuilderSidebarWidth(builderSidebarWidth);
 
   function updateSimBackButtonState(): void {
@@ -1951,122 +1965,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return `${sec} ${inst.templateType}`;
   }
 
-  function sameDropBoardRenderOrder(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i += 1) {
-      if (a[i] !== b[i]) return false;
-    }
-    return true;
-  }
-
-  function refreshSimDropLeaderboardUi(): void {
-    const expanded = expandBuilderState(state, { builderView: true });
-    const entriesMap = new Map<string, number>();
-    for (const [deviceId, n] of Array.from(simDropCountByDeviceId.entries())) {
-      if (n > 0) entriesMap.set(deviceId, n);
-    }
-    const hasRows = entriesMap.size > 0;
-    simDropEmptyEl.classList.toggle("hidden", hasRows);
-    simDropListEl.classList.toggle("hidden", !hasRows);
-
-    if (!hasRows) {
-      for (const li of Array.from(simDropRowLiByDeviceId.values())) {
-        li.remove();
-      }
-      simDropRowLiByDeviceId.clear();
-      simDropBoardRenderedOrder = [];
-      return;
-    }
-
-    const sortedDeviceIds = Array.from(entriesMap.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([id]) => id);
-
-    const seen = new Set<string>();
-    const renderedOrder: string[] = [];
-
-    for (const deviceId of sortedDeviceIds) {
-      const count = entriesMap.get(deviceId);
-      if (count === undefined) continue;
-      const inst = expanded.entities.find((e) => e.instanceId === deviceId);
-      const rootId = inst?.rootId ?? simRootIdFromDeviceId(deviceId);
-      if (!rootId) continue;
-      seen.add(deviceId);
-      renderedOrder.push(deviceId);
-
-      let li = simDropRowLiByDeviceId.get(deviceId);
-      if (!li) {
-        li = document.createElement("li");
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "builder-sim-drop-board-row";
-        const countSpan = document.createElement("span");
-        countSpan.className = "builder-sim-drop-board-count";
-        const labelSpan = document.createElement("span");
-        labelSpan.className = "builder-sim-drop-board-label";
-        btn.append(countSpan, labelSpan);
-        li.appendChild(btn);
-        simDropRowLiByDeviceId.set(deviceId, li);
-      }
-
-      const btn = li.querySelector<HTMLButtonElement>(".builder-sim-drop-board-row")!;
-      const countSpan = btn.querySelector<HTMLSpanElement>(".builder-sim-drop-board-count")!;
-      const labelSpan = btn.querySelector<HTMLSpanElement>(".builder-sim-drop-board-label")!;
-      btn.dataset.dropRootId = rootId;
-      btn.dataset.dropDeviceId = deviceId;
-      const countStr = String(count);
-      if (countSpan.textContent !== countStr) countSpan.textContent = countStr;
-      const labelText = formatSimDropRowLabelForExpanded(expanded, deviceId);
-      if (labelSpan.textContent !== labelText) labelSpan.textContent = labelText;
-      btn.classList.toggle(
-        "is-selected",
-        simDropTraceDeviceId === deviceId && selection?.kind === "entity" && selection.rootId === rootId,
-      );
-    }
-
-    const needsDomReorder =
-      !sameDropBoardRenderOrder(renderedOrder, simDropBoardRenderedOrder) ||
-      renderedOrder.some((id) => {
-        const li = simDropRowLiByDeviceId.get(id);
-        return li !== undefined && li.parentNode !== simDropListEl;
-      });
-
-    if (needsDomReorder) {
-      simDropBoardRenderedOrder = renderedOrder.slice();
-      for (const deviceId of renderedOrder) {
-        const li = simDropRowLiByDeviceId.get(deviceId);
-        if (li) simDropListEl.appendChild(li);
-      }
-    }
-
-    for (const deviceId of Array.from(simDropRowLiByDeviceId.keys())) {
-      if (seen.has(deviceId)) continue;
-      simDropRowLiByDeviceId.get(deviceId)?.remove();
-      simDropRowLiByDeviceId.delete(deviceId);
-    }
-  }
-
   function updateBuilderSimMeta(): void {
-    const formatSimInteger = (value: number): string => {
-      const sign = value < 0 ? "-" : "";
-      const abs = Math.abs(Math.trunc(value));
-      const grouped = String(abs).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-      return `${sign}${grouped}`;
-    };
-    simMetaEl.innerHTML = `
-      <div class="builder-sim-stats-grid">
-        <div class="stat-pill"><span>Tick</span><strong>${formatSimInteger(simStats.tick)}</strong></div>
-        <div class="stat-pill"><span>In-flight</span><strong>${formatSimInteger(simCurrentOccupancy.length)}</strong></div>
-        <div class="stat-pill"><span>Emitted</span><strong>${formatSimInteger(simStats.emitted)}</strong></div>
-        <div class="stat-pill"><span>Delivered</span><strong>${formatSimInteger(simStats.delivered)}</strong></div>
-        <div class="stat-pill"><span>Dropped</span><strong>${formatSimInteger(simStats.dropped)}</strong></div>
-        <div class="stat-pill"><span>TTL expired</span><strong>${formatSimInteger(simStats.ttlExpired)}</strong></div>
-        <div class="stat-pill"><span>Collisions</span><strong>${formatSimInteger(simStats.collisions)}</strong></div>
-        <div class="stat-pill"><span>Delivered /100</span><strong>${simDeliveredPerTickAvg100 === null ? "—" : simDeliveredPerTickAvg100.toFixed(2)}</strong></div>
-        <div class="stat-pill"><span>Drop %</span><strong>${simDropPctCumulative === null ? "—" : `${simDropPctCumulative.toFixed(1)}%`}</strong></div>
-      </div>
-    `;
-    refreshSimDropLeaderboardUi();
+    simMetaEl.innerHTML = renderSimulatorMetaGridHtml({
+      stats: simStats,
+      inFlight: simCurrentOccupancy.length,
+      deliveredPerTickAvg100: simDeliveredPerTickAvg100,
+      dropPctCumulative: simDropPctCumulative,
+    });
+    simDropBoard.refresh();
   }
 
   function cancelBuilderSimTickTimers(): void {
@@ -2115,9 +2021,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simTickDeliveredEntityRootIds = new Set();
     simTickCollisionDropEntityInstanceIds = new Set();
     simTickCollisionDropEntityRootIds = new Set();
-    simDropCountByDeviceId.clear();
-    simDropTraceDeviceId = null;
-    refreshSimDropLeaderboardUi();
+    simDropBoard.reset();
     clearSimHistory();
     rebuildBuilderSimEndpointIndex(topo);
     simPreviousOccupancy = [];
@@ -2213,10 +2117,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const rootId = simRootIdFromDeviceId(deviceId);
       if (rootId) simTickCollisionDropEntityRootIds.add(rootId);
     });
-    for (const deviceId of frame.dropEventDeviceIds) {
-      if (builderSimDevices[deviceId] === undefined) continue;
-      simDropCountByDeviceId.set(deviceId, (simDropCountByDeviceId.get(deviceId) ?? 0) + 1);
-    }
+    simDropBoard.ingestDropEvents(frame.dropEventDeviceIds);
     applySimTickHighlightsToCanvas();
     simPreviousStatsTotals = { ...frame.stats };
     const stepMs = frame.stepComputeMs;
@@ -2514,22 +2415,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function setSelection(next: Selection, opts?: SetSelectionOpts): void {
     if (!(opts?.dropTraceFromView && next?.kind === "entity")) {
-      simDropTraceDeviceId = null;
+      simDropBoard.traceDeviceId = null;
     }
     selection = next;
     selectedEntityRootIds.clear();
     linkDrag = null;
     if (opts?.dropTraceFromView && next?.kind === "entity") {
-      simDropTraceDeviceId = opts.dropTraceDeviceId ?? null;
+      simDropBoard.traceDeviceId = opts.dropTraceDeviceId ?? null;
     }
     renderInspector();
     applySelectionToCanvas();
     renderWireOverlay();
-    refreshSimDropLeaderboardUi();
+    simDropBoard.refresh();
   }
 
   function setEntitySelectionSet(ids: Set<string>): void {
-    simDropTraceDeviceId = null;
+    simDropBoard.traceDeviceId = null;
     selectedEntityRootIds = new Set(ids);
     const firstId = selectedEntityRootIds.values().next().value as string | undefined;
     selection = firstId ? { kind: "entity", rootId: firstId } : null;
@@ -2537,6 +2438,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     renderInspector();
     applySelectionToCanvas();
     renderWireOverlay();
+    simDropBoard.refresh();
   }
 
   function entityPositionCss(templateType: BuilderTemplateType, x: number, y: number): { left: string; top: string } {
@@ -2847,7 +2749,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
   }
 
-  function startTemplateDragFromSidebar(templateType: BuilderTemplateType, ev: MouseEvent): void {
+  function startTemplateDragFromSidebar(templateType: BuilderTemplateType, ev: PointerEvent): void {
     if (ev.button !== 0) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -2920,31 +2822,25 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
     };
 
-    const onMove = (mv: MouseEvent): void => {
-      updateDraggedEntity(mv.clientX, mv.clientY);
-    };
-
-    const onUp = (up: MouseEvent): void => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
-      setDeleteDropZoneActive(false);
-      clearBuilderDragCursor();
-      floatingGhostEl.remove();
-      if (!createdRootId) return;
-      if (droppedInDeleteZone) {
-        deleteEntityRootIds([createdRootId]);
-        return;
-      }
-      schedulePersist();
-      renderInspector();
-      up.preventDefault();
-    };
-
     setBuilderDragCursor("grabbing");
     updateDraggedEntity(ev.clientX, ev.clientY);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    capturePrimaryDragOnWindow(ev, {
+      onMove: (mv) => updateDraggedEntity(mv.clientX, mv.clientY),
+      onEnd: (up) => {
+        const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
+        setDeleteDropZoneActive(false);
+        clearBuilderDragCursor();
+        floatingGhostEl.remove();
+        if (!createdRootId) return;
+        if (droppedInDeleteZone) {
+          deleteEntityRootIds([createdRootId]);
+          return;
+        }
+        schedulePersist();
+        renderInspector();
+        up.preventDefault();
+      },
+    });
   }
 
   function renderTemplates(): void {
@@ -2955,7 +2851,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       )
       .join("");
     templatesEl.querySelectorAll<HTMLElement>(".builder-template").forEach((el) => {
-      el.addEventListener("mousedown", (ev) => {
+      el.addEventListener("pointerdown", (ev) => {
         const templateType = el.dataset.template;
         if (!isBuilderTemplateType(templateType)) return;
         startTemplateDragFromSidebar(templateType, ev);
@@ -3708,11 +3604,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       selectedGuide.setAttribute("y2", selectedRender.targetY.toFixed(2));
     } else if (
       selection?.kind === "entity" &&
-      simDropTraceDeviceId &&
-      simRootIdFromDeviceId(simDropTraceDeviceId) === selection.rootId
+      simDropBoard.traceDeviceId &&
+      simRootIdFromDeviceId(simDropBoard.traceDeviceId) === selection.rootId
     ) {
       const vc = builderPacketOverlayViewportCenter();
-      const anchor = builderPortCenterInOverlayCoords({ deviceId: simDropTraceDeviceId, port: 0 });
+      const anchor = builderPortCenterInOverlayCoords({ deviceId: simDropBoard.traceDeviceId, port: 0 });
       if (vc && anchor) {
         selectedGuide.removeAttribute("display");
         selectedGuide.setAttribute("x1", vc.x.toFixed(2));
@@ -4273,6 +4169,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     relay.classList.toggle("builder-relay--hover-rotate", mode === "rotate");
   };
 
+  const builderRotateDragChrome = (shouldUpdateWiresDuringDrag: boolean): RotateDragChrome => ({
+    shouldUpdateWiresDuringDrag,
+    scheduleWireOverlayIfDragging: scheduleWireOverlayRender,
+    scheduleWireOverlayIfIdle: scheduleWireOverlayRender,
+    clearBuilderDragCursor,
+    schedulePersist,
+    renderInspector,
+    setBuilderDragCursor,
+    clearDragRenderRaf: () => {
+      if (dragRenderRaf !== null) {
+        window.cancelAnimationFrame(dragRenderRaf);
+        dragRenderRaf = null;
+      }
+    },
+  });
+
   const startEntityDragFromElement = (entityEl: HTMLElement, ev: MouseEvent): void => {
     const target = ev.target as HTMLElement;
     const btn = target.closest<HTMLButtonElement>("button");
@@ -4287,81 +4199,46 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (!rootEnt || !seg) return;
     hideFilterTooltip();
     if (isStaticOuterLeafEndpoint(rootEnt)) return;
-    if (rootEnt.templateType === "text") {
-      const rect = entityEl.getBoundingClientRect();
-      const edgePad = 8;
-      const localX = ev.clientX - rect.left;
-      const localY = ev.clientY - rect.top;
-      const hitRight = localX >= rect.width - edgePad;
-      const hitBottom = localY >= rect.height - edgePad;
-      const resizeX = hitRight ? 1 : 0;
-      const resizeY = hitBottom ? 1 : 0;
-      if (resizeX !== 0 || resizeY !== 0) {
-        ev.preventDefault();
-        const host = segmentEntitiesHost(rootEnt.layer, rootEnt.segmentIndex) ?? seg;
-        const hostW = Math.max(1, host.clientWidth);
-        const hostH = Math.max(1, host.clientHeight);
-        const maxX = Math.max(0, Math.floor(hostW / BUILDER_GRID_TILE_SIZE_X_PX) - 1);
-        const maxY = Math.max(0, Math.floor(hostH / BUILDER_GRID_TILE_SIZE_Y_PX) - 1);
-        const startX = ev.clientX;
-        const startY = ev.clientY;
-        const startTiles = textTileSizeFromEntity(rootEnt);
-        const startLeft = rootEnt.x;
-        const startTop = rootEnt.y;
-        const startRight = startLeft + startTiles.wTiles - 1;
-        const startBottom = startTop + startTiles.hTiles - 1;
-        const onMove = (mv: MouseEvent): void => {
-          const dxTiles = Math.round((mv.clientX - startX) / BUILDER_GRID_TILE_SIZE_X_PX);
-          const dyTiles = Math.round((mv.clientY - startY) / BUILDER_GRID_TILE_SIZE_Y_PX);
-          let left = startLeft;
-          let right = startRight;
-          let top = startTop;
-          let bottom = startBottom;
-          if (resizeX < 0) {
-            left = Math.max(0, Math.min(startRight - 1, startLeft + dxTiles));
-          } else if (resizeX > 0) {
-            right = Math.max(startLeft + 1, Math.min(maxX, startRight + dxTiles));
-          }
-          if (resizeY < 0) {
-            top = Math.max(0, Math.min(startBottom - 1, startTop + dyTiles));
-          } else if (resizeY > 0) {
-            bottom = Math.max(startTop + 1, Math.min(maxY, startBottom + dyTiles));
-          }
-          const nextW = right - left + 1;
-          const nextH = bottom - top + 1;
-          const ent = state.entities.find((e) => e.id === rootEnt.id);
-          if (!ent || ent.templateType !== "text") return;
+    if (
+      tryStartTextEntityResizeDrag({
+        ev,
+        entityEl,
+        rootEnt,
+        seg,
+        gridTileXPx: BUILDER_GRID_TILE_SIZE_X_PX,
+        gridTileYPx: BUILDER_GRID_TILE_SIZE_Y_PX,
+        segmentEntitiesHost,
+        textTileSizeFromEntity,
+        setEntityDomPosition,
+        setTextEntitySizeDom,
+        scheduleWireOverlayRender,
+        clearBuilderDragCursor,
+        schedulePersist,
+        renderInspector,
+        setBuilderDragCursor,
+        mutateTextEntityIfChanged: (rootId, p) => {
+          const ent = state.entities.find((e) => e.id === rootId);
+          if (!ent || ent.templateType !== "text") return false;
           if (
-            ent.x === left &&
-            ent.y === top &&
-            textTileSizeFromEntity(ent).wTiles === nextW &&
-            textTileSizeFromEntity(ent).hTiles === nextH
+            ent.x === p.x &&
+            ent.y === p.y &&
+            textTileSizeFromEntity(ent).wTiles === p.widthTiles &&
+            textTileSizeFromEntity(ent).hTiles === p.heightTiles
           ) {
-            return;
+            return false;
           }
-          ent.x = left;
-          ent.y = top;
+          ent.x = p.x;
+          ent.y = p.y;
           ent.settings = {
             ...ent.settings,
-            widthTiles: String(nextW),
-            heightTiles: String(nextH),
+            widthTiles: String(p.widthTiles),
+            heightTiles: String(p.heightTiles),
           };
-          setEntityDomPosition(ent.id, left, top);
-          setTextEntitySizeDom(ent.id, nextW, nextH);
-          scheduleWireOverlayRender();
-        };
-        const onUp = (): void => {
-          window.removeEventListener("mousemove", onMove);
-          window.removeEventListener("mouseup", onUp);
-          clearBuilderDragCursor();
-          schedulePersist();
-          renderInspector();
-        };
-        setBuilderDragCursor("grabbing");
-        window.addEventListener("mousemove", onMove);
-        window.addEventListener("mouseup", onUp);
-        return;
-      }
+          return true;
+        },
+      })
+    ) {
+      return;
     }
     let movingRootIds = selectedEntityIdsForAction(rootEnt.id)
       .filter((id) => {
@@ -4388,63 +4265,28 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       );
       if (mode === "none") return;
       if (mode === "rotate") {
-        ev.preventDefault();
         const rotatingRootIds = selectedEntityIdsForAction(rootEnt.id).filter((id) => {
           const e = state.entities.find((x) => x.id === id);
           return e?.templateType === "relay";
         });
         const shouldUpdateWiresDuringDrag = entityIdsHaveLinks(rotatingRootIds);
-        const baseById = new Map<string, number>();
-        rotatingRootIds.forEach((id) => {
-          const ent = state.entities.find((x) => x.id === id);
-          const raw = Number.parseFloat(ent?.settings.angle ?? "0");
-          const base = ((Number.isFinite(raw) ? raw : 0) % 360 + 360) % 360;
-          baseById.set(id, base);
-        });
-        const cx = relayRect.left + relayRect.width / 2;
-        const cy = relayRect.top + relayRect.height / 2;
-        const a0 = Math.atan2(ev.clientY - cy, ev.clientX - cx);
-        const onMove = (mv: MouseEvent): void => {
-          const a1 = Math.atan2(mv.clientY - cy, mv.clientX - cx);
-          const deltaDeg = ((a1 - a0) * 180) / Math.PI;
-          let changed = false;
-          rotatingRootIds.forEach((id) => {
-            const cur = state.entities.find((e) => e.id === id);
-            const base = baseById.get(id);
-            if (!cur || base === undefined) return;
-            let newDeg = base + deltaDeg;
-            newDeg = ((newDeg % 360) + 360) % 360;
-            newDeg = Math.round(newDeg / 90) * 90;
-            newDeg = ((newDeg % 360) + 360) % 360;
-            const curRaw = Number.parseFloat(cur.settings.angle ?? "0");
-            const curDeg = ((Number.isFinite(curRaw) ? curRaw : 0) % 360 + 360) % 360;
-            if (Math.abs(curDeg - newDeg) < 0.001) return;
+        startRelayRotateDrag({
+          ev,
+          entityEl,
+          rotatingRootIds,
+          readBaseAngleDeg: (rootId) => {
+            const ent = state.entities.find((x) => x.id === rootId);
+            const raw = Number.parseFloat(ent?.settings.angle ?? "0");
+            return ((Number.isFinite(raw) ? raw : 0) % 360 + 360) % 360;
+          },
+          writeAngleDeg: (rootId, newDeg) => {
+            const cur = state.entities.find((e) => e.id === rootId);
+            if (!cur) return;
             state = updateEntitySettings(state, cur.id, { ...cur.settings, angle: String(newDeg) });
             setRelayAngleDom(cur.id, newDeg);
-            changed = true;
-          });
-          if (!changed) return;
-          if (shouldUpdateWiresDuringDrag) {
-            scheduleWireOverlayRender();
-          }
-        };
-        const onUp = (): void => {
-          window.removeEventListener("mousemove", onMove);
-          window.removeEventListener("mouseup", onUp);
-          if (dragRenderRaf !== null) {
-            window.cancelAnimationFrame(dragRenderRaf);
-            dragRenderRaf = null;
-          }
-          clearBuilderDragCursor();
-          if (!shouldUpdateWiresDuringDrag) {
-            scheduleWireOverlayRender();
-          }
-          schedulePersist();
-          renderInspector();
-        };
-        setBuilderDragCursor("grabbing");
-        window.addEventListener("mousemove", onMove);
-        window.addEventListener("mouseup", onUp);
+          },
+          chrome: builderRotateDragChrome(shouldUpdateWiresDuringDrag),
+        });
         return;
       }
     }
@@ -4673,8 +4515,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           }
         };
         const onUp = (up: MouseEvent): void => {
-          window.removeEventListener("mousemove", onMove);
-          window.removeEventListener("mouseup", onUp);
           const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
           setDeleteDropZoneActive(false);
           if (dragRenderRaf !== null) {
@@ -4703,67 +4543,35 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           renderInspector();
         };
         setBuilderDragCursor("grabbing");
-        window.addEventListener("mousemove", onMove);
-        window.addEventListener("mouseup", onUp);
+        capturePrimaryDragOnWindow(ev, { onMove, onEnd: onUp });
         return;
       }
       const px = r0.left + (HUB_LAYOUT.G.x / HUB_VIEW.w) * r0.width;
       const py = r0.top + (HUB_LAYOUT.G.y / HUB_VIEW.h) * r0.height;
-      const a0 = Math.atan2(ev.clientY - py, ev.clientX - px);
-      const rotatingRootIds = selectedEntityIdsForAction(rootEnt.id).filter((id) => {
+      const rotatingHubRootIds = selectedEntityIdsForAction(rootEnt.id).filter((id) => {
         const e = state.entities.find((x) => x.id === id);
         return e?.templateType === "hub";
       });
-      const shouldUpdateWiresDuringDrag = entityIdsHaveLinks(rotatingRootIds);
-      const baseById = new Map<string, number>();
-      rotatingRootIds.forEach((id) => {
-        const ent = state.entities.find((x) => x.id === id);
-        const raw = Number.parseFloat(ent?.settings.faceAngle ?? "0");
-        const base = ((Number.isFinite(raw) ? raw : 0) % 360 + 360) % 360;
-        baseById.set(id, base);
-      });
-      const onMove = (mv: MouseEvent): void => {
-        const a1 = Math.atan2(mv.clientY - py, mv.clientX - px);
-        const deltaDeg = ((a1 - a0) * 180) / Math.PI;
-        const SNAP_DEG = 30;
-        let changed = false;
-        rotatingRootIds.forEach((id) => {
-          const cur = state.entities.find((e) => e.id === id);
-          const base = baseById.get(id);
-          if (!cur || base === undefined) return;
-          let newDeg = base + deltaDeg;
-          newDeg = ((newDeg % 360) + 360) % 360;
-          newDeg = Math.round(newDeg / SNAP_DEG) * SNAP_DEG;
-          newDeg = ((newDeg % 360) + 360) % 360;
-          const curDegRaw = Number.parseFloat(cur.settings.faceAngle ?? "0");
-          const curDeg = ((Number.isFinite(curDegRaw) ? curDegRaw : 0) % 360 + 360) % 360;
-          if (Math.abs(curDeg - newDeg) < 0.001) return;
+      const hubRotateWireDrag = entityIdsHaveLinks(rotatingHubRootIds);
+      startSnappedRotateDragAroundPivot({
+        ev,
+        pivotClientX: px,
+        pivotClientY: py,
+        snapDegrees: 30,
+        rotatingRootIds: rotatingHubRootIds,
+        readAngleDeg: (rid) => {
+          const ent = state.entities.find((x) => x.id === rid);
+          const raw = Number.parseFloat(ent?.settings.faceAngle ?? "0");
+          return ((Number.isFinite(raw) ? raw : 0) % 360 + 360) % 360;
+        },
+        writeAngleDeg: (rid, newDeg) => {
+          const cur = state.entities.find((e) => e.id === rid);
+          if (!cur) return;
           state = updateEntitySettings(state, cur.id, { ...cur.settings, faceAngle: String(newDeg) });
           setHubFaceAngleDom(cur.id, newDeg);
-          changed = true;
-        });
-        if (!changed) return;
-        if (shouldUpdateWiresDuringDrag) {
-          scheduleWireOverlayRender();
-        }
-      };
-      const onUp = (): void => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-        if (dragRenderRaf !== null) {
-          window.cancelAnimationFrame(dragRenderRaf);
-          dragRenderRaf = null;
-        }
-        clearBuilderDragCursor();
-        if (!shouldUpdateWiresDuringDrag) {
-          scheduleWireOverlayRender();
-        }
-        schedulePersist();
-        renderInspector();
-      };
-      setBuilderDragCursor("grabbing");
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+        },
+        chrome: builderRotateDragChrome(hubRotateWireDrag),
+      });
       return;
     }
     ev.preventDefault();
@@ -4975,8 +4783,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
     };
     const onUp = (up: MouseEvent): void => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
       const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
       setDeleteDropZoneActive(false);
       clearBuilderDragCursor();
@@ -5005,8 +4811,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       renderInspector();
     };
     setBuilderDragCursor("grabbing");
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    capturePrimaryDragOnWindow(ev, { onMove, onEnd: onUp });
   };
 
   const startLinkDragFromPort = (portEl: HTMLButtonElement, ev: PointerEvent): void => {
@@ -5891,27 +5696,23 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const downY = ev.clientY;
     const DRAG_START_THRESHOLD_PX = 3;
     let started = false;
-    const onMove = (mv: MouseEvent): void => {
-      if (started) return;
-      const dx = mv.clientX - downX;
-      const dy = mv.clientY - downY;
-      if (Math.hypot(dx, dy) < DRAG_START_THRESHOLD_PX) return;
-      started = true;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      // Drag start should not also toggle click-selection on release.
-      suppressNextEntityClickToggle = true;
-      // If the drag began on a control button, suppress its trailing click.
-      suppressNextControlClick = downBtnIsControl;
-      ev.stopImmediatePropagation();
-      startEntityDragFromElement(entityEl, mv);
-    };
-    const onUp = (): void => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    let cancelArmDrag: (() => void) | undefined;
+    cancelArmDrag = capturePrimaryDragOnWindow(ev, {
+      onMove: (mv: MouseEvent): void => {
+        if (started) return;
+        const dx = mv.clientX - downX;
+        const dy = mv.clientY - downY;
+        if (Math.hypot(dx, dy) < DRAG_START_THRESHOLD_PX) return;
+        started = true;
+        cancelArmDrag?.();
+        cancelArmDrag = undefined;
+        suppressNextEntityClickToggle = true;
+        suppressNextControlClick = downBtnIsControl;
+        ev.stopImmediatePropagation();
+        startEntityDragFromElement(entityEl, mv);
+      },
+      onEnd: () => {},
+    });
   });
 
   canvasEl.addEventListener("mousedown", (ev) => {
@@ -6015,8 +5816,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       updateBox();
     };
     const onUp = (): void => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
       if (!boxSelection) return;
       const l = Math.min(boxSelection.startX, boxSelection.currentX);
       const t = Math.min(boxSelection.startY, boxSelection.currentY);
@@ -6030,8 +5829,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       boxEl.style.width = "0px";
       boxEl.style.height = "0px";
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    capturePrimaryDragOnWindow(ev, { onMove, onEnd: onUp });
   });
 
   canvasEl.addEventListener("mousemove", (ev) => {
@@ -6119,27 +5917,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     stepBackBuilderSimulation();
   });
   simResetBtn.addEventListener("click", () => resetBuilderSimulation());
-  const pickDropBoardRow = (btn: HTMLButtonElement): void => {
-    const rootId = btn.dataset.dropRootId;
-    const deviceId = btn.dataset.dropDeviceId;
-    if (!rootId || !deviceId) return;
-    setSelection({ kind: "entity", rootId }, { dropTraceFromView: true, dropTraceDeviceId: deviceId });
-    renderBuilderPacketCircles(simPacketProgress);
-  };
-  /** Pointerdown runs before the next simulation tick; keydown covers keyboard activation without duplicate mouse handling. */
-  simDropListEl.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-drop-device-id]");
-    if (!btn) return;
-    pickDropBoardRow(btn);
-  });
-  simDropListEl.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Enter" && ev.key !== " ") return;
-    const t = ev.target;
-    if (!(t instanceof HTMLButtonElement) || !t.dataset.dropDeviceId) return;
-    ev.preventDefault();
-    pickDropBoardRow(t);
-  });
   simTogglePacketIpsBtn.addEventListener("click", () => cyclePacketLabelMode());
 
   const applyBuilderSimSpeedFromSlider = (): void => {
