@@ -37,6 +37,11 @@ export type BuilderWireOverlayOptions = {
   }) => void;
 };
 
+export type RenderWireOpts = {
+  skipPacketRefresh?: boolean;
+  mode?: "default" | "entityDragPartitionBuild";
+};
+
 const WIRE_PORT_DROP_ZONE_PX = 5;
 const WIRE_DRAG_START_THRESHOLD_PX = 3;
 
@@ -75,7 +80,7 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
   rebuildPortElementCache: () => void;
   resolveBuilderPortForWireOverlay: (instanceId: string, port: number) => HTMLButtonElement | null;
   builderPortFromClientPoint: (clientX: number, clientY: number) => HTMLButtonElement | null;
-  renderWireOverlay: () => void;
+  renderWireOverlay: (opts?: RenderWireOpts) => void;
   scheduleWireOverlayRender: (schedOpts?: { scrollOnly?: boolean }) => void;
   scheduleWireDragPaint: () => void;
   startLinkDragFromPort: (portEl: HTMLButtonElement, ev: PointerEvent) => void;
@@ -88,6 +93,8 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
   notifyCanvasDomRebuilt: () => void;
   /** After incremental entity DOM replace: refresh ports; partial wire drag or skip or full overlay. */
   refreshWireOverlayAfterEntityPatch: (patchedRootIds: ReadonlySet<string>) => void;
+  /** Rebuild port cache; redraw all wire segments only if link geometry changed (e.g. a link was removed). */
+  refreshWireOverlayAfterEntityRemoval: (wireGeometryChanged?: boolean) => void;
 } {
   const {
     root,
@@ -434,11 +441,6 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     root.style.setProperty("--builder-floating-scrollbar-bottom", `${scrollbarBottomPx}px`);
   }
 
-  type RenderWireOpts = {
-    skipPacketRefresh?: boolean;
-    mode?: "default" | "entityDragPartitionBuild";
-  };
-
   function renderWireOverlay(opts?: RenderWireOpts): void {
     if (opts?.mode !== "entityDragPartitionBuild") {
       endEntityWireDrag();
@@ -690,11 +692,17 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     renderWireOverlay({ skipPacketRefresh: true });
   }
 
+  function refreshWireOverlayAfterEntityRemoval(wireGeometryChanged = true): void {
+    rebuildPortElementCache();
+    if (!wireGeometryChanged) return;
+    renderWireOverlay({ skipPacketRefresh: true });
+  }
+
   return {
     rebuildPortElementCache,
     resolveBuilderPortForWireOverlay,
     builderPortFromClientPoint,
-    renderWireOverlay: () => renderWireOverlay(),
+    renderWireOverlay: (opts?: RenderWireOpts) => renderWireOverlay(opts),
     scheduleWireOverlayRender,
     scheduleWireDragPaint,
     startLinkDragFromPort,
@@ -708,5 +716,6 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     endEntityWireDrag,
     notifyCanvasDomRebuilt,
     refreshWireOverlayAfterEntityPatch,
+    refreshWireOverlayAfterEntityRemoval,
   };
 }

@@ -2135,7 +2135,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     state = nextState;
     setEntitySelectionSet(new Set(Array.from(idMap.values())));
     persist();
-    renderCanvas();
+    syncEntityDomForRoots(new Set(idMap.values()));
     renderInspector();
   }
 
@@ -2317,7 +2317,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         state = { ...state, entities: [...state.entities, rootEntity] };
         setSelection({ kind: "entity", rootId: rootEntity.id });
         lastPlacementKey = key;
-        renderCanvas();
+        syncEntityDomForRoots(new Set([rootEntity.id]));
         return;
       }
 
@@ -3317,6 +3317,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     wireBag.w!.refreshWireOverlayAfterEntityPatch(rootIds);
   }
 
+  function removeEntityDomForIds(removedRootIds: ReadonlySet<string>, wireGeometryChanged = true): void {
+    if (removedRootIds.size === 0) return;
+    removedRootIds.forEach((id) => {
+      canvasEl
+        .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${CSS.escape(id)}"]`)
+        .forEach((el) => el.remove());
+    });
+    applySelectionToCanvas();
+    applySimTickHighlightsToCanvas();
+    wireBag.w!.refreshWireOverlayAfterEntityRemoval(wireGeometryChanged);
+  }
+
   function scheduleDragEntityPatch(rootIds: ReadonlySet<string>): void {
     rootIds.forEach((id) => pendingDragEntityPatchRootIds.add(id));
     if (dragEntityPatchRaf !== null) return;
@@ -3561,8 +3573,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   const builderRotateDragChrome = (shouldUpdateWiresDuringDrag: boolean): RotateDragChrome => ({
     shouldUpdateWiresDuringDrag,
-    scheduleWireOverlayIfDragging: wireBag.w!.scheduleWireOverlayRender,
-    scheduleWireOverlayIfIdle: wireBag.w!.scheduleWireOverlayRender,
+    scheduleWireOverlayIfDragging: () => {
+      if (shouldUpdateWiresDuringDrag) {
+        wireBag.w!.scheduleWireOverlayRender();
+      } else {
+        wireBag.w!.scheduleWireOverlayRender({ scrollOnly: true });
+      }
+    },
+    scheduleWireOverlayIfIdle: () => {
+      if (shouldUpdateWiresDuringDrag) {
+        wireBag.w!.scheduleWireOverlayRender();
+      } else {
+        wireBag.w!.scheduleWireOverlayRender({ scrollOnly: true });
+      }
+    },
     clearBuilderDragCursor,
     schedulePersist,
     renderInspector,
@@ -3619,7 +3643,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (ctx.shouldUpdateWiresDuringDrag) {
       wireBag.w!.renderWireOverlay();
     } else {
-      wireBag.w!.scheduleWireOverlayRender();
+      wireBag.w!.scheduleWireOverlayRender({ scrollOnly: true });
     }
     schedulePersist();
     renderInspector();
@@ -3651,7 +3675,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         textTileSizeFromEntity,
         setEntityDomPosition,
         setTextEntitySizeDom,
-        scheduleWireOverlayRender: wireBag.w!.scheduleWireOverlayRender,
+        scheduleWireOverlayRender: () => wireBag.w!.scheduleWireOverlayRender({ scrollOnly: true }),
         clearBuilderDragCursor,
         schedulePersist,
         renderInspector,
@@ -3913,7 +3937,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             return;
           }
           if (didModifierCopy && !didMove) {
-            renderCanvas();
+            syncEntityDomForRoots(new Set(movingRootIds));
           }
           lastX = rootPlacement.x;
           lastY = rootPlacement.y;
@@ -4169,7 +4193,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         return;
       }
       if (didModifierCopy && !didMove) {
-        renderCanvas();
+        syncEntityDomForRoots(new Set(movingRootIds));
       }
       lastX = rootPlacement.x;
       lastY = rootPlacement.y;
@@ -4362,6 +4386,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return;
     }
     const removingLink = selection.kind === "link" && !selectedEntityRootIds.size;
+    const removedEntityDomIds = new Set<string>();
+    const groupIdsToRemove = new Set<string>();
+    let wireGeometryChangedForRemovedEntities = true;
     if (selection.kind === "entity" || selectedEntityRootIds.size) {
       const ids = selectedEntityRootIds.size
         ? Array.from(selectedEntityRootIds)
@@ -4371,8 +4398,17 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       ids.forEach((id) => {
         const ent = state.entities.find((e) => e.id === id);
         if (ent && !isStaticOuterLeafEndpoint(ent)) {
-          state = removeEntityGroup(state, id);
+          state.entities.filter((e) => e.groupId === ent.groupId).forEach((e) => removedEntityDomIds.add(e.id));
+          groupIdsToRemove.add(ent.groupId);
         }
+      });
+      wireGeometryChangedForRemovedEntities =
+        removedEntityDomIds.size > 0 &&
+        state.links.some(
+          (l) => removedEntityDomIds.has(l.fromEntityId) || removedEntityDomIds.has(l.toEntityId),
+        );
+      groupIdsToRemove.forEach((gid) => {
+        state = removeEntityGroup(state, gid);
       });
     } else {
       state = removeLinkGroup(state, selection.rootId);
@@ -4387,24 +4423,33 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       applySelectionToCanvas();
       wireBag.w!.renderWireOverlay();
     } else {
-      renderCanvas();
+      removeEntityDomForIds(removedEntityDomIds, wireGeometryChangedForRemovedEntities);
     }
   };
 
   const deleteEntityRootIds = (ids: string[]): void => {
     if (!ids.length) return;
-    let changed = false;
+    const removedEntityDomIds = new Set<string>();
+    const groupIdsToRemove = new Set<string>();
     ids.forEach((id) => {
       const ent = state.entities.find((e) => e.id === id);
       if (ent && !isStaticOuterLeafEndpoint(ent)) {
-        state = removeEntityGroup(state, id);
-        changed = true;
+        state.entities.filter((e) => e.groupId === ent.groupId).forEach((e) => removedEntityDomIds.add(e.id));
+        groupIdsToRemove.add(ent.groupId);
       }
+    });
+    const wireGeometryChanged =
+      removedEntityDomIds.size > 0 &&
+      state.links.some((l) => removedEntityDomIds.has(l.fromEntityId) || removedEntityDomIds.has(l.toEntityId));
+    let changed = false;
+    groupIdsToRemove.forEach((gid) => {
+      state = removeEntityGroup(state, gid);
+      changed = true;
     });
     if (!changed) return;
     setSelection(null);
     persist();
-    renderCanvas();
+    removeEntityDomForIds(removedEntityDomIds, wireGeometryChanged);
   };
 
   layoutSlotsEl.addEventListener("input", (ev) => {
