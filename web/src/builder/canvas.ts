@@ -42,6 +42,7 @@ import {
   unmapMaskForSegment,
   mapMaskForSegmentIndex,
   unmapMaskForSegmentIndex,
+  type ExpandedBuilderState,
 } from "./clone-engine";
 import {
   clearBuilderLayoutSlot,
@@ -1668,6 +1669,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simTickCollisionDropEntityRootIds = new Set<string>();
   /** Drop counts per simulator device (builder instance id); mirrors are not merged. */
   let simDropCountByDeviceId = new Map<string, number>();
+  /** Reused list rows so rapid stat refresh does not replace buttons (clicks still land). */
+  const simDropRowLiByDeviceId = new Map<string, HTMLLIElement>();
+  /** Last rendered rank order; DOM moves only when sort-by-count produces a different sequence (stable ranks → no motion). */
+  let simDropBoardRenderedOrder: string[] = [];
   /** Instance to trace from the viewport center when picked from the drop list. */
   let simDropTraceDeviceId: string | null = null;
   applyBuilderSidebarWidth(builderSidebarWidth);
@@ -1939,45 +1944,105 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simSpeedValueEl.textContent = formatSpeedLabel(simSpeedExponent);
   }
 
-  function formatSimDropRowLabelForDeviceId(deviceId: string): string {
-    const expanded = expandBuilderState(state, { builderView: true });
+  function formatSimDropRowLabelForExpanded(expanded: ExpandedBuilderState, deviceId: string): string {
     const inst = expanded.entities.find((e) => e.instanceId === deviceId);
     if (!inst) return deviceId;
     const sec = segmentLabel(inst.layer, inst.segmentIndex);
     return `${sec} ${inst.templateType}`;
   }
 
+  function sameDropBoardRenderOrder(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
   function refreshSimDropLeaderboardUi(): void {
-    simDropListEl.replaceChildren();
     const expanded = expandBuilderState(state, { builderView: true });
-    const entries = Array.from(simDropCountByDeviceId.entries())
-      .filter(([, n]) => n > 0)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    const hasRows = entries.length > 0;
+    const entriesMap = new Map<string, number>();
+    for (const [deviceId, n] of Array.from(simDropCountByDeviceId.entries())) {
+      if (n > 0) entriesMap.set(deviceId, n);
+    }
+    const hasRows = entriesMap.size > 0;
     simDropEmptyEl.classList.toggle("hidden", hasRows);
     simDropListEl.classList.toggle("hidden", !hasRows);
-    for (const [deviceId, count] of entries) {
+
+    if (!hasRows) {
+      for (const li of Array.from(simDropRowLiByDeviceId.values())) {
+        li.remove();
+      }
+      simDropRowLiByDeviceId.clear();
+      simDropBoardRenderedOrder = [];
+      return;
+    }
+
+    const sortedDeviceIds = Array.from(entriesMap.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([id]) => id);
+
+    const seen = new Set<string>();
+    const renderedOrder: string[] = [];
+
+    for (const deviceId of sortedDeviceIds) {
+      const count = entriesMap.get(deviceId);
+      if (count === undefined) continue;
       const inst = expanded.entities.find((e) => e.instanceId === deviceId);
       const rootId = inst?.rootId ?? simRootIdFromDeviceId(deviceId);
       if (!rootId) continue;
-      const li = document.createElement("li");
-      const btn = document.createElement("button");
-      btn.type = "button";
+      seen.add(deviceId);
+      renderedOrder.push(deviceId);
+
+      let li = simDropRowLiByDeviceId.get(deviceId);
+      if (!li) {
+        li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "builder-sim-drop-board-row";
+        const countSpan = document.createElement("span");
+        countSpan.className = "builder-sim-drop-board-count";
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "builder-sim-drop-board-label";
+        btn.append(countSpan, labelSpan);
+        li.appendChild(btn);
+        simDropRowLiByDeviceId.set(deviceId, li);
+      }
+
+      const btn = li.querySelector<HTMLButtonElement>(".builder-sim-drop-board-row")!;
+      const countSpan = btn.querySelector<HTMLSpanElement>(".builder-sim-drop-board-count")!;
+      const labelSpan = btn.querySelector<HTMLSpanElement>(".builder-sim-drop-board-label")!;
       btn.dataset.dropRootId = rootId;
       btn.dataset.dropDeviceId = deviceId;
-      btn.className = "builder-sim-drop-board-row";
-      if (simDropTraceDeviceId === deviceId && selection?.kind === "entity" && selection.rootId === rootId) {
-        btn.classList.add("is-selected");
+      const countStr = String(count);
+      if (countSpan.textContent !== countStr) countSpan.textContent = countStr;
+      const labelText = formatSimDropRowLabelForExpanded(expanded, deviceId);
+      if (labelSpan.textContent !== labelText) labelSpan.textContent = labelText;
+      btn.classList.toggle(
+        "is-selected",
+        simDropTraceDeviceId === deviceId && selection?.kind === "entity" && selection.rootId === rootId,
+      );
+    }
+
+    const needsDomReorder =
+      !sameDropBoardRenderOrder(renderedOrder, simDropBoardRenderedOrder) ||
+      renderedOrder.some((id) => {
+        const li = simDropRowLiByDeviceId.get(id);
+        return li !== undefined && li.parentNode !== simDropListEl;
+      });
+
+    if (needsDomReorder) {
+      simDropBoardRenderedOrder = renderedOrder.slice();
+      for (const deviceId of renderedOrder) {
+        const li = simDropRowLiByDeviceId.get(deviceId);
+        if (li) simDropListEl.appendChild(li);
       }
-      const countSpan = document.createElement("span");
-      countSpan.className = "builder-sim-drop-board-count";
-      countSpan.textContent = String(count);
-      const labelSpan = document.createElement("span");
-      labelSpan.className = "builder-sim-drop-board-label";
-      labelSpan.textContent = formatSimDropRowLabelForDeviceId(deviceId);
-      btn.append(countSpan, labelSpan);
-      li.appendChild(btn);
-      simDropListEl.appendChild(li);
+    }
+
+    for (const deviceId of Array.from(simDropRowLiByDeviceId.keys())) {
+      if (seen.has(deviceId)) continue;
+      simDropRowLiByDeviceId.get(deviceId)?.remove();
+      simDropRowLiByDeviceId.delete(deviceId);
     }
   }
 
@@ -6054,13 +6119,26 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     stepBackBuilderSimulation();
   });
   simResetBtn.addEventListener("click", () => resetBuilderSimulation());
-  simDropListEl.addEventListener("click", (ev) => {
-    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-drop-device-id]");
-    const rootId = btn?.dataset.dropRootId;
-    const deviceId = btn?.dataset.dropDeviceId;
+  const pickDropBoardRow = (btn: HTMLButtonElement): void => {
+    const rootId = btn.dataset.dropRootId;
+    const deviceId = btn.dataset.dropDeviceId;
     if (!rootId || !deviceId) return;
     setSelection({ kind: "entity", rootId }, { dropTraceFromView: true, dropTraceDeviceId: deviceId });
     renderBuilderPacketCircles(simPacketProgress);
+  };
+  /** Pointerdown runs before the next simulation tick; keydown covers keyboard activation without duplicate mouse handling. */
+  simDropListEl.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-drop-device-id]");
+    if (!btn) return;
+    pickDropBoardRow(btn);
+  });
+  simDropListEl.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const t = ev.target;
+    if (!(t instanceof HTMLButtonElement) || !t.dataset.dropDeviceId) return;
+    ev.preventDefault();
+    pickDropBoardRow(t);
   });
   simTogglePacketIpsBtn.addEventListener("click", () => cyclePacketLabelMode());
 
