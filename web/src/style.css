@@ -986,11 +986,11 @@ textarea {
 }
 
 .builder-floating-simulation {
-  width: 580px;
-  max-width: 580px;
+  width: 760px;
+  max-width: min(760px, 92vw);
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 280px) minmax(168px, 220px);
   grid-template-rows: auto;
   gap: var(--builder-hud-gap);
   align-items: start;
@@ -1002,6 +1002,12 @@ textarea {
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.builder-floating-simulation .builder-sim-toolbar {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
 }
 
 .builder-sim-speed-row {
@@ -1047,6 +1053,98 @@ textarea {
 .builder-floating-simulation .builder-sim-meta {
   grid-column: 2;
   grid-row: 1;
+  align-self: start;
+}
+
+.builder-floating-simulation .builder-sim-drop-board {
+  grid-column: 3;
+  grid-row: 1;
+  margin-top: 0;
+  padding-top: 0;
+  padding-left: var(--builder-hud-gap);
+  border-top: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  max-height: 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  align-self: stretch;
+  color: var(--meta-text);
+  font-size: var(--font-size-11);
+}
+
+.builder-sim-drop-board-title {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #b6beca;
+  letter-spacing: 0.02em;
+}
+
+.builder-sim-drop-board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.builder-sim-drop-board-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid #2a3242;
+  border-radius: 6px;
+  background: #151925;
+  color: var(--text-main);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.builder-sim-drop-board-row:hover {
+  background: #1d2230;
+  border-color: #4a5a7a;
+}
+
+.builder-sim-drop-board-row.is-selected {
+  border-color: rgba(137, 180, 250, 0.65);
+  box-shadow: 0 0 0 1px rgba(137, 180, 250, 0.2);
+}
+
+.builder-sim-drop-board-count {
+  flex: 0 0 auto;
+  min-width: 2.25em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #f38ba8;
+  font-weight: 600;
+}
+
+.builder-sim-drop-board-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.builder-sim-drop-board-empty {
+  line-height: 1.35;
+  color: #7f849c;
 }
 
 .builder-floating-templates {
@@ -1101,13 +1199,47 @@ textarea {
 
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto;
+  grid-template-rows: auto;
   align-content: start;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-toolbar {
+  grid-column: 1;
+  grid-row: auto;
 }
 
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-meta {
   grid-column: 1;
   grid-row: auto;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-drop-board {
+  grid-column: 1;
+  grid-row: auto;
+  margin-top: 4px;
+  padding-top: 8px;
+  padding-left: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: none;
+  align-self: stretch;
+  max-height: none;
+  min-height: 0;
+}
+
+/*
+ * Stacked sidebar layout: the drop-board parent has no definite height, so flex: 1 1 0
+ * on the list collapses it to zero. Size the list from its rows and cap height for scroll.
+ */
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-drop-board-list {
+  flex: 0 1 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  max-height: min(280px, 45vh);
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation .builder-sim-drop-board-row {
+  min-width: 0;
 }
 
 .builder-delete-drop-zone {

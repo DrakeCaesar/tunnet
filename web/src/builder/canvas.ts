@@ -400,6 +400,7 @@ type EntitySelection = { kind: "entity"; rootId: string };
 type LinkSelection = { kind: "link"; rootId: string };
 type PacketSelection = { kind: "packet"; packetId: number };
 type Selection = EntitySelection | LinkSelection | PacketSelection | null;
+type SetSelectionOpts = { dropTraceFromView?: boolean; dropTraceDeviceId?: string | null };
 type BoxSelectionState = {
   startX: number;
   startY: number;
@@ -887,33 +888,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
             </div>
             <div id="builder-templates" class="builder-floating-templates"></div>
           </div>
-          <div id="builder-panel-simulation" class="builder-floating-simulation" aria-label="Simulation controls">
-            <div class="builder-sim-toolbar">
-              <button id="builder-sim-play-pause" type="button" aria-label="Play/Pause" title="Play/Pause">▶</button>
-              <button id="builder-sim-reset" type="button" aria-label="Stop" title="Stop">⏹</button>
-              <button id="builder-sim-step" type="button" aria-label="Step forward" title="Step forward">
-                <span class="builder-sim-skip builder-sim-skip--forward" aria-hidden="true">
-                  <span class="builder-sim-skip-tri">▶</span><span class="builder-sim-skip-bar">⏹</span>
-                </span>
-              </button>
-              <button id="builder-sim-back" type="button" aria-label="Step back" title="Step back" disabled>
-                <span class="builder-sim-skip builder-sim-skip--back" aria-hidden="true">
-                  <span class="builder-sim-skip-bar">⏹</span><span class="builder-sim-skip-tri">◀</span>
-                </span>
-              </button>
-              <button id="builder-sim-toggle-packet-ips" type="button">${packetLabelToggleButtonText(builderPageState.packetLabelMode)}</button>
-              <div class="builder-sim-speed-inline" aria-label="Tick speed">
-                <div class="builder-sim-speed-inline-top">
-                  <span class="builder-sim-speed-inline-label">Speed</span>
-                  <span id="builder-sim-speed-value" class="builder-sim-speed-inline-value">${formatSpeedLabel(
-                    SPEED_EXP_DEFAULT,
-                  )}</span>
-                </div>
-                <input id="builder-sim-speed" class="builder-sim-speed-inline-range" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
-              </div>
-            </div>
-            <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
-          </div>
           <div id="builder-panel-scale" class="builder-floating-scale-area">
             <div class="builder-floating-scale" aria-label="Canvas scale controls">
               <div class="builder-scale-controls">
@@ -942,6 +916,40 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                   <input id="builder-scale-y-core1" type="range" min="0.25" max="4" step="0.25" value="${canvasScale.yByLayer.core1.toFixed(2)}" />
                   <span id="builder-scale-y-core1-value">${formatScaleLabel(canvasScale.yByLayer.core1)}</span>
                 </label>
+              </div>
+            </div>
+          </div>
+          <div id="builder-panel-simulation" class="builder-floating-simulation" aria-label="Simulation controls">
+            <div class="builder-sim-toolbar">
+              <button id="builder-sim-play-pause" type="button" aria-label="Play/Pause" title="Play/Pause">▶</button>
+              <button id="builder-sim-reset" type="button" aria-label="Stop" title="Stop">⏹</button>
+              <button id="builder-sim-step" type="button" aria-label="Step forward" title="Step forward">
+                <span class="builder-sim-skip builder-sim-skip--forward" aria-hidden="true">
+                  <span class="builder-sim-skip-tri">▶</span><span class="builder-sim-skip-bar">⏹</span>
+                </span>
+              </button>
+              <button id="builder-sim-back" type="button" aria-label="Step back" title="Step back" disabled>
+                <span class="builder-sim-skip builder-sim-skip--back" aria-hidden="true">
+                  <span class="builder-sim-skip-bar">⏹</span><span class="builder-sim-skip-tri">◀</span>
+                </span>
+              </button>
+              <button id="builder-sim-toggle-packet-ips" type="button">${packetLabelToggleButtonText(builderPageState.packetLabelMode)}</button>
+              <div class="builder-sim-speed-inline" aria-label="Tick speed">
+                <div class="builder-sim-speed-inline-top">
+                  <span class="builder-sim-speed-inline-label">Speed</span>
+                  <span id="builder-sim-speed-value" class="builder-sim-speed-inline-value">${formatSpeedLabel(
+                    SPEED_EXP_DEFAULT,
+                  )}</span>
+                </div>
+                <input id="builder-sim-speed" class="builder-sim-speed-inline-range" type="range" min="${SPEED_EXP_MIN}" max="${SPEED_EXP_MAX}" step="1" value="${SPEED_EXP_DEFAULT}" />
+              </div>
+            </div>
+            <div id="builder-sim-meta" class="builder-sim-meta">Initializing…</div>
+            <div id="builder-sim-drop-board" class="builder-sim-drop-board" aria-label="Entities that dropped packets">
+              <div class="builder-sim-drop-board-title">Drops this run</div>
+              <ol id="builder-sim-drop-board-list" class="builder-sim-drop-board-list"></ol>
+              <div id="builder-sim-drop-board-empty" class="builder-sim-drop-board-empty">
+                Run or step the simulation to accumulate per-entity drop counts. Stop clears the list.
               </div>
             </div>
           </div>
@@ -992,6 +1000,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const simSpeedValueEl = root.querySelector<HTMLSpanElement>("#builder-sim-speed-value")!;
   simSpeedEl.value = String(builderPageState.simSpeedExponent);
   const simMetaEl = root.querySelector<HTMLDivElement>("#builder-sim-meta")!;
+  const simDropListEl = root.querySelector<HTMLOListElement>("#builder-sim-drop-board-list")!;
+  const simDropEmptyEl = root.querySelector<HTMLDivElement>("#builder-sim-drop-board-empty")!;
   const canvasWrapEl = wireOverlayEl.parentElement as HTMLDivElement | null;
   const boxEl = document.createElement("div");
   boxEl.className = "builder-box-selection";
@@ -1060,11 +1070,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     } else {
       requestBuilderSimulatorRefresh();
     }
-    selection = null;
-    selectedEntityRootIds.clear();
-    linkDrag = null;
+    setSelection(null);
     renderLayoutSlots();
-    renderInspector();
     renderCanvas();
     resetBuilderSimulation();
   }
@@ -1182,7 +1189,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       panelPerformanceEl.remove();
     }
     if (sidebarCollapsed) {
-      controlsFloatingHostEl.append(panelTemplatesEl, panelSimulationEl, panelScaleEl, panelLayoutsEl);
+      controlsFloatingHostEl.append(panelTemplatesEl, panelScaleEl, panelSimulationEl, panelLayoutsEl);
       if (builderDevPerfVisible) {
         controlsFloatingHostEl.append(panelPerformanceEl);
       }
@@ -1567,6 +1574,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     currentOccupancy: Array<{ port: PortRef; packet: Packet }>;
     stats: SimulationStats;
     droppedDeviceIds: string[];
+    dropEventDeviceIds: string[];
     stepComputeMs: number;
   };
   let builderSimulator: TunnetSimulator | null = null;
@@ -1658,6 +1666,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simTickDeliveredEntityRootIds = new Set<string>();
   let simTickCollisionDropEntityInstanceIds = new Set<string>();
   let simTickCollisionDropEntityRootIds = new Set<string>();
+  /** Drop counts per simulator device (builder instance id); mirrors are not merged. */
+  let simDropCountByDeviceId = new Map<string, number>();
+  /** Instance to trace from the viewport center when picked from the drop list. */
+  let simDropTraceDeviceId: string | null = null;
   applyBuilderSidebarWidth(builderSidebarWidth);
 
   function updateSimBackButtonState(): void {
@@ -1854,8 +1866,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const packetSel = selection;
       const stillThere = simCurrentOccupancy.some((e) => e.packet.id === packetSel.packetId);
       if (!stillThere) {
-        selection = null;
-        renderInspector();
+        setSelection(null);
       }
     }
     updateBuilderSimMeta();
@@ -1904,6 +1915,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       currentOccupancy: cloneSimOccupancyWithPackets(builderSimulatorOccupancy),
       stats: { ...snap.stats },
       droppedDeviceIds: [...snap.droppedDeviceIds],
+      dropEventDeviceIds: [...snap.dropEventDeviceIds],
       stepComputeMs,
     };
   }
@@ -1927,6 +1939,48 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simSpeedValueEl.textContent = formatSpeedLabel(simSpeedExponent);
   }
 
+  function formatSimDropRowLabelForDeviceId(deviceId: string): string {
+    const expanded = expandBuilderState(state, { builderView: true });
+    const inst = expanded.entities.find((e) => e.instanceId === deviceId);
+    if (!inst) return deviceId;
+    const sec = segmentLabel(inst.layer, inst.segmentIndex);
+    return `${sec} ${inst.templateType}`;
+  }
+
+  function refreshSimDropLeaderboardUi(): void {
+    simDropListEl.replaceChildren();
+    const expanded = expandBuilderState(state, { builderView: true });
+    const entries = Array.from(simDropCountByDeviceId.entries())
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const hasRows = entries.length > 0;
+    simDropEmptyEl.classList.toggle("hidden", hasRows);
+    simDropListEl.classList.toggle("hidden", !hasRows);
+    for (const [deviceId, count] of entries) {
+      const inst = expanded.entities.find((e) => e.instanceId === deviceId);
+      const rootId = inst?.rootId ?? simRootIdFromDeviceId(deviceId);
+      if (!rootId) continue;
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.dropRootId = rootId;
+      btn.dataset.dropDeviceId = deviceId;
+      btn.className = "builder-sim-drop-board-row";
+      if (simDropTraceDeviceId === deviceId && selection?.kind === "entity" && selection.rootId === rootId) {
+        btn.classList.add("is-selected");
+      }
+      const countSpan = document.createElement("span");
+      countSpan.className = "builder-sim-drop-board-count";
+      countSpan.textContent = String(count);
+      const labelSpan = document.createElement("span");
+      labelSpan.className = "builder-sim-drop-board-label";
+      labelSpan.textContent = formatSimDropRowLabelForDeviceId(deviceId);
+      btn.append(countSpan, labelSpan);
+      li.appendChild(btn);
+      simDropListEl.appendChild(li);
+    }
+  }
+
   function updateBuilderSimMeta(): void {
     const formatSimInteger = (value: number): string => {
       const sign = value < 0 ? "-" : "";
@@ -1947,6 +2001,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         <div class="stat-pill"><span>Drop %</span><strong>${simDropPctCumulative === null ? "—" : `${simDropPctCumulative.toFixed(1)}%`}</strong></div>
       </div>
     `;
+    refreshSimDropLeaderboardUi();
   }
 
   function cancelBuilderSimTickTimers(): void {
@@ -1995,6 +2050,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simTickDeliveredEntityRootIds = new Set();
     simTickCollisionDropEntityInstanceIds = new Set();
     simTickCollisionDropEntityRootIds = new Set();
+    simDropCountByDeviceId.clear();
+    simDropTraceDeviceId = null;
+    refreshSimDropLeaderboardUi();
     clearSimHistory();
     rebuildBuilderSimEndpointIndex(topo);
     simPreviousOccupancy = [];
@@ -2003,8 +2061,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simPacketProgress = 1;
     invalidateBuilderPacketRenderCache();
     if (selection?.kind === "packet") {
-      selection = null;
-      renderInspector();
+      setSelection(null);
     }
     clearBuilderPacketCirclePool();
     updateBuilderSimMeta();
@@ -2091,6 +2148,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const rootId = simRootIdFromDeviceId(deviceId);
       if (rootId) simTickCollisionDropEntityRootIds.add(rootId);
     });
+    for (const deviceId of frame.dropEventDeviceIds) {
+      if (builderSimDevices[deviceId] === undefined) continue;
+      simDropCountByDeviceId.set(deviceId, (simDropCountByDeviceId.get(deviceId) ?? 0) + 1);
+    }
     applySimTickHighlightsToCanvas();
     simPreviousStatsTotals = { ...frame.stats };
     const stepMs = frame.stepComputeMs;
@@ -2106,9 +2167,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       const packetSel = selection;
       const stillThere = simCurrentOccupancy.some((e) => e.packet.id === packetSel.packetId);
       if (!stillThere) {
-        selection = null;
-        renderInspector();
-        renderWireOverlay();
+        setSelection(null);
       }
     }
     const targetTickIntervalMs = 1000 / Math.max(simSpeed, 0.1);
@@ -2388,16 +2447,24 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return { left: 0, right: 0, top: 0, bottom: 0 };
   }
 
-  function setSelection(next: Selection): void {
+  function setSelection(next: Selection, opts?: SetSelectionOpts): void {
+    if (!(opts?.dropTraceFromView && next?.kind === "entity")) {
+      simDropTraceDeviceId = null;
+    }
     selection = next;
     selectedEntityRootIds.clear();
     linkDrag = null;
+    if (opts?.dropTraceFromView && next?.kind === "entity") {
+      simDropTraceDeviceId = opts.dropTraceDeviceId ?? null;
+    }
     renderInspector();
     applySelectionToCanvas();
     renderWireOverlay();
+    refreshSimDropLeaderboardUi();
   }
 
   function setEntitySelectionSet(ids: Set<string>): void {
+    simDropTraceDeviceId = null;
     selectedEntityRootIds = new Set(ids);
     const firstId = selectedEntityRootIds.values().next().value as string | undefined;
     selection = firstId ? { kind: "entity", rootId: firstId } : null;
@@ -2767,11 +2834,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         );
         createdRootId = rootEntity.id;
         state = { ...state, entities: [...state.entities, rootEntity] };
-        selection = { kind: "entity", rootId: rootEntity.id };
-        selectedEntityRootIds.clear();
+        setSelection({ kind: "entity", rootId: rootEntity.id });
         lastPlacementKey = key;
         renderCanvas();
-        renderInspector();
         return;
       }
 
@@ -2945,6 +3010,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
     cache?.set(key, center);
     return center;
+  }
+
+  function builderPacketOverlayViewportCenter(): { x: number; y: number } | null {
+    const wrap = packetOverlayEl.parentElement;
+    if (!wrap) return null;
+    return {
+      x: wrap.scrollLeft + wrap.clientWidth * 0.5,
+      y: wrap.scrollTop + wrap.clientHeight * 0.5,
+    };
   }
 
   type SimXY = { x: number; y: number };
@@ -3567,6 +3641,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       selectedGuide.setAttribute("y1", selectedRender.y.toFixed(2));
       selectedGuide.setAttribute("x2", selectedRender.targetX.toFixed(2));
       selectedGuide.setAttribute("y2", selectedRender.targetY.toFixed(2));
+    } else if (
+      selection?.kind === "entity" &&
+      simDropTraceDeviceId &&
+      simRootIdFromDeviceId(simDropTraceDeviceId) === selection.rootId
+    ) {
+      const vc = builderPacketOverlayViewportCenter();
+      const anchor = builderPortCenterInOverlayCoords({ deviceId: simDropTraceDeviceId, port: 0 });
+      if (vc && anchor) {
+        selectedGuide.removeAttribute("display");
+        selectedGuide.setAttribute("x1", vc.x.toFixed(2));
+        selectedGuide.setAttribute("y1", vc.y.toFixed(2));
+        selectedGuide.setAttribute("x2", anchor.x.toFixed(2));
+        selectedGuide.setAttribute("y2", anchor.y.toFixed(2));
+      } else {
+        selectedGuide.setAttribute("display", "none");
+      }
     } else {
       selectedGuide.setAttribute("display", "none");
     }
@@ -4916,8 +5006,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           {
             const sel = selection;
             if (sel && sel.kind === "link" && !state.links.some((l) => l.id === sel.rootId)) {
-              selection = null;
-              renderInspector();
+              setSelection(null);
             }
           }
           renderWireOverlay();
@@ -5338,11 +5427,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const deleteSelected = (): void => {
     if (!selection) return;
     if (selection.kind === "packet") {
-      selection = null;
-      linkDrag = null;
-      renderInspector();
-      applySelectionToCanvas();
-      renderWireOverlay();
+      setSelection(null);
       return;
     }
     const removingLink = selection.kind === "link" && !selectedEntityRootIds.size;
@@ -5366,9 +5451,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     } else {
       persist();
     }
-    selection = null;
-    linkDrag = null;
-    renderInspector();
+    setSelection(null);
     if (removingLink) {
       applySelectionToCanvas();
       renderWireOverlay();
@@ -5388,11 +5471,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
     });
     if (!changed) return;
-    selection = null;
-    selectedEntityRootIds.clear();
-    linkDrag = null;
+    setSelection(null);
     persist();
-    renderInspector();
     renderCanvas();
   };
 
@@ -5974,6 +6054,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     stepBackBuilderSimulation();
   });
   simResetBtn.addEventListener("click", () => resetBuilderSimulation());
+  simDropListEl.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button[data-drop-device-id]");
+    const rootId = btn?.dataset.dropRootId;
+    const deviceId = btn?.dataset.dropDeviceId;
+    if (!rootId || !deviceId) return;
+    setSelection({ kind: "entity", rootId }, { dropTraceFromView: true, dropTraceDeviceId: deviceId });
+    renderBuilderPacketCircles(simPacketProgress);
+  });
   simTogglePacketIpsBtn.addEventListener("click", () => cyclePacketLabelMode());
 
   const applyBuilderSimSpeedFromSlider = (): void => {

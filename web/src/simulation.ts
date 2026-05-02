@@ -117,9 +117,16 @@ interface StepContext {
   adjacency: Map<string, PortRef>;
   nextPortPackets: Map<string, Packet>;
   droppedDeviceIds: Set<string>;
+  /** One entry per counted drop (same device may appear multiple times per tick). */
+  dropEventDeviceIds: string[];
   packetIdCounter: number;
   rnd: () => number;
   stats: SimulationStats;
+}
+
+function recordDeviceDrop(ctx: StepContext, deviceId: string): void {
+  ctx.droppedDeviceIds.add(deviceId);
+  ctx.dropEventDeviceIds.push(deviceId);
 }
 
 function makePortKey(ref: PortRef): string {
@@ -314,13 +321,13 @@ export class TunnetSimulator {
     if (!packet) {
       ctx.stats.ttlExpired += 1;
       ctx.stats.dropped += 1;
-      ctx.droppedDeviceIds.add(sourceDeviceId);
+      recordDeviceDrop(ctx, sourceDeviceId);
       return false;
     }
     const to = ctx.adjacency.get(makePortKey({ deviceId: sourceDeviceId, port: sourcePort }));
     if (!to) {
       ctx.stats.dropped += 1;
-      ctx.droppedDeviceIds.add(sourceDeviceId);
+      recordDeviceDrop(ctx, sourceDeviceId);
       return false;
     }
     return this.emitMove(ctx, to, packet);
@@ -355,7 +362,7 @@ export class TunnetSimulator {
         }
       } else if (inbound.sensitive) {
         ctx.stats.dropped += 1;
-        ctx.droppedDeviceIds.add(device.id);
+        recordDeviceDrop(ctx, device.id);
       } else {
         const bounced = decrementTtl(inbound);
         if (bounced) {
@@ -365,7 +372,7 @@ export class TunnetSimulator {
         } else {
           ctx.stats.ttlExpired += 1;
           ctx.stats.dropped += 1;
-          ctx.droppedDeviceIds.add(device.id);
+          recordDeviceDrop(ctx, device.id);
         }
       }
     }
@@ -469,12 +476,12 @@ export class TunnetSimulator {
       if (!decremented) {
         ctx.stats.ttlExpired += 1;
         ctx.stats.dropped += 1;
-        ctx.droppedDeviceIds.add(device.id);
+        recordDeviceDrop(ctx, device.id);
       } else {
         const acted = this.shouldFilterAct(device, decremented);
         if (acted && device.action === "drop") {
           ctx.stats.dropped += 1;
-          ctx.droppedDeviceIds.add(device.id);
+          recordDeviceDrop(ctx, device.id);
         } else if (acted && device.action === "send_back") {
           inboundOutPort = op;
           inboundOutPacket = decremented;
@@ -499,12 +506,12 @@ export class TunnetSimulator {
     ) {
       if (device.collisionHandling === "drop_inbound") {
         ctx.stats.dropped += 1;
-        ctx.droppedDeviceIds.add(device.id);
+        recordDeviceDrop(ctx, device.id);
         inboundOutPort = null;
         inboundOutPacket = null;
       } else if (device.collisionHandling === "drop_outbound") {
         ctx.stats.dropped += 1;
-        ctx.droppedDeviceIds.add(device.id);
+        recordDeviceDrop(ctx, device.id);
         outboundOutPort = null;
         outboundOutPacket = null;
       } else {
@@ -520,16 +527,24 @@ export class TunnetSimulator {
     }
   }
 
-  step(): { tick: number; inFlightPackets: number; stats: SimulationStats; droppedDeviceIds: string[] } {
+  step(): {
+    tick: number;
+    inFlightPackets: number;
+    stats: SimulationStats;
+    droppedDeviceIds: string[];
+    dropEventDeviceIds: string[];
+  } {
     this.netTick = advanceNetTick(this.netTick);
 
     const nextPortPackets = new Map<string, Packet>();
     const droppedDeviceIds = new Set<string>();
+    const dropEventDeviceIds: string[] = [];
     const ctx: StepContext = {
       tick: this.tick,
       adjacency: this.adjacency,
       nextPortPackets,
       droppedDeviceIds,
+      dropEventDeviceIds,
       packetIdCounter: this.packetIdCounter,
       rnd: () => this.random(),
       stats: this.stats,
@@ -559,6 +574,7 @@ export class TunnetSimulator {
       inFlightPackets: this.currentPortPackets.size,
       stats: { ...this.stats },
       droppedDeviceIds: Array.from(droppedDeviceIds),
+      dropEventDeviceIds,
     };
   }
 
