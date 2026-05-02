@@ -44,6 +44,7 @@ import {
   type CanvasScale,
 } from "./canvas-scale";
 import { builderViewShellHtml } from "./builder-view-shell";
+import { createBuilderWireOverlay } from "./builder-wire-overlay";
 import {
   buildFilterDescription,
   buildTemplateDragImage,
@@ -62,7 +63,6 @@ import {
 } from "../packet-label-mode";
 import {
   expandBuilderState,
-  expandLinks,
   layerColumns,
   layerTitle,
   mapMaskForSegment,
@@ -166,13 +166,6 @@ type BoxSelectionState = {
   mode: "replace" | "add" | "remove";
 } | null;
 
-interface LinkSourceSelection {
-  rootId: string;
-  port: number;
-  /** Port DOM identity for this clone (mirrors share rootId). */
-  instanceId: string;
-}
-
 type BuilderPerfKey =
   | "canvas.total"
   | "canvas.expand"
@@ -208,19 +201,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   let selection: Selection = null;
-  let linkDrag: { from: LinkSourceSelection; endClient: { x: number; y: number } } | null = null;
   let dragRenderRaf: number | null = null;
-  let wireDragRaf: number | null = null;
-  let wireOverlayRaf: number | null = null;
-  let portElByInstancePort = new Map<string, HTMLButtonElement>();
   let selectedEntityRootIds = new Set<string>();
   let boxSelection: BoxSelectionState = null;
   let suppressNextEntityClickToggle = false;
   let suppressNextControlClick = false;
   let suppressNextPacketClick = false;
   let suppressBoxSelectionUntilMouseUp = false;
-  const WIRE_PORT_DROP_ZONE_PX = 5;
-  const WIRE_DRAG_START_THRESHOLD_PX = 3;
   const loadCanvasScale = (): CanvasScale => {
     try {
       const rawScale = window.localStorage.getItem(BUILDER_CANVAS_SCALE_KEY);
@@ -420,6 +407,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const simSpeedValueEl = simPanel.speedValueSpan;
   const simMetaEl = simPanel.metaEl;
   const canvasWrapEl = wireOverlayEl.parentElement as HTMLDivElement | null;
+  const wireBag: { w: ReturnType<typeof createBuilderWireOverlay> | null } = { w: null };
   const boxEl = document.createElement("div");
   boxEl.className = "builder-box-selection";
   const dragBoundsEl = document.createElement("div");
@@ -595,7 +583,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       persistBuilderSidebarWidth();
     }
     syncBuilderControlPanelPlacement();
-    scheduleWireOverlayRender();
+    wireBag.w!.scheduleWireOverlayRender();
     renderBuilderPacketCircles(simPacketProgress);
   }
 
@@ -795,7 +783,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     scaleYMiddleValueEl.textContent = formatScaleLabel(canvasScale.yByLayer.middle16);
     scaleYInnerValueEl.textContent = formatScaleLabel(canvasScale.yByLayer.inner4);
     scaleYCoreValueEl.textContent = formatScaleLabel(canvasScale.yByLayer.core1);
-    scheduleWireOverlayRender();
+    wireBag.w!.scheduleWireOverlayRender();
   }
 
   function layerViewportSizes(): Record<BuilderLayer, { width: number; height: number } | null> {
@@ -1118,6 +1106,87 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     setSelection({ kind: "entity", rootId }, { dropTraceFromView: true, dropTraceDeviceId: deviceId });
     renderBuilderPacketCircles(simPacketProgress);
   };
+  wireBag.w = createBuilderWireOverlay({
+    root,
+    wireOverlayEl,
+    canvasEl,
+    getState: () => state,
+    recordPerf: (key, ms) => recordPerf(key as BuilderPerfKey, ms),
+    perfCounts,
+    afterWireOverlayPaint: (overlayPassStartMs) => {
+      invalidateBuilderPacketGeometryCache();
+      invalidateBuilderPacketRenderCache();
+      renderBuilderPacketCircles(simPacketProgress);
+      recordPerf("wire.total", performance.now() - overlayPassStartMs);
+      renderPerfPanel();
+    },
+    setBuilderDragCursor,
+    clearBuilderDragCursor,
+    commitLinkDragResult: ({ from, toPort, startedFromPacket }) => {
+      if (startedFromPacket) suppressNextPacketClick = true;
+      if (!toPort) {
+        const fromInst = parseBuilderInstanceId(from.instanceId);
+        if (!fromInst || fromInst.rootId !== from.rootId) return;
+        const next = removeLinksTouchingInstancePort(state, fromInst.rootId, fromInst.segmentIndex, from.port);
+        if (next !== state) {
+          state = next;
+          schedulePersist();
+          {
+            const sel = selection;
+            if (sel && sel.kind === "link" && !state.links.some((l) => l.id === sel.rootId)) {
+              setSelection(null);
+            }
+          }
+          wireBag.w!.renderWireOverlay();
+        }
+        return;
+      }
+      const toRootId = toPort.dataset.rootId;
+      const toP = Number(toPort.dataset.port);
+      const toInstanceRaw = toPort.dataset.instanceId ?? "";
+      if (!toRootId) return;
+      if (toInstanceRaw && toInstanceRaw === from.instanceId) return;
+      const fromInst = parseBuilderInstanceId(from.instanceId);
+      const toInstParsed = parseBuilderInstanceId(toInstanceRaw);
+      if (!fromInst || !toInstParsed) return;
+      if (fromInst.rootId !== from.rootId || toInstParsed.rootId !== toRootId) return;
+      const fromRoot = state.entities.find((ent) => ent.id === fromInst.rootId);
+      const toRoot = state.entities.find((ent) => ent.id === toInstParsed.rootId);
+      if (!fromRoot || !toRoot) return;
+      const linkOpts =
+        fromRoot.id === toRoot.id
+          ? {
+              sameEntityPin: {
+                fromSegmentIndex: fromInst.segmentIndex,
+                toSegmentIndex: toInstParsed.segmentIndex,
+              },
+            }
+          : fromRoot.layer === toRoot.layer
+            ? {
+                sameLayerSegmentDelta: toInstParsed.segmentIndex - fromInst.segmentIndex,
+              }
+            : (() => {
+                const slot = crossLayerBlockSlotFromSegments(
+                  fromRoot.layer,
+                  fromInst.segmentIndex,
+                  toRoot.layer,
+                  toInstParsed.segmentIndex,
+                );
+                if (slot === undefined) {
+                  return undefined;
+                }
+                return { crossLayerBlockSlot: slot };
+              })();
+      if (fromRoot.id !== toRoot.id && fromRoot.layer !== toRoot.layer && linkOpts === undefined) {
+        return;
+      }
+      const added = addLinkRootOneWirePerPort(state, fromRoot.id, from.port, toRoot.id, toP, linkOpts);
+      if (!added.link) return;
+      state = added.state;
+      schedulePersist();
+      setSelection({ kind: "link", rootId: added.link.id });
+    },
+  });
   applyBuilderSidebarWidth(builderSidebarWidth);
 
   function updateSimBackButtonState(): void {
@@ -1463,7 +1532,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     clearBuilderPacketCirclePool();
     updateBuilderSimMeta();
-    scheduleWireOverlayRender();
+    wireBag.w!.scheduleWireOverlayRender();
     initBuilderSimulator(topo);
     if (shouldResume) {
       simPlaying = true;
@@ -1652,7 +1721,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   function applyPropertyLabelVisibility(): void {
     root.classList.toggle("builder-hide-property-labels", hideEntityPropertyLabels);
-    scheduleWireOverlayRender();
+    wireBag.w!.scheduleWireOverlayRender();
   }
 
   function applySelectionToCanvas(): void {
@@ -1846,27 +1915,39 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (!(opts?.dropTraceFromView && next?.kind === "entity")) {
       simDropBoard.traceDeviceId = null;
     }
+    const hadLinkDrag = wireBag.w!.isLinkDragActive();
     selection = next;
     selectedEntityRootIds.clear();
-    linkDrag = null;
+    wireBag.w!.clearLinkDrag();
     if (opts?.dropTraceFromView && next?.kind === "entity") {
       simDropBoard.traceDeviceId = opts.dropTraceDeviceId ?? null;
     }
     renderInspector();
     applySelectionToCanvas();
-    renderWireOverlay();
+    // Wires use port DOM geometry; selection only adds `.selected` on entities. Skip full wire
+    // rebuild unless we cleared an in-flight link drag (rubber band must disappear).
+    if (hadLinkDrag) {
+      wireBag.w!.renderWireOverlay();
+    } else {
+      renderBuilderPacketCircles(simPacketProgress);
+    }
     simDropBoard.refresh();
   }
 
   function setEntitySelectionSet(ids: Set<string>): void {
     simDropBoard.traceDeviceId = null;
+    const hadLinkDrag = wireBag.w!.isLinkDragActive();
     selectedEntityRootIds = new Set(ids);
     const firstId = selectedEntityRootIds.values().next().value as string | undefined;
     selection = firstId ? { kind: "entity", rootId: firstId } : null;
-    linkDrag = null;
+    wireBag.w!.clearLinkDrag();
     renderInspector();
     applySelectionToCanvas();
-    renderWireOverlay();
+    if (hadLinkDrag) {
+      wireBag.w!.renderWireOverlay();
+    } else {
+      renderBuilderPacketCircles(simPacketProgress);
+    }
     simDropBoard.refresh();
   }
 
@@ -2288,65 +2369,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     });
   }
 
-  function portCacheKey(instanceId: string, port: number): string {
-    return `${instanceId}#${port}`;
-  }
-
-  function rebuildPortElementCache(): void {
-    const next = new Map<string, HTMLButtonElement>();
-    canvasEl.querySelectorAll<HTMLButtonElement>(".builder-port[data-instance-id][data-port]").forEach((portEl) => {
-      const instanceId = portEl.dataset.instanceId ?? "";
-      const p = Number(portEl.dataset.port);
-      if (!instanceId || Number.isNaN(p)) return;
-      next.set(portCacheKey(instanceId, p), portEl);
-    });
-    portElByInstancePort = next;
-  }
-
-  function resolveBuilderPortForWireOverlay(instanceId: string, port: number): HTMLButtonElement | null {
-    const byInstance = portElByInstancePort.get(portCacheKey(instanceId, port)) ?? null;
-    if (byInstance) return byInstance;
-    const m = instanceId.match(/^(.+)@(\d+)$/);
-    if (!m) return null;
-    const rootId = m[1] ?? "";
-    const seg = Number(m[2]);
-    if (!Number.isInteger(seg) || seg < 0 || seg > 63) return null;
-    const root = state.entities.find((e) => e.id === rootId);
-    if (!root || !isStaticOuterLeafEndpoint(root) || root.layer !== "outer64") {
-      return null;
-    }
-    if (isOuterLeafVoidSegment(seg)) {
-      return canvasEl.querySelector<HTMLButtonElement>(
-        `.builder-segment[data-void-outer="1"] .builder-port[data-instance-id="${instanceId}"][data-port="${port}"]`,
-      );
-    }
-    return canvasEl.querySelector<HTMLButtonElement>(
-      `.builder-segment[data-layer="outer64"][data-segment="${seg}"] [data-static-endpoint="1"] .builder-port[data-port="${port}"]`,
-    );
-  }
-
-  function builderPortFromClientPoint(clientX: number, clientY: number): HTMLButtonElement | null {
-    const stackedPort =
-      document
-        .elementsFromPoint(clientX, clientY)
-        .map((node) => node.closest<HTMLButtonElement>(".builder-port"))
-        .find((port): port is HTMLButtonElement => port !== null) ?? null;
-    if (stackedPort) return stackedPort;
-
-    let closestPort: HTMLButtonElement | null = null;
-    let closestDistance = Number.POSITIVE_INFINITY;
-    canvasEl.querySelectorAll<HTMLButtonElement>(".builder-port[data-instance-id][data-port]").forEach((portEl) => {
-      const rect = portEl.getBoundingClientRect();
-      const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
-      const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
-      const distance = Math.hypot(dx, dy);
-      if (distance > WIRE_PORT_DROP_ZONE_PX || distance >= closestDistance) return;
-      closestDistance = distance;
-      closestPort = portEl;
-    });
-    return closestPort;
-  }
-
   function simOccupancyByPacketId(
     occ: Array<{ port: PortRef; packet: Packet }>,
   ): Map<number, { port: PortRef; packet: Packet }> {
@@ -2370,7 +2392,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       cache?.set(key, null);
       return null;
     }
-    const el = resolveBuilderPortForWireOverlay(ref.deviceId, ref.port);
+    const el = wireBag.w!.resolveBuilderPortForWireOverlay(ref.deviceId, ref.port);
     if (!el) {
       cache?.set(key, null);
       return null;
@@ -3221,151 +3243,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     return false;
   }
 
-  function renderWireOverlay(): void {
-    const t0 = performance.now();
-    const wrap = wireOverlayEl.parentElement;
-    if (!wrap) return;
-    const scrollbarRightPx = Math.max(0, wrap.offsetWidth - wrap.clientWidth);
-    const scrollbarBottomPx = Math.max(0, wrap.offsetHeight - wrap.clientHeight);
-    root.style.setProperty("--builder-floating-scrollbar-right", `${scrollbarRightPx}px`);
-    root.style.setProperty("--builder-floating-scrollbar-bottom", `${scrollbarBottomPx}px`);
-    const tExpand0 = performance.now();
-    const viewLinks = expandLinks(state.links, state.entities);
-    const tExpand1 = performance.now();
-    recordPerf("wire.expandLinks", tExpand1 - tExpand0);
-    perfCounts.stateLinks = state.links.length;
-    perfCounts.expandedLinks = viewLinks.length;
-    const wrapRect = wrap.getBoundingClientRect();
-    const contentWidth = Math.max(canvasEl.scrollWidth, canvasEl.clientWidth);
-    const contentHeight = Math.max(canvasEl.scrollHeight, canvasEl.clientHeight);
-    const overlayWidth = Math.max(wrap.clientWidth, contentWidth);
-    const overlayHeight = Math.max(wrap.clientHeight, contentHeight);
-    wireOverlayEl.setAttribute("width", String(Math.ceil(overlayWidth)));
-    wireOverlayEl.setAttribute("height", String(Math.ceil(overlayHeight)));
-    wireOverlayEl.style.width = `${Math.ceil(overlayWidth)}px`;
-    wireOverlayEl.style.height = `${Math.ceil(overlayHeight)}px`;
-    let lineMarkup = "";
-    let resolveCost = 0;
-    const tLine0 = performance.now();
-    const portWireEndpoint = (
-      portEl: HTMLButtonElement,
-    ): { x: number; y: number; radius: number; clipped: boolean } | null => {
-      const viewport = portEl.closest<HTMLElement>(".builder-segment-entities");
-      const rect = portEl.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return null;
-      let clientX = rect.left + rect.width / 2;
-      let clientY = rect.top + rect.height / 2;
-      let clipped = false;
-      if (viewport) {
-        const viewportRect = viewport.getBoundingClientRect();
-        if (viewportRect.width <= 0 || viewportRect.height <= 0) return null;
-        const clampedX = Math.max(viewportRect.left, Math.min(viewportRect.right, clientX));
-        const clampedY = Math.max(viewportRect.top, Math.min(viewportRect.bottom, clientY));
-        clipped = clampedX !== clientX || clampedY !== clientY;
-        clientX = clampedX;
-        clientY = clampedY;
-      }
-      return {
-        x: clientX - wrapRect.left + wrap.scrollLeft,
-        y: clientY - wrapRect.top + wrap.scrollTop,
-        radius: clipped ? 0 : rect.width / 2,
-        clipped,
-      };
-    };
-    const lineEndpointsAtPortEdges = (
-      x1: number,
-      y1: number,
-      r1: number,
-      x2: number,
-      y2: number,
-      r2: number,
-    ): { sx: number; sy: number; ex: number; ey: number } => {
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      const d = Math.hypot(dx, dy);
-      if (d < 1e-6) {
-        return { sx: x1, sy: y1, ex: x2, ey: y2 };
-      }
-      const ux = dx / d;
-      const uy = dy / d;
-      const startInset = Math.min(r1, d * 0.45);
-      const endInset = Math.min(r2, d * 0.45);
-      return {
-        sx: x1 + ux * startInset,
-        sy: y1 + uy * startInset,
-        ex: x2 - ux * endInset,
-        ey: y2 - uy * endInset,
-      };
-    };
-    for (const link of viewLinks) {
-      const tr0 = performance.now();
-      const from = resolveBuilderPortForWireOverlay(String(link.fromInstanceId), link.fromPort);
-      const to = resolveBuilderPortForWireOverlay(String(link.toInstanceId), link.toPort);
-      resolveCost += performance.now() - tr0;
-      if (!from || !to) continue;
-      const fromCenter = portWireEndpoint(from);
-      const toCenter = portWireEndpoint(to);
-      if (!fromCenter || !toCenter) continue;
-      if (fromCenter.clipped && toCenter.clipped) continue;
-      const e = lineEndpointsAtPortEdges(
-        fromCenter.x,
-        fromCenter.y,
-        fromCenter.radius,
-        toCenter.x,
-        toCenter.y,
-        toCenter.radius,
-      );
-      lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="#f9e2af" stroke-opacity="0.9" stroke-width="1.5"></line>`;
-    }
-    recordPerf("wire.portResolve", resolveCost);
-    recordPerf("wire.lineBuild", performance.now() - tLine0);
-    if (linkDrag) {
-      const fromPort =
-        resolveBuilderPortForWireOverlay(String(linkDrag.from.instanceId), linkDrag.from.port) ??
-        (linkDrag.from.instanceId
-          ? null
-          : canvasEl.querySelector<HTMLButtonElement>(
-              `.builder-port[data-root-id="${linkDrag.from.rootId}"][data-port="${linkDrag.from.port}"]`,
-            ));
-      if (fromPort) {
-        const fromCenter = portWireEndpoint(fromPort);
-        if (fromCenter) {
-          const x2 = linkDrag.endClient.x - wrapRect.left + wrap.scrollLeft;
-          const y2 = linkDrag.endClient.y - wrapRect.top + wrap.scrollTop;
-          const e = lineEndpointsAtPortEdges(fromCenter.x, fromCenter.y, fromCenter.radius, x2, y2, 0);
-          lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" class="builder-wire-drag" pointer-events="none"></line>`;
-        }
-      }
-    }
-    wireOverlayEl.innerHTML = lineMarkup;
-    invalidateBuilderPacketGeometryCache();
-    invalidateBuilderPacketRenderCache();
-    renderBuilderPacketCircles(simPacketProgress);
-    recordPerf("wire.total", performance.now() - t0);
-    renderPerfPanel();
-  }
-
-  function scheduleWireOverlayRender(): void {
-    if (wireOverlayRaf !== null) return;
-    wireOverlayRaf = window.requestAnimationFrame(() => {
-      wireOverlayRaf = null;
-      renderWireOverlay();
-    });
-  }
-
   function scheduleDragRender(): void {
     if (dragRenderRaf !== null) return;
     dragRenderRaf = window.requestAnimationFrame(() => {
       dragRenderRaf = null;
       renderCanvas();
-    });
-  }
-
-  function scheduleWireDragPaint(): void {
-    if (wireDragRaf !== null) return;
-    wireDragRaf = window.requestAnimationFrame(() => {
-      wireDragRaf = null;
-      renderWireOverlay();
     });
   }
 
@@ -3600,8 +3482,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   const builderRotateDragChrome = (shouldUpdateWiresDuringDrag: boolean): RotateDragChrome => ({
     shouldUpdateWiresDuringDrag,
-    scheduleWireOverlayIfDragging: scheduleWireOverlayRender,
-    scheduleWireOverlayIfIdle: scheduleWireOverlayRender,
+    scheduleWireOverlayIfDragging: wireBag.w!.scheduleWireOverlayRender,
+    scheduleWireOverlayIfIdle: wireBag.w!.scheduleWireOverlayRender,
     clearBuilderDragCursor,
     schedulePersist,
     renderInspector,
@@ -3648,7 +3530,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     hideDragGroupBounds();
     if (!ctx.shouldUpdateWiresDuringDrag) {
-      scheduleWireOverlayRender();
+      wireBag.w!.scheduleWireOverlayRender();
     }
     schedulePersist();
     renderInspector();
@@ -3680,7 +3562,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         textTileSizeFromEntity,
         setEntityDomPosition,
         setTextEntitySizeDom,
-        scheduleWireOverlayRender,
+        scheduleWireOverlayRender: wireBag.w!.scheduleWireOverlayRender,
         clearBuilderDragCursor,
         schedulePersist,
         renderInspector,
@@ -3980,7 +3862,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           didMove = true;
           showDragGroupBounds(movingRootIds);
           if (shouldUpdateWiresDuringDrag) {
-            scheduleWireOverlayRender();
+            wireBag.w!.scheduleWireOverlayRender();
           }
         };
         const onUp = (up: MouseEvent): void => {
@@ -4231,7 +4113,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       didMove = true;
       showDragGroupBounds(movingRootIds);
       if (shouldUpdateWiresDuringDrag) {
-        scheduleWireOverlayRender();
+        wireBag.w!.scheduleWireOverlayRender();
       }
     };
     const onUp = (up: MouseEvent): void => {
@@ -4247,137 +4129,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     };
     setBuilderDragCursor("grabbing");
     capturePrimaryDragOnWindow(ev, { onMove, onEnd: onUp });
-  };
-
-  const startLinkDragFromPort = (portEl: HTMLButtonElement, ev: PointerEvent): void => {
-    if (ev.button !== 0 || !ev.isPrimary) return;
-    const downClient = { x: ev.clientX, y: ev.clientY };
-    const startedFromPacket = ev.target instanceof Element && !!ev.target.closest("circle.builder-packet-dot");
-    const rootId = portEl.dataset.rootId!;
-    const port = Number(portEl.dataset.port);
-    const instanceId = portEl.dataset.instanceId ?? "";
-    const from: LinkSourceSelection = { rootId, port, instanceId };
-    const wrap = wireOverlayEl.parentElement;
-    if (!wrap) return;
-    let started = false;
-    const beginDrag = (clientX: number, clientY: number): void => {
-      if (started) return;
-      started = true;
-      root.classList.add("builder-wire-dragging");
-      linkDrag = { from, endClient: { x: clientX, y: clientY } };
-      setBuilderDragCursor("crosshair");
-      renderWireOverlay();
-    };
-    const onMove = (e: PointerEvent): void => {
-      e.preventDefault();
-      if (!started) {
-        const dx = e.clientX - downClient.x;
-        const dy = e.clientY - downClient.y;
-        if (Math.hypot(dx, dy) < WIRE_DRAG_START_THRESHOLD_PX) return;
-        beginDrag(e.clientX, e.clientY);
-      }
-      linkDrag = { from, endClient: { x: e.clientX, y: e.clientY } };
-      scheduleWireDragPaint();
-    };
-    let ended = false;
-    const onEnd = (e: PointerEvent): void => {
-      if (ended) return;
-      ended = true;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onEnd);
-      window.removeEventListener("pointercancel", onEnd);
-      clearBuilderDragCursor();
-      if (wireDragRaf !== null) {
-        window.cancelAnimationFrame(wireDragRaf);
-        wireDragRaf = null;
-      }
-      if (!started) {
-        root.classList.remove("builder-wire-dragging");
-        return;
-      }
-      e.preventDefault();
-      if (startedFromPacket) suppressNextPacketClick = true;
-      const toPort = builderPortFromClientPoint(e.clientX, e.clientY);
-      root.classList.remove("builder-wire-dragging");
-      linkDrag = null;
-      renderWireOverlay();
-      if (!toPort) {
-        const fromInst = parseBuilderInstanceId(from.instanceId);
-        if (!fromInst || fromInst.rootId !== from.rootId) return;
-        const next = removeLinksTouchingInstancePort(state, fromInst.rootId, fromInst.segmentIndex, from.port);
-        if (next !== state) {
-          state = next;
-          schedulePersist();
-          {
-            const sel = selection;
-            if (sel && sel.kind === "link" && !state.links.some((l) => l.id === sel.rootId)) {
-              setSelection(null);
-            }
-          }
-          renderWireOverlay();
-        }
-        return;
-      }
-      const toRootId = toPort.dataset.rootId;
-      const toP = Number(toPort.dataset.port);
-      const toInstanceRaw = toPort.dataset.instanceId ?? "";
-      if (!toRootId) return;
-      if (toInstanceRaw && toInstanceRaw === from.instanceId) return;
-      const fromInst = parseBuilderInstanceId(from.instanceId);
-      const toInstParsed = parseBuilderInstanceId(toInstanceRaw);
-      if (!fromInst || !toInstParsed) return;
-      if (fromInst.rootId !== from.rootId || toInstParsed.rootId !== toRootId) return;
-      const fromRoot = state.entities.find((ent) => ent.id === fromInst.rootId);
-      const toRoot = state.entities.find((ent) => ent.id === toInstParsed.rootId);
-      if (!fromRoot || !toRoot) return;
-      const linkOpts =
-        fromRoot.id === toRoot.id
-          ? {
-              sameEntityPin: {
-                fromSegmentIndex: fromInst.segmentIndex,
-                toSegmentIndex: toInstParsed.segmentIndex,
-              },
-            }
-          : fromRoot.layer === toRoot.layer
-            ? {
-                sameLayerSegmentDelta:
-                  toInstParsed.segmentIndex - fromInst.segmentIndex,
-              }
-            : (() => {
-                const slot = crossLayerBlockSlotFromSegments(
-                  fromRoot.layer,
-                  fromInst.segmentIndex,
-                  toRoot.layer,
-                  toInstParsed.segmentIndex,
-                );
-                if (slot === undefined) {
-                  return undefined;
-                }
-                return { crossLayerBlockSlot: slot };
-              })();
-      if (
-        fromRoot.id !== toRoot.id &&
-        fromRoot.layer !== toRoot.layer &&
-        linkOpts === undefined
-      ) {
-        return;
-      }
-      const added = addLinkRootOneWirePerPort(
-        state,
-        fromRoot.id,
-        from.port,
-        toRoot.id,
-        toP,
-        linkOpts,
-      );
-      if (!added.link) return;
-      state = added.state;
-      schedulePersist();
-      setSelection({ kind: "link", rootId: added.link.id });
-    };
-    window.addEventListener("pointermove", onMove, { passive: false });
-    window.addEventListener("pointerup", onEnd);
-    window.addEventListener("pointercancel", onEnd);
   };
 
   function renderCanvas(): void {
@@ -4699,7 +4450,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       });
     });
     const tCache0 = performance.now();
-    rebuildPortElementCache();
+    wireBag.w!.rebuildPortElementCache();
     const tCache1 = performance.now();
     recordPerf("canvas.portCache", tCache1 - tCache0);
     recordPerf("canvas.domCommit", tCache1 - tHtml0);
@@ -4715,7 +4466,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     // entity drag + hub hover are delegated once (outside renderCanvas)
 
     requestAnimationFrame(() => {
-      renderWireOverlay();
+      wireBag.w!.renderWireOverlay();
     });
   }
 
@@ -4759,7 +4510,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     setSelection(null);
     if (removingLink) {
       applySelectionToCanvas();
-      renderWireOverlay();
+      wireBag.w!.renderWireOverlay();
     } else {
       renderCanvas();
     }
@@ -5095,7 +4846,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const onWirePortPointerDown = (ev: PointerEvent): void => {
     const target = ev.target as HTMLElement | null;
     if (!target) return;
-    const portEl = target.closest<HTMLButtonElement>(".builder-port") ?? builderPortFromClientPoint(ev.clientX, ev.clientY);
+    const portEl =
+      target.closest<HTMLButtonElement>(".builder-port") ??
+      wireBag.w!.builderPortFromClientPoint(ev.clientX, ev.clientY);
     if (!portEl) return;
     suppressBoxSelectionUntilMouseUp = true;
     const clearSuppression = (): void => {
@@ -5103,7 +4856,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       window.removeEventListener("mouseup", clearSuppression, true);
     };
     window.addEventListener("mouseup", clearSuppression, true);
-    startLinkDragFromPort(portEl, ev);
+    wireBag.w!.startLinkDragFromPort(portEl, ev);
   };
   canvasWrapEl?.addEventListener("pointerdown", onWirePortPointerDown);
 
@@ -5280,13 +5033,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
 
   const wrap = wireOverlayEl.parentElement;
   if (wrap) {
-    wrap.addEventListener("scroll", scheduleWireOverlayRender, { passive: true });
+    wireBag.w!.attachScrollAndResizeListeners(wrap);
     const wrapResizeObserver = new ResizeObserver(() => {
       applyCanvasScale();
     });
     wrapResizeObserver.observe(wrap);
   }
-  window.addEventListener("resize", scheduleWireOverlayRender);
   window.addEventListener("resize", applyCanvasScale);
   window.addEventListener("resize", () => applyBuilderSidebarWidth(builderSidebarWidth));
 
