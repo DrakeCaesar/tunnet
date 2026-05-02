@@ -1113,10 +1113,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     getState: () => state,
     recordPerf: (key, ms) => recordPerf(key as BuilderPerfKey, ms),
     perfCounts,
-    afterWireOverlayPaint: (overlayPassStartMs) => {
-      invalidateBuilderPacketGeometryCache();
-      invalidateBuilderPacketRenderCache();
-      renderBuilderPacketCircles(simPacketProgress);
+    afterWireOverlayPaint: (overlayPassStartMs, paintOpts) => {
+      if (!paintOpts?.skipPacketRefresh) {
+        invalidateBuilderPacketGeometryCache();
+        invalidateBuilderPacketRenderCache();
+        renderBuilderPacketCircles(simPacketProgress);
+      }
       recordPerf("wire.total", performance.now() - overlayPassStartMs);
       renderPerfPanel();
     },
@@ -3508,6 +3510,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       shouldUpdateWiresDuringDrag: boolean;
     },
   ): void => {
+    wireBag.w!.endEntityWireDrag();
     const droppedInDeleteZone = isPointInDeleteDropZone(up.clientX, up.clientY);
     setDeleteDropZoneActive(false);
     if (dragRenderRaf !== null) {
@@ -3529,7 +3532,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       return;
     }
     hideDragGroupBounds();
-    if (!ctx.shouldUpdateWiresDuringDrag) {
+    if (ctx.shouldUpdateWiresDuringDrag) {
+      wireBag.w!.renderWireOverlay();
+    } else {
       wireBag.w!.scheduleWireOverlayRender();
     }
     schedulePersist();
@@ -3862,7 +3867,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           didMove = true;
           showDragGroupBounds(movingRootIds);
           if (shouldUpdateWiresDuringDrag) {
-            wireBag.w!.scheduleWireOverlayRender();
+            wireBag.w!.beginEntityWireDrag(movingRootIds, rootDragEnt.id);
+            wireBag.w!.scheduleEntityWireDragPartial();
           }
         };
         const onUp = (up: MouseEvent): void => {
@@ -4113,7 +4119,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       didMove = true;
       showDragGroupBounds(movingRootIds);
       if (shouldUpdateWiresDuringDrag) {
-        wireBag.w!.scheduleWireOverlayRender();
+        wireBag.w!.beginEntityWireDrag(movingRootIds, rootDragEnt.id);
+        wireBag.w!.scheduleEntityWireDragPartial();
       }
     };
     const onUp = (up: MouseEvent): void => {
@@ -4132,6 +4139,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   };
 
   function renderCanvas(): void {
+    wireBag.w!.notifyCanvasDomRebuilt();
     hideFilterTooltip();
     const t0 = performance.now();
     const tExpand0 = performance.now();

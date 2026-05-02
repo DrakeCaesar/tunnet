@@ -1,4 +1,8 @@
-import { expandLinks } from "./clone-engine";
+import {
+  expandLinks,
+  parseBuilderInstanceId,
+  type BuilderLinkInstance,
+} from "./clone-engine";
 import type { BuilderState } from "./state";
 import { isOuterLeafVoidSegment, isStaticOuterLeafEndpoint } from "./state";
 
@@ -18,8 +22,11 @@ export type BuilderWireOverlayOptions = {
   getState: () => BuilderState;
   recordPerf: (key: WirePerfKey, ms: number) => void;
   perfCounts: { stateLinks: number; expandedLinks: number };
-  /** After wire `innerHTML`; use `performance.now() - overlayPassStartMs` for `wire.total` if desired. */
-  afterWireOverlayPaint: (overlayPassStartMs: number) => void;
+  /**
+   * After wire `innerHTML` or partial wire attribute updates.
+   * `skipPacketRefresh`: set for scroll-only and entity-drag partial wire passes (skip packet overlay work).
+   */
+  afterWireOverlayPaint: (overlayPassStartMs: number, opts?: { skipPacketRefresh?: boolean }) => void;
   setBuilderDragCursor: (cursor: "crosshair") => void;
   clearBuilderDragCursor: () => void;
   /** Called after clearing rubber-band state and refreshing wires once. */
@@ -37,17 +44,48 @@ function portCacheKey(instanceId: string, port: number): string {
   return `${instanceId}#${port}`;
 }
 
+function linkRootIdFromInstanceId(instanceId: string): string | null {
+  const p = parseBuilderInstanceId(instanceId);
+  return p?.rootId ?? null;
+}
+
+function linkEntityDragWireCategory(
+  link: BuilderLinkInstance,
+  moving: Set<string>,
+): "static" | "internal" | "external" {
+  const fr = linkRootIdFromInstanceId(String(link.fromInstanceId));
+  const tr = linkRootIdFromInstanceId(String(link.toInstanceId));
+  const fm = fr !== null && moving.has(fr);
+  const tm = tr !== null && moving.has(tr);
+  if (!fm && !tm) return "static";
+  if (fm && tm) return "internal";
+  return "external";
+}
+
+function movingRootSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  let ok = true;
+  a.forEach((id) => {
+    if (!b.has(id)) ok = false;
+  });
+  return ok;
+}
+
 export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
   rebuildPortElementCache: () => void;
   resolveBuilderPortForWireOverlay: (instanceId: string, port: number) => HTMLButtonElement | null;
   builderPortFromClientPoint: (clientX: number, clientY: number) => HTMLButtonElement | null;
   renderWireOverlay: () => void;
-  scheduleWireOverlayRender: () => void;
+  scheduleWireOverlayRender: (schedOpts?: { scrollOnly?: boolean }) => void;
   scheduleWireDragPaint: () => void;
   startLinkDragFromPort: (portEl: HTMLButtonElement, ev: PointerEvent) => void;
   isLinkDragActive: () => boolean;
   clearLinkDrag: () => void;
   attachScrollAndResizeListeners: (wrap: HTMLElement) => void;
+  beginEntityWireDrag: (movingRootIds: readonly string[], anchorRootId?: string) => void;
+  scheduleEntityWireDragPartial: () => void;
+  endEntityWireDrag: () => void;
+  notifyCanvasDomRebuilt: () => void;
 } {
   const {
     root,
@@ -66,6 +104,18 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
   let linkDrag: { from: LinkSourceSelection; endClient: { x: number; y: number } } | null = null;
   let wireOverlayRaf: number | null = null;
   let wireDragRaf: number | null = null;
+  /** Coalesced wire RAF: skip packet refresh only if every schedule in the frame was scroll-only. */
+  let pendingWireSkipPackets: boolean | null = null;
+  let entityDragWireRaf: number | null = null;
+  let entityWireDrag: {
+    movingRootIds: Set<string>;
+    internalIndices: number[];
+    externalIndices: number[];
+    viewLinks: BuilderLinkInstance[];
+    anchorRootId: string;
+    anchorStartX: number;
+    anchorStartY: number;
+  } | null = null;
 
   function rebuildPortElementCache(): void {
     const next = new Map<string, HTMLButtonElement>();
@@ -123,33 +173,92 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     return closestPort;
   }
 
-  function renderWireOverlay(): void {
+  function endEntityWireDrag(): void {
+    entityWireDrag = null;
+    if (entityDragWireRaf !== null) {
+      window.cancelAnimationFrame(entityDragWireRaf);
+      entityDragWireRaf = null;
+    }
+  }
+
+  function notifyCanvasDomRebuilt(): void {
+    endEntityWireDrag();
+  }
+
+  function readAnchorEntityCenterOverlay(anchorRootId: string, wrap: HTMLElement): { x: number; y: number } | null {
+    const wrapRect = wrap.getBoundingClientRect();
+    const ent = canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${anchorRootId}"]`);
+    if (!ent) return null;
+    const r = ent.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    return {
+      x: r.left + r.width / 2 - wrapRect.left + wrap.scrollLeft,
+      y: r.top + r.height / 2 - wrapRect.top + wrap.scrollTop,
+    };
+  }
+
+  function beginEntityWireDrag(movingRootIds: readonly string[], anchorRootId?: string): void {
+    const next = new Set(movingRootIds);
+    if (next.size === 0) {
+      endEntityWireDrag();
+      return;
+    }
+    if (entityWireDrag && movingRootSetsEqual(entityWireDrag.movingRootIds, next)) {
+      if (wireOverlayEl.querySelector("[data-builder-vlink], [data-builder-vlink-internal]")) {
+        return;
+      }
+      endEntityWireDrag();
+    }
+    endEntityWireDrag();
+    const state = getState();
+    const viewLinks = expandLinks(state.links, state.entities);
+    const internalIndices: number[] = [];
+    const externalIndices: number[] = [];
+    for (let i = 0; i < viewLinks.length; i += 1) {
+      const cat = linkEntityDragWireCategory(viewLinks[i]!, next);
+      if (cat === "internal") internalIndices.push(i);
+      else if (cat === "external") externalIndices.push(i);
+    }
+    const anchor =
+      anchorRootId && next.has(anchorRootId) ? anchorRootId : (Array.from(next)[0] as string);
+    entityWireDrag = {
+      movingRootIds: next,
+      internalIndices,
+      externalIndices,
+      viewLinks,
+      anchorRootId: anchor,
+      anchorStartX: 0,
+      anchorStartY: 0,
+    };
+    renderWireOverlay({ mode: "entityDragPartitionBuild" });
+    const wrap = wireOverlayEl.parentElement;
+    if (wrap && entityWireDrag) {
+      let p = readAnchorEntityCenterOverlay(entityWireDrag.anchorRootId, wrap);
+      if (!p && entityWireDrag.internalIndices.length > 0) {
+        entityWireDrag.externalIndices.push(...entityWireDrag.internalIndices);
+        entityWireDrag.internalIndices = [];
+        renderWireOverlay({ mode: "entityDragPartitionBuild" });
+        p = readAnchorEntityCenterOverlay(entityWireDrag.anchorRootId, wrap);
+      }
+      if (p) {
+        entityWireDrag.anchorStartX = p.x;
+        entityWireDrag.anchorStartY = p.y;
+      }
+    }
+  }
+
+  function paintEntityWireDragPartial(): void {
+    const part = entityWireDrag;
+    if (!part) return;
     const t0 = performance.now();
     const wrap = wireOverlayEl.parentElement;
-    if (!wrap) return;
-    const scrollbarRightPx = Math.max(0, wrap.offsetWidth - wrap.clientWidth);
-    const scrollbarBottomPx = Math.max(0, wrap.offsetHeight - wrap.clientHeight);
-    root.style.setProperty("--builder-floating-scrollbar-right", `${scrollbarRightPx}px`);
-    root.style.setProperty("--builder-floating-scrollbar-bottom", `${scrollbarBottomPx}px`);
-    const state = getState();
-    const tExpand0 = performance.now();
-    const viewLinks = expandLinks(state.links, state.entities);
-    const tExpand1 = performance.now();
-    recordPerf("wire.expandLinks", tExpand1 - tExpand0);
-    perfCounts.stateLinks = state.links.length;
-    perfCounts.expandedLinks = viewLinks.length;
+    if (!wrap) {
+      endEntityWireDrag();
+      renderWireOverlay();
+      return;
+    }
     const wrapRect = wrap.getBoundingClientRect();
-    const contentWidth = Math.max(canvasEl.scrollWidth, canvasEl.clientWidth);
-    const contentHeight = Math.max(canvasEl.scrollHeight, canvasEl.clientHeight);
-    const overlayWidth = Math.max(wrap.clientWidth, contentWidth);
-    const overlayHeight = Math.max(wrap.clientHeight, contentHeight);
-    wireOverlayEl.setAttribute("width", String(Math.ceil(overlayWidth)));
-    wireOverlayEl.setAttribute("height", String(Math.ceil(overlayHeight)));
-    wireOverlayEl.style.width = `${Math.ceil(overlayWidth)}px`;
-    wireOverlayEl.style.height = `${Math.ceil(overlayHeight)}px`;
-    let lineMarkup = "";
     let resolveCost = 0;
-    const tLine0 = performance.now();
     const portWireEndpoint = (
       portEl: HTMLButtonElement,
     ): { x: number; y: number; radius: number; clipped: boolean } | null => {
@@ -200,7 +309,218 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
         ey: y2 - uy * endInset,
       };
     };
-    for (const link of viewLinks) {
+
+    const tLineBuild0 = performance.now();
+    let missing = false;
+    if (part.internalIndices.length > 0) {
+      const curAnchor = readAnchorEntityCenterOverlay(part.anchorRootId, wrap);
+      if (!curAnchor) {
+        missing = true;
+      } else {
+        const dx = curAnchor.x - part.anchorStartX;
+        const dy = curAnchor.y - part.anchorStartY;
+        const tr = `translate(${dx} ${dy})`;
+        for (const i of part.internalIndices) {
+          const lineEl = wireOverlayEl.querySelector(`[data-builder-vlink-internal="${i}"]`);
+          if (!lineEl) {
+            missing = true;
+            break;
+          }
+          lineEl.setAttribute("transform", tr);
+        }
+      }
+    }
+
+    if (!missing) {
+      for (const i of part.externalIndices) {
+        const link = part.viewLinks[i];
+        if (!link) {
+          missing = true;
+          break;
+        }
+        const tr0 = performance.now();
+        const from = resolveBuilderPortForWireOverlay(String(link.fromInstanceId), link.fromPort);
+        const to = resolveBuilderPortForWireOverlay(String(link.toInstanceId), link.toPort);
+        resolveCost += performance.now() - tr0;
+        const lineEl = wireOverlayEl.querySelector(`[data-builder-vlink="${i}"]`);
+        if (!from || !to || !lineEl) {
+          missing = true;
+          break;
+        }
+        const fromCenter = portWireEndpoint(from);
+        const toCenter = portWireEndpoint(to);
+        if (!fromCenter || !toCenter || (fromCenter.clipped && toCenter.clipped)) {
+          missing = true;
+          break;
+        }
+        const e = lineEndpointsAtPortEdges(
+          fromCenter.x,
+          fromCenter.y,
+          fromCenter.radius,
+          toCenter.x,
+          toCenter.y,
+          toCenter.radius,
+        );
+        lineEl.setAttribute("x1", String(e.sx));
+        lineEl.setAttribute("y1", String(e.sy));
+        lineEl.setAttribute("x2", String(e.ex));
+        lineEl.setAttribute("y2", String(e.ey));
+      }
+    }
+
+    if (missing) {
+      endEntityWireDrag();
+      renderWireOverlay();
+      return;
+    }
+
+    recordPerf("wire.portResolve", resolveCost);
+    const drag = linkDrag;
+    if (drag) {
+      const fromPort =
+        resolveBuilderPortForWireOverlay(String(drag.from.instanceId), drag.from.port) ??
+        (drag.from.instanceId
+          ? null
+          : canvasEl.querySelector<HTMLButtonElement>(
+              `.builder-port[data-root-id="${drag.from.rootId}"][data-port="${drag.from.port}"]`,
+            ));
+      if (fromPort) {
+        const fromCenter = portWireEndpoint(fromPort);
+        if (fromCenter) {
+          const x2 = drag.endClient.x - wrapRect.left + wrap.scrollLeft;
+          const y2 = drag.endClient.y - wrapRect.top + wrap.scrollTop;
+          const e = lineEndpointsAtPortEdges(fromCenter.x, fromCenter.y, fromCenter.radius, x2, y2, 0);
+          let dragLine = wireOverlayEl.querySelector(".builder-wire-drag");
+          if (!dragLine) {
+            dragLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            dragLine.setAttribute("class", "builder-wire-drag");
+            dragLine.setAttribute("pointer-events", "none");
+            dragLine.setAttribute("stroke", "#f9e2af");
+            dragLine.setAttribute("stroke-opacity", "0.9");
+            dragLine.setAttribute("stroke-width", "1.5");
+            wireOverlayEl.appendChild(dragLine);
+          }
+          dragLine.setAttribute("x1", String(e.sx));
+          dragLine.setAttribute("y1", String(e.sy));
+          dragLine.setAttribute("x2", String(e.ex));
+          dragLine.setAttribute("y2", String(e.ey));
+        }
+      }
+    } else {
+      wireOverlayEl.querySelector(".builder-wire-drag")?.remove();
+    }
+
+    recordPerf("wire.lineBuild", performance.now() - tLineBuild0);
+    afterWireOverlayPaint(t0, { skipPacketRefresh: true });
+  }
+
+  function scheduleEntityWireDragPartial(): void {
+    if (entityDragWireRaf !== null) return;
+    entityDragWireRaf = window.requestAnimationFrame(() => {
+      entityDragWireRaf = null;
+      paintEntityWireDragPartial();
+    });
+  }
+
+  /** Scrollbar gutter hints for floating HUD; cheap — no link geometry. */
+  function applyWireOverlayScrollChromeOnly(): void {
+    const wrap = wireOverlayEl.parentElement;
+    if (!wrap) return;
+    const scrollbarRightPx = Math.max(0, wrap.offsetWidth - wrap.clientWidth);
+    const scrollbarBottomPx = Math.max(0, wrap.offsetHeight - wrap.clientHeight);
+    root.style.setProperty("--builder-floating-scrollbar-right", `${scrollbarRightPx}px`);
+    root.style.setProperty("--builder-floating-scrollbar-bottom", `${scrollbarBottomPx}px`);
+  }
+
+  type RenderWireOpts = {
+    skipPacketRefresh?: boolean;
+    mode?: "default" | "entityDragPartitionBuild";
+  };
+
+  function renderWireOverlay(opts?: RenderWireOpts): void {
+    if (opts?.mode !== "entityDragPartitionBuild") {
+      endEntityWireDrag();
+    }
+    const t0 = performance.now();
+    const wrap = wireOverlayEl.parentElement;
+    if (!wrap) return;
+    applyWireOverlayScrollChromeOnly();
+    const state = getState();
+    const tExpand0 = performance.now();
+    const viewLinks = expandLinks(state.links, state.entities);
+    const tExpand1 = performance.now();
+    recordPerf("wire.expandLinks", tExpand1 - tExpand0);
+    perfCounts.stateLinks = state.links.length;
+    perfCounts.expandedLinks = viewLinks.length;
+    const wrapRect = wrap.getBoundingClientRect();
+    const contentWidth = Math.max(canvasEl.scrollWidth, canvasEl.clientWidth);
+    const contentHeight = Math.max(canvasEl.scrollHeight, canvasEl.clientHeight);
+    const overlayWidth = Math.max(wrap.clientWidth, contentWidth);
+    const overlayHeight = Math.max(wrap.clientHeight, contentHeight);
+    wireOverlayEl.setAttribute("width", String(Math.ceil(overlayWidth)));
+    wireOverlayEl.setAttribute("height", String(Math.ceil(overlayHeight)));
+    wireOverlayEl.style.width = `${Math.ceil(overlayWidth)}px`;
+    wireOverlayEl.style.height = `${Math.ceil(overlayHeight)}px`;
+    let lineMarkup = "";
+    let resolveCost = 0;
+    const tLine0 = performance.now();
+    const tagLines = opts?.mode === "entityDragPartitionBuild";
+    const internalIndexSet =
+      tagLines && entityWireDrag ? new Set(entityWireDrag.internalIndices) : null;
+    const externalIndexSet =
+      tagLines && entityWireDrag ? new Set(entityWireDrag.externalIndices) : null;
+    const portWireEndpoint = (
+      portEl: HTMLButtonElement,
+    ): { x: number; y: number; radius: number; clipped: boolean } | null => {
+      const viewport = portEl.closest<HTMLElement>(".builder-segment-entities");
+      const rect = portEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      let clientX = rect.left + rect.width / 2;
+      let clientY = rect.top + rect.height / 2;
+      let clipped = false;
+      if (viewport) {
+        const viewportRect = viewport.getBoundingClientRect();
+        if (viewportRect.width <= 0 || viewportRect.height <= 0) return null;
+        const clampedX = Math.max(viewportRect.left, Math.min(viewportRect.right, clientX));
+        const clampedY = Math.max(viewportRect.top, Math.min(viewportRect.bottom, clientY));
+        clipped = clampedX !== clientX || clampedY !== clientY;
+        clientX = clampedX;
+        clientY = clampedY;
+      }
+      return {
+        x: clientX - wrapRect.left + wrap.scrollLeft,
+        y: clientY - wrapRect.top + wrap.scrollTop,
+        radius: clipped ? 0 : rect.width / 2,
+        clipped,
+      };
+    };
+    const lineEndpointsAtPortEdges = (
+      x1: number,
+      y1: number,
+      r1: number,
+      x2: number,
+      y2: number,
+      r2: number,
+    ): { sx: number; sy: number; ex: number; ey: number } => {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const d = Math.hypot(dx, dy);
+      if (d < 1e-6) {
+        return { sx: x1, sy: y1, ex: x2, ey: y2 };
+      }
+      const ux = dx / d;
+      const uy = dy / d;
+      const startInset = Math.min(r1, d * 0.45);
+      const endInset = Math.min(r2, d * 0.45);
+      return {
+        sx: x1 + ux * startInset,
+        sy: y1 + uy * startInset,
+        ex: x2 - ux * endInset,
+        ey: y2 - uy * endInset,
+      };
+    };
+    for (let i = 0; i < viewLinks.length; i += 1) {
+      const link = viewLinks[i]!;
       const tr0 = performance.now();
       const from = resolveBuilderPortForWireOverlay(String(link.fromInstanceId), link.fromPort);
       const to = resolveBuilderPortForWireOverlay(String(link.toInstanceId), link.toPort);
@@ -218,7 +538,13 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
         toCenter.y,
         toCenter.radius,
       );
-      lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="#f9e2af" stroke-opacity="0.9" stroke-width="1.5"></line>`;
+      let linkTag = "";
+      if (internalIndexSet?.has(i)) {
+        linkTag = ` data-builder-vlink-internal="${i}" transform="translate(0 0)"`;
+      } else if (externalIndexSet?.has(i)) {
+        linkTag = ` data-builder-vlink="${i}"`;
+      }
+      lineMarkup += `<line${linkTag} x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="#f9e2af" stroke-opacity="0.9" stroke-width="1.5"></line>`;
     }
     recordPerf("wire.portResolve", resolveCost);
     recordPerf("wire.lineBuild", performance.now() - tLine0);
@@ -242,14 +568,29 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
       }
     }
     wireOverlayEl.innerHTML = lineMarkup;
-    afterWireOverlayPaint(t0);
+    if (opts?.mode === "entityDragPartitionBuild" && entityWireDrag) {
+      entityWireDrag.viewLinks = viewLinks;
+    }
+    const skipPackets = opts?.skipPacketRefresh === true;
+    afterWireOverlayPaint(t0, skipPackets ? { skipPacketRefresh: true } : undefined);
   }
 
-  function scheduleWireOverlayRender(): void {
+  function scheduleWireOverlayRender(schedOpts?: { scrollOnly?: boolean }): void {
+    const scrollOnly = !!schedOpts?.scrollOnly;
+    pendingWireSkipPackets =
+      pendingWireSkipPackets === null ? scrollOnly : pendingWireSkipPackets && scrollOnly;
     if (wireOverlayRaf !== null) return;
     wireOverlayRaf = window.requestAnimationFrame(() => {
       wireOverlayRaf = null;
-      renderWireOverlay();
+      const skipPackets = pendingWireSkipPackets ?? false;
+      pendingWireSkipPackets = null;
+      // Pure canvas scroll: wire endpoints in content space are unchanged (coords use scrollLeft/Top).
+      // Only scrollbar gutters may affect HUD; skip expandLinks / DOM / innerHTML unless link rubber is active.
+      if (skipPackets && linkDrag === null) {
+        applyWireOverlayScrollChromeOnly();
+        return;
+      }
+      renderWireOverlay({ skipPacketRefresh: skipPackets });
     });
   }
 
@@ -263,6 +604,7 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
 
   function startLinkDragFromPort(portEl: HTMLButtonElement, ev: PointerEvent): void {
     if (ev.button !== 0 || !ev.isPrimary) return;
+    endEntityWireDrag();
     const downClient = { x: ev.clientX, y: ev.clientY };
     const startedFromPacket = ev.target instanceof Element && !!ev.target.closest("circle.builder-packet-dot");
     const rootId = portEl.dataset.rootId!;
@@ -308,9 +650,6 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
         return;
       }
       e.preventDefault();
-      if (startedFromPacket) {
-        // Consumed by canvas (suppress packet toggle on pointerup).
-      }
       const toPort = builderPortFromClientPoint(e.clientX, e.clientY);
       root.classList.remove("builder-wire-dragging");
       linkDrag = null;
@@ -323,15 +662,15 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
   }
 
   function attachScrollAndResizeListeners(wrap: HTMLElement): void {
-    wrap.addEventListener("scroll", scheduleWireOverlayRender, { passive: true });
-    window.addEventListener("resize", scheduleWireOverlayRender);
+    wrap.addEventListener("scroll", () => scheduleWireOverlayRender({ scrollOnly: true }), { passive: true });
+    window.addEventListener("resize", () => scheduleWireOverlayRender());
   }
 
   return {
     rebuildPortElementCache,
     resolveBuilderPortForWireOverlay,
     builderPortFromClientPoint,
-    renderWireOverlay,
+    renderWireOverlay: () => renderWireOverlay(),
     scheduleWireOverlayRender,
     scheduleWireDragPaint,
     startLinkDragFromPort,
@@ -340,5 +679,9 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
       linkDrag = null;
     },
     attachScrollAndResizeListeners,
+    beginEntityWireDrag,
+    scheduleEntityWireDragPartial,
+    endEntityWireDrag,
+    notifyCanvasDomRebuilt,
   };
 }
