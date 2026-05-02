@@ -1,5 +1,3 @@
-import { packetLabelToggleButtonText } from "../packet-label-mode";
-
 export function mountLayout(): HTMLDivElement {
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) throw new Error("Missing #app root");
@@ -17,21 +15,8 @@ export function mountLayout(): HTMLDivElement {
         </div>
         <div class="card">
           <div class="section-title">Simulation</div>
-          <div class="sim-buttons">
-            <button id="sv-step" type="button">Step</button>
-            <button id="sv-run" type="button">Run</button>
-            <button id="sv-stop" type="button">Stop</button>
-            <button id="sv-reset" type="button">Reset</button>
-          </div>
-          <label class="sim-send-rate-label" for="sv-tick-rate">Tick interval</label>
-          <div class="sim-send-rate-row">
-            <input id="sv-tick-rate" type="range" min="20" max="1000" step="10" value="200" />
-            <span id="sv-tick-rate-value" class="meta">200 ms</span>
-          </div>
-          <div class="sim-buttons">
-            <button id="sv-toggle-packet-ips" type="button">${packetLabelToggleButtonText("ipsSubject")}</button>
-          </div>
-          <div id="sv-stats" class="meta"></div>
+          <div id="sv-sim-status" class="meta sv-sim-status"></div>
+          <div id="sv-sim-panel-host"></div>
         </div>
         <div class="card">
           <div class="section-title">View</div>

@@ -11,6 +11,8 @@ export const STORAGE_KEYS = {
   cameraStatePilot: "tunnet.saveViewer.cameraStatePilot",
   playerPositionPilot: "tunnet.saveViewer.playerPositionPilot",
   tickIntervalMs: "tunnet.saveViewer.tickIntervalMs",
+  /** Preferred tick speed (log₂ multiplier); replaces tickIntervalMs when set. */
+  simSpeedExponent: "tunnet.saveViewer.simSpeedExponent",
   packetLabelMode: "tunnet.saveViewer.packetLabelMode",
 } as const;
 

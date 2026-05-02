@@ -1,5 +1,5 @@
 import { endpointData, type EndpointDatasetRow } from "../builder/endpoint-data";
-import type { Topology, SimulationStats, PortRef } from "../simulation";
+import type { Topology, PortRef } from "../simulation";
 
 export type SaveAddressElement = "Zero" | "One" | "Two" | "Three" | "Wildcard";
 
@@ -400,8 +400,4 @@ export function viewBoxFor(nodes: VisualNode[]): { minX: number; minY: number; m
 
 export function clampZoom(z: number): number {
   return Math.max(0.2, Math.min(8, z));
-}
-
-export function formatStats(stats: SimulationStats, inFlightPackets: number): string {
-  return `tick ${stats.tick} | in-flight ${inFlightPackets} | emitted ${stats.emitted} | delivered ${stats.delivered} | dropped ${stats.dropped} | collisions ${stats.collisions}`;
 }

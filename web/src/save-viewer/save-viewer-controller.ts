@@ -3,7 +3,21 @@ import {
   buildPortAdjacency,
   type PortRef,
   type Packet,
+  type SimulationStats,
+  type SimulatorRuntimeState,
 } from "../simulation";
+import {
+  SPEED_EXP_DEFAULT,
+  SPEED_EXP_MAX,
+  SPEED_EXP_MIN,
+  formatSpeedLabel,
+  speedMultiplierFromExponent,
+} from "../sim-controls";
+import {
+  mountSimulatorPanel,
+  renderSimulatorMetaGridHtml,
+  SimulatorDropBoardController,
+} from "../simulator-panel-ui";
 import { setWorldSsaoEnabled } from "./world-ao-ssao";
 import { setWorldGridLineResolution } from "./world-grid-lines";
 import {
@@ -14,10 +28,10 @@ import {
   buildGraphModel,
   viewBoxFor,
   clampZoom,
-  formatStats,
   type SaveData,
   type GraphModel,
   type ViewportBox,
+  type VisualNode,
 } from "./model";
 import { renderGraph, renderPacketOverlay } from "./view-2d";
 import {
@@ -36,6 +50,53 @@ import {
 import { absolutePathFromFile, displaySaveLocation } from "./save-file-display-path";
 import { idbGetLastPickedSave, idbPutLastPickedSave, type LastPickedSaveRecord } from "./last-save-idb";
 import { STORAGE_KEYS, parseCameraState, parsePilotPosition } from "./save-viewer-storage";
+
+function clampSimSpeedExp(n: number): number {
+  if (!Number.isFinite(n)) return SPEED_EXP_DEFAULT;
+  return Math.max(SPEED_EXP_MIN, Math.min(SPEED_EXP_MAX, Math.round(n)));
+}
+
+function loadSpeedExponentFromStorage(): number {
+  const rawExp = window.localStorage.getItem(STORAGE_KEYS.simSpeedExponent);
+  if (rawExp !== null && rawExp.trim() !== "") {
+    const parsed = Number.parseInt(rawExp, 10);
+    if (Number.isFinite(parsed)) return clampSimSpeedExp(parsed);
+  }
+  const legacyMs = Number(window.localStorage.getItem(STORAGE_KEYS.tickIntervalMs) ?? "");
+  if (Number.isFinite(legacyMs) && legacyMs >= 20 && legacyMs <= 1000) {
+    const tps = 1000 / legacyMs;
+    const exp = Math.round(Math.log2(Math.max(0.25, Math.min(64, tps))));
+    return clampSimSpeedExp(exp);
+  }
+  return SPEED_EXP_DEFAULT;
+}
+
+function cloneOccupancyWithPacketsSv(
+  occ: Array<{ port: PortRef; packet: Packet }>,
+): Array<{ port: PortRef; packet: Packet }> {
+  return occ.map((e) => ({ port: { ...e.port }, packet: { ...e.packet } }));
+}
+
+function cloneRuntimeStateSv(runtime: SimulatorRuntimeState): SimulatorRuntimeState {
+  return {
+    tick: runtime.tick,
+    packetIdCounter: runtime.packetIdCounter,
+    rndState: runtime.rndState >>> 0,
+    sendRateMultiplier: runtime.sendRateMultiplier,
+    stats: { ...runtime.stats },
+    occupancy: cloneOccupancyWithPacketsSv(runtime.occupancy),
+    endpointNextSendTickById: { ...runtime.endpointNextSendTickById },
+  };
+}
+
+type SvSimHistoryEntry = {
+  runtime: SimulatorRuntimeState;
+  prevStatsTotals: { emitted: number; delivered: number; dropped: number };
+  deliveredHistory: number[];
+  simDeliveredPerTickAvg100: number | null;
+  simDropPctCumulative: number | null;
+  dropCounts: Map<string, number>;
+};
 
 function fitBoxToViewportAspect(box: ViewportBox, viewportWidthPx: number, viewportHeightPx: number): ViewportBox {
   const vw = Math.max(1, viewportWidthPx);
@@ -68,13 +129,8 @@ function fitBoxToViewportAspect(box: ViewportBox, viewportWidthPx: number, viewp
 export function startSaveViewerController(): void {
   const fileInput = document.querySelector<HTMLInputElement>("#sv-file-input");
   const reloadSaveButton = document.querySelector<HTMLButtonElement>("#sv-reload-save");
-  const stepButton = document.querySelector<HTMLButtonElement>("#sv-step");
-  const runButton = document.querySelector<HTMLButtonElement>("#sv-run");
-  const stopButton = document.querySelector<HTMLButtonElement>("#sv-stop");
-  const resetButton = document.querySelector<HTMLButtonElement>("#sv-reset");
-  const tickRateInput = document.querySelector<HTMLInputElement>("#sv-tick-rate");
-  const tickRateValue = document.querySelector<HTMLSpanElement>("#sv-tick-rate-value");
-  const togglePacketIpsButton = document.querySelector<HTMLButtonElement>("#sv-toggle-packet-ips");
+  const simPanelHost = document.querySelector<HTMLDivElement>("#sv-sim-panel-host");
+  const statusEl = document.querySelector<HTMLDivElement>("#sv-sim-status");
   const zoomInButton = document.querySelector<HTMLButtonElement>("#sv-zoom-in");
   const zoomOutButton = document.querySelector<HTMLButtonElement>("#sv-zoom-out");
   const zoomFitButton = document.querySelector<HTMLButtonElement>("#sv-zoom-fit");
@@ -96,23 +152,37 @@ export function startSaveViewerController(): void {
   const wiresEl = document.querySelector<SVGSVGElement>("#sv-wires");
   const packetOverlayEl = document.querySelector<SVGSVGElement>("#sv-packet-overlay");
   const view3DEl = document.querySelector<HTMLDivElement>("#sv-3d-view");
-  const statsEl = document.querySelector<HTMLDivElement>("#sv-stats");
   const selectedDeviceEl = document.querySelector<HTMLDivElement>("#sv-selected-device");
   const lastSavePathEl = document.querySelector<HTMLDivElement>("#sv-last-save-path");
   if (
-    !fileInput || !reloadSaveButton || !lastSavePathEl || !stepButton || !runButton || !stopButton ||
-    !resetButton || !tickRateInput || !tickRateValue || !togglePacketIpsButton || !zoomInButton || !zoomOutButton ||
+    !fileInput || !reloadSaveButton || !lastSavePathEl || !simPanelHost || !statusEl || !zoomInButton || !zoomOutButton ||
     !zoomFitButton || !viewToggleButton || !fpsToggleButton || !gravityToggleButton || !ssaoToggleButton ||
     !blockAoToggleButton || !hemiAoToggleButton || !resetCameraButton || !teleportEndpointInput || !teleportButton ||
     !cullHeightInput || !cullHeightValue || !loadProgressWrap || !loadProgress || !loadProgressValue || !loadProgressText ||
-    !wiresEl || !packetOverlayEl || !view3DEl || !statsEl || !selectedDeviceEl
+    !wiresEl || !packetOverlayEl || !view3DEl || !selectedDeviceEl
   ) {
     throw new Error("Missing save viewer controls");
   }
 
+  const simSpeedExpInitial = loadSpeedExponentFromStorage();
+  const panel = mountSimulatorPanel(simPanelHost, "sv", {
+    stepBack: true,
+    speedExponent: simSpeedExpInitial,
+  });
+  let simSpeedExp = clampSimSpeedExp(Number(panel.speedRange.value));
+
+  const DELIVERED_AVG_WINDOW = 100;
+  let simPlaying = false;
+  let prevStatsTotals = { emitted: 0, delivered: 0, dropped: 0 };
+  const deliveredHistory: number[] = [];
+  let simDeliveredPerTickAvg100: number | null = null;
+  let simDropPctCumulative: number | null = null;
+
   let currentModel: GraphModel = { nodes: [], links: [], topology: { devices: {}, links: [] } };
   let currentSave: SaveData = normalizeSave({});
   let simulator: TunnetSimulator | null = null;
+  const SIM_HISTORY_LIMIT = 100;
+  const svSimHistory: SvSimHistoryEntry[] = [];
   let runTimer: number | null = null;
   let baseBox: ViewportBox = { minX: -10, minY: -10, maxX: 10, maxY: 10 };
   let cameraBox: ViewportBox = { ...baseBox };
@@ -122,12 +192,127 @@ export function startSaveViewerController(): void {
   let packetLabelMode: PacketLabelMode = parsePacketLabelModeFromStorage(
     window.localStorage.getItem(STORAGE_KEYS.packetLabelMode),
   );
-  let tickIntervalMs = 200;
+
+  const dropBoard = new SimulatorDropBoardController(panel.dropListEl, panel.dropEmptyEl, () => currentModel.topology);
+
+  const renderSelectedDeviceFromNode = (node: VisualNode): void => {
+    selectedDeviceEl.innerHTML = `
+          <div class="kv"><span>Type</span><strong>${node.type}</strong></div>
+          <div class="kv"><span>ID</span><strong>${node.id}</strong></div>
+          <div class="kv"><span>Label</span><strong>${node.label}</strong></div>
+          <div class="kv"><span>Position</span><strong>[${node.x.toFixed(2)}, ${node.y.toFixed(2)}]</strong></div>
+        `;
+  };
+
+  dropBoard.onPick = (deviceId) => {
+    const node = currentModel.nodes.find((n) => n.id === deviceId);
+    if (node) renderSelectedDeviceFromNode(node);
+    else {
+      selectedDeviceEl.innerHTML = `<div class="kv"><span>Device</span><strong>${deviceId}</strong></div>`;
+    }
+  };
+
+  panel.togglePacketIpsBtn.textContent = packetLabelToggleButtonText(packetLabelMode);
+
+  const tickIntervalMs = (): number => Math.max(1, 1000 / speedMultiplierFromExponent(simSpeedExp));
+
+  const updateSimPanelMetaFromStats = (stats: SimulationStats, inFlight: number): void => {
+    panel.metaEl.innerHTML = renderSimulatorMetaGridHtml({
+      stats,
+      inFlight,
+      deliveredPerTickAvg100: simDeliveredPerTickAvg100,
+      dropPctCumulative: simDropPctCumulative,
+    });
+    dropBoard.refresh();
+  };
+
+  const applyStepMetrics = (next: {
+    stats: SimulationStats;
+    inFlightPackets: number;
+    dropEventDeviceIds: string[];
+  }): void => {
+    const deliveredTick = next.stats.delivered - prevStatsTotals.delivered;
+    prevStatsTotals = {
+      emitted: next.stats.emitted,
+      delivered: next.stats.delivered,
+      dropped: next.stats.dropped,
+    };
+    deliveredHistory.push(deliveredTick);
+    if (deliveredHistory.length > DELIVERED_AVG_WINDOW) deliveredHistory.shift();
+    simDeliveredPerTickAvg100 =
+      deliveredHistory.length > 0 ? deliveredHistory.reduce((s, v) => s + v, 0) / deliveredHistory.length : null;
+    simDropPctCumulative =
+      next.stats.emitted > 0 ? (next.stats.dropped / next.stats.emitted) * 100 : null;
+    dropBoard.ingestDropEvents(next.dropEventDeviceIds);
+    updateSimPanelMetaFromStats(next.stats, next.inFlightPackets);
+  };
+
+  const updateSimBackButtonState = (): void => {
+    panel.backBtn.disabled = svSimHistory.length === 0 || svSimAnimating;
+  };
+
+  const clearSvSimHistory = (): void => {
+    svSimHistory.length = 0;
+    updateSimBackButtonState();
+  };
+
+  const pushSvSimHistorySnapshot = (): void => {
+    if (!simulator) return;
+    const runtime = simulator.exportRuntimeState();
+    svSimHistory.push({
+      runtime: cloneRuntimeStateSv(runtime),
+      prevStatsTotals: { ...prevStatsTotals },
+      deliveredHistory: [...deliveredHistory],
+      simDeliveredPerTickAvg100,
+      simDropPctCumulative,
+      dropCounts: dropBoard.snapshotCounts(),
+    });
+    if (svSimHistory.length > SIM_HISTORY_LIMIT) {
+      svSimHistory.splice(0, svSimHistory.length - SIM_HISTORY_LIMIT);
+    }
+    updateSimBackButtonState();
+  };
+
+  const stepBackSaveViewerSimulation = (): void => {
+    if (!simulator || svSimAnimating) return;
+    if (simPlaying) {
+      simPlaying = false;
+      panel.playPauseBtn.textContent = "▶";
+      stopRunLoop();
+    }
+    const snap = svSimHistory.pop();
+    if (!snap) {
+      updateSimBackButtonState();
+      return;
+    }
+    if (packetAnimRaf !== null) {
+      window.cancelAnimationFrame(packetAnimRaf);
+      packetAnimRaf = null;
+    }
+    svSimAnimating = false;
+    const fromOcc = simulator
+      .getPortOccupancy()
+      .map((e) => ({ port: { ...e.port }, packet: { ...e.packet } }));
+    simulator.importRuntimeState(snap.runtime);
+    previousOccupancy = fromOcc;
+    currentOccupancy = cloneOccupancyWithPacketsSv(snap.runtime.occupancy);
+    prevStatsTotals = { ...snap.prevStatsTotals };
+    deliveredHistory.length = 0;
+    deliveredHistory.push(...snap.deliveredHistory);
+    simDeliveredPerTickAvg100 = snap.simDeliveredPerTickAvg100;
+    simDropPctCumulative = snap.simDropPctCumulative;
+    dropBoard.restoreCounts(snap.dropCounts);
+    schedulePacketAnimation();
+    updateSimPanelMetaFromStats(snap.runtime.stats, snap.runtime.occupancy.length);
+    updateSimBackButtonState();
+  };
+
   let isPanning = false;
   let panMoved = false;
   let panLastX = 0;
   let panLastY = 0;
   let packetAnimRaf: number | null = null;
+  let svSimAnimating = false;
   let use3DView = false;
   let firstPersonMode = false;
   let gravityEnabled = true;
@@ -307,13 +492,19 @@ export function startSaveViewerController(): void {
 
   const schedulePacketAnimation = (): void => {
     if (packetAnimRaf !== null) window.cancelAnimationFrame(packetAnimRaf);
+    svSimAnimating = true;
+    updateSimBackButtonState();
     const start = performance.now();
     const animate = (): void => {
       const elapsed = performance.now() - start;
-      const progress = Math.max(0, Math.min(1, elapsed / Math.max(1, tickIntervalMs)));
+      const progress = Math.max(0, Math.min(1, elapsed / Math.max(1, tickIntervalMs())));
       renderGraphAndPackets(progress);
       if (progress < 1) packetAnimRaf = window.requestAnimationFrame(animate);
-      else packetAnimRaf = null;
+      else {
+        packetAnimRaf = null;
+        svSimAnimating = false;
+        updateSimBackButtonState();
+      }
     };
     packetAnimRaf = window.requestAnimationFrame(animate);
   };
@@ -364,13 +555,25 @@ export function startSaveViewerController(): void {
 
   const resetSimulator = (): void => {
     stopRunLoop();
+    simPlaying = false;
+    panel.playPauseBtn.textContent = "▶";
     simulator = new TunnetSimulator(currentModel.topology, 1337);
     simAdj = buildPortAdjacency(currentModel.topology);
     const rt = simulator.exportRuntimeState();
     previousOccupancy = rt.occupancy;
     currentOccupancy = rt.occupancy;
     renderGraphAndPackets();
-    statsEl.textContent = formatStats(rt.stats, rt.occupancy.length);
+    prevStatsTotals = {
+      emitted: rt.stats.emitted,
+      delivered: rt.stats.delivered,
+      dropped: rt.stats.dropped,
+    };
+    deliveredHistory.length = 0;
+    simDeliveredPerTickAvg100 = null;
+    simDropPctCumulative = null;
+    dropBoard.reset();
+    clearSvSimHistory();
+    updateSimPanelMetaFromStats(rt.stats, rt.occupancy.length);
   };
 
   const renderAndReset = (raw: unknown): void => {
@@ -415,14 +618,14 @@ export function startSaveViewerController(): void {
           ...(abs ? { absolutePath: abs } : {}),
         });
       } catch (persistErr) {
-        statsEl.textContent = `Loaded ${file.name} (could not remember for next visit: ${String(persistErr)})`;
+        statusEl.textContent = `Loaded ${file.name} (could not remember for next visit: ${String(persistErr)})`;
         reloadSaveButton.disabled = true;
         return;
       }
       reloadSaveButton.disabled = false;
-      statsEl.textContent = `Loaded ${file.name}`;
+      statusEl.textContent = `Loaded ${file.name}`;
     } catch (err) {
-      statsEl.textContent = `load error: ${String(err)}`;
+      statusEl.textContent = `load error: ${String(err)}`;
     } finally {
       // Allow choosing the same path again (disk contents may have changed); inputs only fire `change` when the value differs.
       fileInput.value = "";
@@ -433,64 +636,71 @@ export function startSaveViewerController(): void {
     try {
       const rec = await idbGetLastPickedSave();
       if (!rec) {
-        statsEl.textContent = "Nothing to reload — pick a save file first.";
+        statusEl.textContent = "Nothing to reload — pick a save file first.";
         return;
       }
       renderAndReset(JSON.parse(rec.jsonText));
       applyLastSavePathUi(rec);
-      statsEl.textContent = `Reloaded ${rec.fileName}`;
+      statusEl.textContent = `Reloaded ${rec.fileName}`;
     } catch (err) {
-      statsEl.textContent = `reload error: ${String(err)}`;
+      statusEl.textContent = `reload error: ${String(err)}`;
     }
   });
 
-  stepButton.addEventListener("click", () => {
+  const runSingleStep = (): void => {
     if (!simulator) return;
+    pushSvSimHistorySnapshot();
     previousOccupancy = currentOccupancy;
     const next = simulator.step();
     currentOccupancy = simulator.getPortOccupancy().map((e) => ({ port: { ...e.port }, packet: { ...e.packet } }));
     schedulePacketAnimation();
-    statsEl.textContent = formatStats(next.stats, next.inFlightPackets);
-  });
-
-  const runTick = (): void => {
-    if (!simulator) return;
-    previousOccupancy = currentOccupancy;
-    const next = simulator.step();
-    currentOccupancy = simulator.getPortOccupancy().map((e) => ({ port: { ...e.port }, packet: { ...e.packet } }));
-    schedulePacketAnimation();
-    statsEl.textContent = formatStats(next.stats, next.inFlightPackets);
+    applyStepMetrics(next);
   };
 
-  runButton.addEventListener("click", () => {
-    if (!simulator || runTimer !== null) return;
-    runTimer = window.setInterval(runTick, tickIntervalMs);
+  const runTick = (): void => {
+    if (svSimAnimating) return;
+    runSingleStep();
+  };
+
+  panel.stepBtn.addEventListener("click", () => {
+    if (!simulator || simPlaying || svSimAnimating) return;
+    runSingleStep();
   });
-  stopButton.addEventListener("click", stopRunLoop);
-  resetButton.addEventListener("click", () => {
+
+  panel.backBtn.addEventListener("click", () => {
+    stepBackSaveViewerSimulation();
+  });
+
+  panel.playPauseBtn.addEventListener("click", () => {
+    if (!simulator) return;
+    simPlaying = !simPlaying;
+    panel.playPauseBtn.textContent = simPlaying ? "❚❚" : "▶";
+    if (simPlaying) {
+      runTimer = window.setInterval(runTick, tickIntervalMs());
+    } else {
+      stopRunLoop();
+    }
+  });
+
+  panel.resetBtn.addEventListener("click", () => {
     if (Object.keys(currentModel.topology.devices).length === 0) return;
     resetSimulator();
   });
-  togglePacketIpsButton.textContent = packetLabelToggleButtonText(packetLabelMode);
-  togglePacketIpsButton.addEventListener("click", () => {
+
+  panel.togglePacketIpsBtn.addEventListener("click", () => {
     packetLabelMode = nextPacketLabelMode(packetLabelMode);
-    togglePacketIpsButton.textContent = packetLabelToggleButtonText(packetLabelMode);
+    panel.togglePacketIpsBtn.textContent = packetLabelToggleButtonText(packetLabelMode);
     window.localStorage.setItem(STORAGE_KEYS.packetLabelMode, packetLabelMode);
     renderGraphAndPackets();
   });
 
-  const savedTickInterval = Number(window.localStorage.getItem(STORAGE_KEYS.tickIntervalMs) ?? "");
-  if (Number.isFinite(savedTickInterval) && savedTickInterval >= 20 && savedTickInterval <= 1000) tickIntervalMs = Math.floor(savedTickInterval);
-  tickRateInput.value = String(tickIntervalMs);
-  tickRateValue.textContent = `${tickIntervalMs} ms`;
-  tickRateInput.addEventListener("input", () => {
-    const value = Number.parseInt(tickRateInput.value, 10);
-    tickIntervalMs = Number.isFinite(value) ? Math.max(20, Math.min(1000, value)) : 200;
-    tickRateValue.textContent = `${tickIntervalMs} ms`;
-    window.localStorage.setItem(STORAGE_KEYS.tickIntervalMs, String(tickIntervalMs));
+  panel.speedRange.addEventListener("input", () => {
+    simSpeedExp = clampSimSpeedExp(Number(panel.speedRange.value));
+    panel.speedValueSpan.textContent = formatSpeedLabel(simSpeedExp);
+    window.localStorage.setItem(STORAGE_KEYS.simSpeedExponent, String(simSpeedExp));
     if (runTimer !== null) {
       window.clearInterval(runTimer);
-      runTimer = window.setInterval(runTick, tickIntervalMs);
+      runTimer = window.setInterval(runTick, tickIntervalMs());
     }
   });
 
@@ -563,22 +773,22 @@ export function startSaveViewerController(): void {
   const teleportToEndpoint = (): void => {
     const address = normalizeEndpointAddressInput(teleportEndpointInput.value);
     if (!address) {
-      statsEl.textContent = "teleport error: enter an address like 0.3.0.0";
+      statusEl.textContent = "teleport error: enter an address like 0.3.0.0";
       return;
     }
     teleportEndpointInput.value = address;
     const position = findEndpointPosition(address);
     if (!position) {
-      statsEl.textContent = `teleport error: endpoint ${address} not found`;
+      statusEl.textContent = `teleport error: endpoint ${address} not found`;
       return;
     }
     pendingTeleportPosition = position;
     if (world3D) {
       applyTeleportPosition(position);
-      statsEl.textContent = `teleported to endpoint ${address}`;
+      statusEl.textContent = `teleported to endpoint ${address}`;
       return;
     }
-    statsEl.textContent = `loading 3D view to teleport to endpoint ${address}`;
+    statusEl.textContent = `loading 3D view to teleport to endpoint ${address}`;
     if (!use3DView) {
       use3DView = true;
       window.localStorage.setItem(STORAGE_KEYS.viewMode, "3d");
@@ -675,22 +885,22 @@ export function startSaveViewerController(): void {
 
   const savedViewMode = (window.localStorage.getItem(STORAGE_KEYS.viewMode) ?? "").trim().toLowerCase();
   if (savedViewMode === "3d") use3DView = true;
-  statsEl.textContent = "Restoring last save…";
+  statusEl.textContent = "Restoring last save…";
   applyViewMode();
   void (async () => {
     try {
       const rec = await idbGetLastPickedSave();
       if (!rec) {
-        statsEl.textContent = "Choose a save JSON file to start.";
+        statusEl.textContent = "Choose a save JSON file to start.";
         clearLastSavePathUi();
         return;
       }
       renderAndReset(JSON.parse(rec.jsonText));
       applyLastSavePathUi(rec);
       reloadSaveButton.disabled = false;
-      statsEl.textContent = `Restored ${rec.fileName}`;
+      statusEl.textContent = `Restored ${rec.fileName}`;
     } catch (err) {
-      statsEl.textContent = `Could not restore last save: ${String(err)}`;
+      statusEl.textContent = `Could not restore last save: ${String(err)}`;
       clearLastSavePathUi();
     }
   })();
