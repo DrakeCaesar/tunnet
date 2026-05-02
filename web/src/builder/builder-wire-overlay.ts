@@ -86,6 +86,8 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
   scheduleEntityWireDragPartial: () => void;
   endEntityWireDrag: () => void;
   notifyCanvasDomRebuilt: () => void;
+  /** After incremental entity DOM replace: refresh ports; partial wire drag or skip or full overlay. */
+  refreshWireOverlayAfterEntityPatch: (patchedRootIds: ReadonlySet<string>) => void;
 } {
   const {
     root,
@@ -666,6 +668,28 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     window.addEventListener("resize", () => scheduleWireOverlayRender());
   }
 
+  function patchedRootsTouchAnyLink(patchedRootIds: ReadonlySet<string>): boolean {
+    if (patchedRootIds.size === 0) return false;
+    for (const link of getState().links) {
+      if (patchedRootIds.has(link.fromEntityId) || patchedRootIds.has(link.toEntityId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function refreshWireOverlayAfterEntityPatch(patchedRootIds: ReadonlySet<string>): void {
+    rebuildPortElementCache();
+    if (entityWireDrag !== null) {
+      scheduleEntityWireDragPartial();
+      return;
+    }
+    if (!patchedRootsTouchAnyLink(patchedRootIds)) {
+      return;
+    }
+    renderWireOverlay({ skipPacketRefresh: true });
+  }
+
   return {
     rebuildPortElementCache,
     resolveBuilderPortForWireOverlay,
@@ -683,5 +707,6 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     scheduleEntityWireDragPartial,
     endEntityWireDrag,
     notifyCanvasDomRebuilt,
+    refreshWireOverlayAfterEntityPatch,
   };
 }
