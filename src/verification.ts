@@ -41,7 +41,7 @@ export function verifyEdgesIndividually(
 
   for (const edge of edges) {
     const isolatedTopology = cloneTopologyWithoutGenerators(topology);
-    const sim = new TunnetSimulator(isolatedTopology, 20260421);
+    const sim = new TunnetSimulator(isolatedTopology, 20260421, { scheduleEndpointSends: false });
     const inject = sim.injectPacketFromEndpoint(edge.src, edge.dst, {
       ttl,
       sensitive: false,

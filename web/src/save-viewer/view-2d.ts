@@ -1,3 +1,5 @@
+import { layoutPacketLabelBackgroundRect } from "../packet-label-layout";
+import type { PacketLabelMode } from "../packet-label-mode";
 import { portKey, type PortRef, type Packet } from "../simulation";
 import type { GraphModel, ViewportBox, VisualNode } from "./model";
 
@@ -6,9 +8,35 @@ const PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX = 6.1;
 const PACKET_IP_LABEL_WIDTH_PX = Math.ceil(PACKET_IP_LABEL_CHAR_COUNT * PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX + 8);
 const PACKET_IP_LABEL_HEIGHT_PX = 24;
 const PACKET_DOT_RADIUS_PX = 8;
-const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + 5;
+const PACKET_LABEL_ANCHOR_GAP_PX = 12;
+const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + PACKET_LABEL_ANCHOR_GAP_PX;
 const PACKET_IP_LABEL_OFFSET_X_PX = -3;
 const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
+const PACKET_IP_LABEL_HEIGHT_WITH_SUBJECT_PX = 38;
+const PACKET_SUBJECT_LABEL_MAX_CHARS = 40;
+
+function formatPacketLabelSubject(subject: string | undefined): string {
+  const t = (subject ?? "").trim();
+  if (!t.length) return "";
+  return t.length > PACKET_SUBJECT_LABEL_MAX_CHARS
+    ? `${t.slice(0, PACKET_SUBJECT_LABEL_MAX_CHARS - 1)}…`
+    : t;
+}
+
+function packetIpLabelBgDimensions(src: string, dest: string, subjectDisplay: string): { width: number; height: number } {
+  const maxChars = Math.max(src.length, dest.length, subjectDisplay.length, PACKET_IP_LABEL_CHAR_COUNT);
+  const width = Math.min(
+    260,
+    Math.ceil(maxChars * PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX + 10),
+  );
+  const height = subjectDisplay.length ? PACKET_IP_LABEL_HEIGHT_WITH_SUBJECT_PX : PACKET_IP_LABEL_HEIGHT_PX;
+  return { width, height };
+}
+
+const PACKET_LABEL_BG_FALLBACK_ORIGIN = {
+  x: PACKET_LABEL_ANCHOR_X_PX + PACKET_IP_LABEL_OFFSET_X_PX,
+  y: PACKET_IP_LABEL_OFFSET_Y_PX,
+} as const;
 
 function fitBoxToViewportAspect(box: ViewportBox, viewportWidthPx: number, viewportHeightPx: number): ViewportBox {
   const vw = Math.max(1, viewportWidthPx);
@@ -200,7 +228,7 @@ export function renderPacketOverlay(
   occupancy: Array<{ port: PortRef; packet: Packet }>,
   adjacency: Map<string, PortRef> | null,
   progress: number,
-  showPacketIps: boolean,
+  packetLabelMode: PacketLabelMode,
   drawBox: ViewportBox | null,
 ): void {
   const overlayEl = document.querySelector<SVGSVGElement>("#sv-packet-overlay");
@@ -258,15 +286,22 @@ export function renderPacketOverlay(
     circle.setAttribute("data-packet-id", String(occ.packet.id));
     group.appendChild(circle);
 
-    if (showPacketIps) {
+    let packetLabelLayout:
+      | { text: SVGTextElement; bg: SVGRectElement; dims: { width: number; height: number } }
+      | undefined;
+    if (packetLabelMode !== "hide") {
+      const showSubjectLine = packetLabelMode === "ipsSubject";
+      const subjRaw = formatPacketLabelSubject(occ.packet.subject);
+      const subj = showSubjectLine ? subjRaw : "";
+      const dims = packetIpLabelBgDimensions(occ.packet.src, occ.packet.dest, subj);
       const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       bg.setAttribute("class", "builder-packet-label-bg");
       bg.setAttribute("rx", "4");
       bg.setAttribute("ry", "4");
-      bg.setAttribute("x", (PACKET_LABEL_ANCHOR_X_PX + PACKET_IP_LABEL_OFFSET_X_PX).toFixed(2));
-      bg.setAttribute("y", PACKET_IP_LABEL_OFFSET_Y_PX.toFixed(2));
-      bg.setAttribute("width", String(PACKET_IP_LABEL_WIDTH_PX));
-      bg.setAttribute("height", String(PACKET_IP_LABEL_HEIGHT_PX));
+      bg.setAttribute("x", PACKET_LABEL_BG_FALLBACK_ORIGIN.x.toFixed(2));
+      bg.setAttribute("y", PACKET_LABEL_BG_FALLBACK_ORIGIN.y.toFixed(2));
+      bg.setAttribute("width", String(dims.width));
+      bg.setAttribute("height", String(dims.height));
       group.appendChild(bg);
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("class", "builder-packet-label");
@@ -276,7 +311,7 @@ export function renderPacketOverlay(
       text.setAttribute("data-packet-id", String(occ.packet.id));
       const src = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
       src.setAttribute("class", "builder-packet-label-src");
-      src.setAttribute("dy", "-0.58em");
+      src.setAttribute("dy", subj ? "-1.16em" : "-0.58em");
       src.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
       src.textContent = occ.packet.src;
       const dest = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
@@ -285,8 +320,25 @@ export function renderPacketOverlay(
       dest.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
       dest.textContent = occ.packet.dest;
       text.append(src, dest);
+      if (subj) {
+        const subject = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+        subject.setAttribute("class", "builder-packet-label-subject");
+        subject.setAttribute("dy", "1.16em");
+        subject.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
+        subject.textContent = subj;
+        text.append(subject);
+      }
       group.appendChild(text);
+      packetLabelLayout = { text, bg, dims };
     }
     packetGroup.appendChild(group);
+    if (packetLabelLayout) {
+      layoutPacketLabelBackgroundRect(
+        packetLabelLayout.text,
+        packetLabelLayout.bg,
+        packetLabelLayout.dims,
+        PACKET_LABEL_BG_FALLBACK_ORIGIN,
+      );
+    }
   }
 }

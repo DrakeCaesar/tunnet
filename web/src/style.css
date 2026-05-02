@@ -1207,6 +1207,11 @@ textarea {
   fill: #f4f7ff;
 }
 
+.builder-packet-label-subject {
+  fill: #7a8499;
+  font-weight: 500;
+}
+
 .builder-wire-overlay .builder-wire-drag {
   stroke: #89b4fa;
   stroke-width: 1.5;

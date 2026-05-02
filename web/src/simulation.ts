@@ -1,4 +1,24 @@
+import {
+  type AddressEncodingStrategy,
+  encodeEndpointAddressForStrategy,
+  parseEndpointAddressString,
+} from "../../src/analysis/endpoint-address-encoding.js";
+import {
+  applyRecoveredStateTransitions,
+  advanceNetTick,
+  evaluateEndpointSend,
+  initialRecoveredSchedulerState,
+  type RecoveredSchedulerState,
+} from "../../src/analysis/recovered-endpoint-scheduler.js";
+import {
+  buildWikiDestinationMaps,
+  destinationsForRecoveredDecision,
+} from "../../src/analysis/recovered-send-destinations.js";
+import { endpointData } from "../../src/wiki-endpoint-data.js";
 import { INFINITE_PACKET_TTL } from "../../src/types.js";
+import type { TunnetSimulatorOptions } from "../../src/simulator.js";
+
+export type { TunnetSimulatorOptions };
 
 export type Address = string;
 
@@ -152,18 +172,6 @@ function decrementTtl(packet: Packet): Packet | null {
   return next;
 }
 
-function chooseOne<T>(items: readonly T[], rnd: () => number): T {
-  const index = Math.floor(rnd() * items.length);
-  return items[index];
-}
-
-function randomIntervalTicks(config: EndpointGeneratorConfig, rnd: () => number): number {
-  const min = Math.max(1, Math.floor(config.minIntervalTicks));
-  const max = Math.max(min, Math.floor(config.maxIntervalTicks));
-  if (max <= min) return min;
-  return min + Math.floor(rnd() * (max - min + 1));
-}
-
 function matchAddress(mask: string, candidate: Address): boolean {
   const m = mask.split(".");
   const c = candidate.split(".");
@@ -220,15 +228,52 @@ export class TunnetSimulator {
   private readonly currentPortPackets = new Map<string, Packet>();
   private readonly pendingEndpointReplies = new Map<string, Packet>();
   private tick = 0;
+  private netTick = 0;
   private packetIdCounter = 1;
   private rndState: number;
   private readonly stats: SimulationStats;
   private sendRateMultiplier = 1;
 
-  constructor(topology: Topology, seed = 1337) {
+  private readonly recoveredState: RecoveredSchedulerState;
+  private readonly recoveredStrategy: AddressEncodingStrategy;
+  private readonly destinationsBySource: Map<string, string[]>;
+  private readonly allWikiAddresses: readonly string[];
+  private readonly wikiSensitiveByAddress: Map<string, boolean>;
+  private readonly wikiOrderedEndpoints: EndpointDevice[];
+  private readonly nonWikiEndpoints: EndpointDevice[];
+  private readonly scheduleEndpointSends: boolean;
+
+  constructor(topology: Topology, seed = 1337, options?: TunnetSimulatorOptions) {
     this.topology = cloneTopology(topology);
     this.adjacency = buildAdjacency(this.topology);
     this.rndState = seed >>> 0;
+    const phase = options?.recoveredPhase ?? { phaseA: 0, phaseB: 0 };
+    this.recoveredState = initialRecoveredSchedulerState(phase.phaseA, phase.phaseB);
+    this.recoveredStrategy = options?.recoveredEncoding ?? "plus_one_all_octets_regional_mainframe";
+    const { allWikiAddresses, destinationsBySource } = buildWikiDestinationMaps(endpointData);
+    this.allWikiAddresses = allWikiAddresses;
+    this.destinationsBySource = destinationsBySource;
+    this.wikiSensitiveByAddress = new Map(endpointData.map((r) => [r.address, r.sensitive]));
+
+    const wikiAddrToDevice = new Map<string, EndpointDevice>();
+    for (const d of Object.values(this.topology.devices)) {
+      if (d.type === "endpoint" && destinationsBySource.has(d.address)) {
+        wikiAddrToDevice.set(d.address, d);
+      }
+    }
+    const wikiOrdered: EndpointDevice[] = [];
+    for (const row of endpointData) {
+      const dev = wikiAddrToDevice.get(row.address);
+      if (dev) wikiOrdered.push(dev);
+    }
+    this.wikiOrderedEndpoints = wikiOrdered;
+    const inWiki = new Set(wikiOrdered.map((e) => e.address));
+    this.nonWikiEndpoints = Object.values(this.topology.devices)
+      .filter((d): d is EndpointDevice => d.type === "endpoint" && !inWiki.has(d.address))
+      .sort((a, b) => a.address.localeCompare(b.address, undefined, { numeric: true }));
+
+    this.scheduleEndpointSends = options?.scheduleEndpointSends !== false;
+
     this.stats = {
       tick: 0,
       emitted: 0,
@@ -323,29 +368,51 @@ export class TunnetSimulator {
       }
     }
 
-    if (!device.generator) return;
     if (receivedAddressedThisTick) return;
     if (repliedThisTick) return;
     if (attemptedBounceThisTick) return;
-    if (ctx.tick < device.state.nextSendTick) return;
     if (ctx.rnd() > this.sendRateMultiplier) return;
-    const destinations = device.generator.destinations.filter((d) => d !== device.address);
-    if (destinations.length === 0) {
-      device.state.nextSendTick = ctx.tick + randomIntervalTicks(device.generator, ctx.rnd);
+
+    if (!this.scheduleEndpointSends) {
       return;
     }
 
-    const packet: Packet = {
-      id: ctx.packetIdCounter++,
-      src: device.address,
-      dest: chooseOne(destinations, ctx.rnd),
-      ttl: device.generator.ttl ?? INFINITE_PACKET_TTL,
-      sensitive: ctx.rnd() < device.generator.sensitiveChance,
-      subject: device.generator.subjectPrefix ? `${device.generator.subjectPrefix}${ctx.tick}` : undefined,
-    };
-    this.enqueueOutbound(ctx, device.id, 0, packet);
-    ctx.stats.emitted += 1;
-    device.state.nextSendTick = ctx.tick + randomIntervalTicks(device.generator, ctx.rnd);
+    if (!this.destinationsBySource.has(device.address)) {
+      return;
+    }
+
+    const encoded = encodeEndpointAddressForStrategy(
+      parseEndpointAddressString(device.address),
+      this.recoveredStrategy,
+    );
+    const decision = evaluateEndpointSend(this.recoveredState, encoded, this.netTick);
+    if (!decision.shouldSend || decision.header === null || decision.profile === null) {
+      return;
+    }
+
+    const dests = destinationsForRecoveredDecision(
+      device.address,
+      decision,
+      this.destinationsBySource,
+      this.allWikiAddresses,
+    );
+    const sensitive = this.wikiSensitiveByAddress.get(device.address) ?? false;
+    const ttl = device.generator?.ttl ?? INFINITE_PACKET_TTL;
+
+    for (const dest of dests) {
+      const packet: Packet = {
+        id: ctx.packetIdCounter++,
+        src: device.address,
+        dest,
+        ttl,
+        sensitive,
+        subject: decision.packetSubject ?? undefined,
+      };
+      this.enqueueOutbound(ctx, device.id, 0, packet);
+      ctx.stats.emitted += 1;
+    }
+
+    applyRecoveredStateTransitions(this.recoveredState, encoded, decision);
   }
 
   private processRelay(device: RelayDevice, ctx: StepContext): void {
@@ -449,6 +516,8 @@ export class TunnetSimulator {
   }
 
   step(): { tick: number; inFlightPackets: number; stats: SimulationStats; droppedDeviceIds: string[] } {
+    this.netTick = advanceNetTick(this.netTick);
+
     const nextPortPackets = new Map<string, Packet>();
     const droppedDeviceIds = new Set<string>();
     const ctx: StepContext = {
@@ -461,9 +530,14 @@ export class TunnetSimulator {
       stats: this.stats,
     };
 
+    for (const device of this.wikiOrderedEndpoints) {
+      this.processEndpoint(device, ctx);
+    }
+    for (const device of this.nonWikiEndpoints) {
+      this.processEndpoint(device, ctx);
+    }
     for (const device of Object.values(this.topology.devices)) {
-      if (device.type === "endpoint") this.processEndpoint(device, ctx);
-      else if (device.type === "relay") this.processRelay(device, ctx);
+      if (device.type === "relay") this.processRelay(device, ctx);
       else if (device.type === "hub") this.processHub(device, ctx);
       else if (device.type === "filter") this.processFilter(device, ctx);
     }

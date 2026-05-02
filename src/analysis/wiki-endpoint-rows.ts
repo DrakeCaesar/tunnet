@@ -5,6 +5,7 @@ export type WikiSchedulerEndpointRow = {
   address: string;
   send_rate: number;
   sends_to: string[];
+  replies_to: string[];
 };
 
 export function wikiSchedulerEndpointRows(): WikiSchedulerEndpointRow[] {
@@ -12,5 +13,6 @@ export function wikiSchedulerEndpointRows(): WikiSchedulerEndpointRow[] {
     address: row.address,
     send_rate: row.send_rate,
     sends_to: row.sends_to,
+    replies_to: row.replies_to,
   }));
 }

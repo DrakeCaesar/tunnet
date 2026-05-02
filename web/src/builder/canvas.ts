@@ -22,6 +22,13 @@ import {
   removeLinksTouchingInstancePort,
   updateEntitySettings,
 } from "./state";
+import { layoutPacketLabelBackgroundRect } from "../packet-label-layout";
+import {
+  nextPacketLabelMode,
+  packetLabelToggleButtonText,
+  parsePacketLabelModeFromPageState,
+  type PacketLabelMode,
+} from "../packet-label-mode";
 import {
   expandBuilderState,
   expandLinks,
@@ -76,9 +83,14 @@ const PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX = 6.1;
 const PACKET_IP_LABEL_WIDTH_PX = Math.ceil(PACKET_IP_LABEL_CHAR_COUNT * PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX + 8);
 const PACKET_IP_LABEL_HEIGHT_PX = 24;
 const PACKET_DOT_RADIUS_PX = 8;
-const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + 5;
+/** Gap from dot edge to label (text + bg follow this anchor). */
+const PACKET_LABEL_ANCHOR_GAP_PX = 12;
+const PACKET_LABEL_ANCHOR_X_PX = PACKET_DOT_RADIUS_PX + PACKET_LABEL_ANCHOR_GAP_PX;
 const PACKET_IP_LABEL_OFFSET_X_PX = -3;
 const PACKET_IP_LABEL_OFFSET_Y_PX = -13;
+/** Extra vertical space when showing subject line under src/dest. */
+const PACKET_IP_LABEL_HEIGHT_WITH_SUBJECT_PX = 38;
+const PACKET_SUBJECT_LABEL_MAX_CHARS = 40;
 const BUILDER_LAYOUT_SLOT_COUNT = 5;
 const CANVAS_SCALE_X_STEPS = [1 / 16, 1 / 8, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4] as const;
 const DEFAULT_LAYER_SCALE_Y = { outer64: 0.5, middle16: 1.5, inner4: 1.5, core1: 0.5 } as const;
@@ -86,6 +98,24 @@ const BUILDER_PANEL_SECTION_IDS = ["performance"] as const;
 
 /** One mask nibble cycles * → 0 → 1 → 2 → 3 → * (matches game semantics). */
 const MASK_VALUE_CYCLE = ["*", "0", "1", "2", "3"] as const;
+
+function formatPacketLabelSubject(subject: string | undefined): string {
+  const t = (subject ?? "").trim();
+  if (!t.length) return "";
+  return t.length > PACKET_SUBJECT_LABEL_MAX_CHARS
+    ? `${t.slice(0, PACKET_SUBJECT_LABEL_MAX_CHARS - 1)}…`
+    : t;
+}
+
+function packetIpLabelBgDimensions(src: string, dest: string, subjectDisplay: string): { width: number; height: number } {
+  const maxChars = Math.max(src.length, dest.length, subjectDisplay.length, PACKET_IP_LABEL_CHAR_COUNT);
+  const width = Math.min(
+    260,
+    Math.ceil(maxChars * PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX + 10),
+  );
+  const height = subjectDisplay.length ? PACKET_IP_LABEL_HEIGHT_WITH_SUBJECT_PX : PACKET_IP_LABEL_HEIGHT_PX;
+  return { width, height };
+}
 
 function hubMarkerId(instanceId: string): string {
   return `hubmk-${instanceId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
@@ -115,7 +145,7 @@ type BuilderPanelSectionId = (typeof BUILDER_PANEL_SECTION_IDS)[number];
 
 type BuilderPageState = {
   collapsedSections: Partial<Record<BuilderPanelSectionId, boolean>>;
-  showPacketIps: boolean;
+  packetLabelMode: PacketLabelMode;
   simSpeedExponent: number;
   activeLayoutSlotIndex: number;
   activeLayoutKind: "slot" | "url";
@@ -725,13 +755,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (!raw) {
         return {
           collapsedSections: {},
-          showPacketIps: true,
+          packetLabelMode: "ipsSubject",
           simSpeedExponent: SPEED_EXP_DEFAULT,
           activeLayoutSlotIndex: 1,
           activeLayoutKind: "slot",
         };
       }
-      const parsed = JSON.parse(raw) as Partial<BuilderPageState>;
+      const parsed = JSON.parse(raw) as Partial<BuilderPageState> & { showPacketIps?: unknown };
       const collapsedSections: BuilderPageState["collapsedSections"] = {};
       const parsedSections = parsed.collapsedSections ?? {};
       BUILDER_PANEL_SECTION_IDS.forEach((id) => {
@@ -739,7 +769,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       });
       return {
         collapsedSections,
-        showPacketIps: parsed.showPacketIps !== false,
+        packetLabelMode: parsePacketLabelModeFromPageState(parsed),
         simSpeedExponent: clampSimSpeedExponent(parsed.simSpeedExponent),
         activeLayoutSlotIndex: clampLayoutSlotIndex(parsed.activeLayoutSlotIndex),
         activeLayoutKind: parsed.activeLayoutKind === "url" ? "url" : "slot",
@@ -747,7 +777,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     } catch {
       return {
         collapsedSections: {},
-        showPacketIps: true,
+        packetLabelMode: "ipsSubject",
         simSpeedExponent: SPEED_EXP_DEFAULT,
         activeLayoutSlotIndex: 1,
         activeLayoutKind: "slot",
@@ -871,7 +901,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
                   <span class="builder-sim-skip-bar">⏹</span><span class="builder-sim-skip-tri">◀</span>
                 </span>
               </button>
-              <button id="builder-sim-toggle-packet-ips" type="button">${builderPageState.showPacketIps ? "Hide IPs" : "Show IPs"}</button>
+              <button id="builder-sim-toggle-packet-ips" type="button">${packetLabelToggleButtonText(builderPageState.packetLabelMode)}</button>
               <div class="builder-sim-speed-inline" aria-label="Tick speed">
                 <div class="builder-sim-speed-inline-top">
                   <span class="builder-sim-speed-inline-label">Speed</span>
@@ -1179,21 +1209,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     persistBuilderPageState();
   }
 
-  function setPacketIpLabelsVisible(visible: boolean): void {
+  function cyclePacketLabelMode(): void {
+    const next = nextPacketLabelMode(builderPageState.packetLabelMode);
     builderPageState = {
       ...builderPageState,
-      showPacketIps: visible,
+      packetLabelMode: next,
     };
-    simTogglePacketIpsBtn.textContent = visible ? "Hide IPs" : "Show IPs";
-    if (!visible) {
-      packetLabelPool.forEach((label, index) => {
+    simTogglePacketIpsBtn.textContent = packetLabelToggleButtonText(next);
+    if (next === "hide") {
+      packetLabelPool.forEach((label) => {
         if (label.visible) {
           label.bg.setAttribute("display", "none");
           label.text.setAttribute("display", "none");
           label.visible = false;
         }
         label.text.removeAttribute("data-packet-id");
-        label.lastPacketId = null;
+        label.lastLabelSig = "";
       });
     }
     persistBuilderPageState();
@@ -1609,11 +1640,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     text: SVGTextElement;
     src: SVGTSpanElement;
     dest: SVGTSpanElement;
+    subject: SVGTSpanElement;
     bgOffsetX: number;
     bgOffsetY: number;
     bgWidth: number;
     bgHeight: number;
-    lastPacketId: number | null;
+    /** Signature of last painted label text (empty when cleared). */
+    lastLabelSig: string;
     visible: boolean;
   }> = [];
   const packetSlotByPacketId = new Map<number, number>();
@@ -2924,6 +2957,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     packetId: number;
     src: string;
     dest: string;
+    subject?: string;
     line: SimPreparedPolyline | null;
     fallback: SimXY;
     fill: string;
@@ -3151,11 +3185,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     text: SVGTextElement;
     src: SVGTSpanElement;
     dest: SVGTSpanElement;
+    subject: SVGTSpanElement;
     bgOffsetX: number;
     bgOffsetY: number;
     bgWidth: number;
     bgHeight: number;
-    lastPacketId: number | null;
+    lastLabelSig: string;
     visible: boolean;
   } {
     const existing = packetLabelPool[index];
@@ -3187,7 +3222,13 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     dest.setAttribute("dy", "1.16em");
     dest.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
 
-    text.append(src, dest);
+    const subject = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+    subject.setAttribute("class", "builder-packet-label-subject");
+    subject.setAttribute("dy", "1.16em");
+    subject.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
+    subject.setAttribute("display", "none");
+
+    text.append(src, dest, subject);
     bg.setAttribute("x", (PACKET_LABEL_ANCHOR_X_PX + PACKET_IP_LABEL_OFFSET_X_PX).toFixed(2));
     bg.setAttribute("y", PACKET_IP_LABEL_OFFSET_Y_PX.toFixed(2));
     text.setAttribute("x", String(PACKET_LABEL_ANCHOR_X_PX));
@@ -3198,11 +3239,12 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       text,
       src,
       dest,
+      subject,
       bgOffsetX: PACKET_IP_LABEL_OFFSET_X_PX,
       bgOffsetY: PACKET_IP_LABEL_OFFSET_Y_PX,
       bgWidth: PACKET_IP_LABEL_WIDTH_PX,
       bgHeight: PACKET_IP_LABEL_HEIGHT_PX,
-      lastPacketId: null,
+      lastLabelSig: "",
       visible: false,
     };
     packetLabelPool[index] = label;
@@ -3228,9 +3270,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         label.text.setAttribute("display", "none");
         label.visible = false;
       }
-      if (label.lastPacketId !== null) {
+      if (label.lastLabelSig !== "") {
         label.text.removeAttribute("data-packet-id");
-        label.lastPacketId = null;
+        label.lastLabelSig = "";
       }
     }
   }
@@ -3280,6 +3322,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         packetId: packet.id,
         src: packet.src,
         dest: packet.dest,
+        subject: packet.subject,
         line,
         fallback,
         fill: `hsl(${hue} 82% 58%)`,
@@ -3323,6 +3366,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           packetId: packet.id,
           src: packet.src,
           dest: packet.dest,
+          subject: packet.subject,
           line,
           fallback,
           fill: `hsl(${hue} 82% 58%)`,
@@ -3351,6 +3395,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           packetId: ghost.packet.id,
           src: ghost.packet.src,
           dest: ghost.packet.dest,
+          subject: ghost.packet.subject,
           line: null,
           fallback,
           fill: `hsl(${hue} 82% 58%)`,
@@ -3454,23 +3499,45 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         circle.lastStrokeWidth = strokeWidth;
         circleEl.setAttribute("stroke-width", String(strokeWidth));
       }
-      const label = builderPageState.showPacketIps
-        ? ensureBuilderPacketLabel(slotIndex)
-        : packetLabelPool[slotIndex];
-      if (builderPageState.showPacketIps) {
+      const labelMode = builderPageState.packetLabelMode;
+      const showPacketLabels = labelMode !== "hide";
+      const showSubjectLine = labelMode === "ipsSubject";
+      const label = showPacketLabels ? ensureBuilderPacketLabel(slotIndex) : packetLabelPool[slotIndex];
+      if (showPacketLabels) {
         const shownLabel = label!;
         if (!shownLabel.visible) {
           shownLabel.bg.removeAttribute("display");
           shownLabel.text.removeAttribute("display");
           shownLabel.visible = true;
         }
-        if (shownLabel.lastPacketId !== render.packetId) {
-          shownLabel.lastPacketId = render.packetId;
+        const subjRaw = formatPacketLabelSubject(render.subject);
+        const subj = showSubjectLine ? subjRaw : "";
+        const labelSig = `${labelMode}\0${render.packetId}\0${render.src}\0${render.dest}\0${subj}`;
+        if (shownLabel.lastLabelSig !== labelSig) {
+          shownLabel.lastLabelSig = labelSig;
           shownLabel.src.textContent = render.src;
           shownLabel.dest.textContent = render.dest;
           shownLabel.text.setAttribute("data-packet-id", String(render.packetId));
-          shownLabel.bg.setAttribute("width", shownLabel.bgWidth.toFixed(2));
-          shownLabel.bg.setAttribute("height", shownLabel.bgHeight.toFixed(2));
+          const dims = packetIpLabelBgDimensions(render.src, render.dest, subj);
+          const fallbackOrigin = {
+            x: PACKET_LABEL_ANCHOR_X_PX + PACKET_IP_LABEL_OFFSET_X_PX,
+            y: PACKET_IP_LABEL_OFFSET_Y_PX,
+          };
+          if (subj) {
+            shownLabel.subject.textContent = subj;
+            shownLabel.subject.removeAttribute("display");
+            shownLabel.src.setAttribute("dy", "-1.16em");
+            shownLabel.dest.setAttribute("dy", "1.16em");
+            shownLabel.subject.setAttribute("dy", "1.16em");
+          } else {
+            shownLabel.subject.textContent = "";
+            shownLabel.subject.setAttribute("display", "none");
+            shownLabel.src.setAttribute("dy", "-0.58em");
+            shownLabel.dest.setAttribute("dy", "1.16em");
+          }
+          layoutPacketLabelBackgroundRect(shownLabel.text, shownLabel.bg, dims, fallbackOrigin);
+          shownLabel.bgWidth = parseFloat(shownLabel.bg.getAttribute("width")!) || dims.width;
+          shownLabel.bgHeight = parseFloat(shownLabel.bg.getAttribute("height")!) || dims.height;
         }
       } else if (label) {
         if (label.visible) {
@@ -3478,9 +3545,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           label.text.setAttribute("display", "none");
           label.visible = false;
         }
-        if (label.lastPacketId !== null) {
+        if (label.lastLabelSig !== "") {
           label.text.removeAttribute("data-packet-id");
-          label.lastPacketId = null;
+          label.lastLabelSig = "";
         }
       }
     }
@@ -5907,7 +5974,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     stepBackBuilderSimulation();
   });
   simResetBtn.addEventListener("click", () => resetBuilderSimulation());
-  simTogglePacketIpsBtn.addEventListener("click", () => setPacketIpLabelsVisible(!builderPageState.showPacketIps));
+  simTogglePacketIpsBtn.addEventListener("click", () => cyclePacketLabelMode());
 
   const applyBuilderSimSpeedFromSlider = (): void => {
     simSpeedExponent = Number(simSpeedEl.value);

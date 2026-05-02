@@ -6,6 +6,11 @@
  * Recovered behavior follows **`sub_1402f9a40` / `sub_1402f5840`** modeling in `src/analysis/recovered-endpoint-scheduler.ts`
  * plus numeric {@link encodeEndpointAddressForStrategy} only (no wiki topology overrides beyond encoding).
  *
+ * **Reply edges:** for each primary **`a>b`** on a tick, if **`b`**’s expanded wiki **`replies_to`**
+ * contains **`a`**, count **`b>a`** for that tick (same rule applied to wiki vs recovered primaries).
+ * This does **not** model in-game reply scheduling or “reply blocks generator this tick”; it only checks
+ * parity of **reply adjacency** induced by traffic + wiki reply lists.
+ *
  * Only **(sender, receiver)** edges are compared — not headers or RNG pools. Optional
  * **`--edge-subjects-file=`** writes recovered **`packetSubject` / `packetSubjectCandidates`** (union over
  * the run), grouped so every **`src>dst`** with the **same** sorted **`possibleSubjects`** list appears under
@@ -46,47 +51,57 @@ import {
   encodeEndpointAddressForStrategy,
   parseEndpointAddressString,
 } from "./endpoint-address-encoding.js";
-import { dstWikiMaskForRecoveredSend } from "./packet-header-format.js";
 import {
   BinaryObservedPhaseA,
   MAINFRAME_SUBPHASE_MAX,
   applyRecoveredStateTransitions,
-  packetProfileUsesWikiSendsToFanOut,
   RecoveredSchedulerState,
   advanceNetTick,
   evaluateEndpointSend,
   initialRecoveredSchedulerState,
   type RecoveredDecision,
 } from "./recovered-endpoint-scheduler.js";
+import {
+  buildWikiDestinationMaps,
+  destinationsForRecoveredDecision,
+  expandedDestinationsForEndpoint,
+} from "./recovered-send-destinations.js";
 
 type EndpointRow = {
   address: string;
   send_rate: number;
   sends_to: string[];
+  replies_to: string[];
 };
 
-function matchMask(mask: string, candidate: string): boolean {
-  const m = mask.split(".");
-  const c = candidate.split(".");
-  if (m.length !== 4 || c.length !== 4) {
-    return false;
+/** Expanded senders that **`receiver`** replies to when it receives (wiki / builder semantics). */
+function buildReplySourcesByReceiver(endpoints: EndpointRow[], allAddresses: string[]): Map<string, Set<string>> {
+  const m = new Map<string, Set<string>>();
+  for (const ep of endpoints) {
+    m.set(
+      ep.address,
+      new Set(expandedDestinationsForEndpoint(ep.address, ep.replies_to ?? [], allAddresses)),
+    );
   }
-  for (let i = 0; i < 4; i += 1) {
-    if (m[i] === "*") continue;
-    if (m[i] !== c[i]) return false;
-  }
-  return true;
+  return m;
 }
 
-function buildDestinationList(src: string, masks: string[], allAddresses: string[]): string[] {
-  const dests = new Set<string>();
-  for (const mask of masks) {
-    for (const candidate of allAddresses) {
-      if (candidate === src) continue;
-      if (matchMask(mask, candidate)) dests.add(candidate);
+/** For each primary **`src>dst`**, if **`dst`** replies to **`src`**, emit **`dst>src`**. */
+function deriveReplyEdgesFromPrimaries(
+  primaryPairs: readonly string[],
+  replySourcesByReceiver: Map<string, Set<string>>,
+): string[] {
+  const out: string[] = [];
+  for (const e of primaryPairs) {
+    const gt = e.indexOf(">");
+    if (gt <= 0) continue;
+    const src = e.slice(0, gt);
+    const dst = e.slice(gt + 1);
+    if (replySourcesByReceiver.get(dst)?.has(src)) {
+      out.push(`${dst}>${src}`);
     }
   }
-  return [...dests].sort();
+  return out;
 }
 
 function collectWikiEdgesForTick(
@@ -114,7 +129,7 @@ function collectRecoveredEdgesForTick(
   netTick: number,
   endpoints: EndpointRow[],
   destinationsBySource: Map<string, string[]>,
-  allAddresses: string[],
+  allWikiAddresses: string[],
   state: RecoveredSchedulerState,
   strategy: AddressEncodingStrategy,
   collectContributions: boolean,
@@ -127,17 +142,7 @@ function collectRecoveredEdgesForTick(
     if (!decision.shouldSend || decision.header === null || decision.profile === null) {
       continue;
     }
-    const header = decision.header;
-    const profile = decision.profile;
-    const sourceAllowed = destinationsBySource.get(endpoint.address) ?? [];
-    const matched = packetProfileUsesWikiSendsToFanOut(profile)
-      ? sourceAllowed.filter((candidate) => candidate !== endpoint.address)
-      : allAddresses.filter(
-          (candidate) =>
-            candidate !== endpoint.address &&
-            matchMask(dstWikiMaskForRecoveredSend(endpoint.address, header, profile), candidate) &&
-            sourceAllowed.includes(candidate),
-        );
+    const matched = destinationsForRecoveredDecision(endpoint.address, decision, destinationsBySource, allWikiAddresses);
     for (const dst of matched) {
       const pair = `${endpoint.address}>${dst}`;
       edges.push(pair);
@@ -217,7 +222,7 @@ function intersectionSize(a: Set<string>, b: Set<string>): number {
 function simulateRecoveredPairs(params: {
   endpoints: EndpointRow[];
   destinationsBySource: Map<string, string[]>;
-  allAddresses: string[];
+  allWikiAddresses: string[];
   ticks: number;
   strategy: AddressEncodingStrategy;
   phaseA: number;
@@ -233,7 +238,7 @@ function simulateRecoveredPairs(params: {
   const {
     endpoints,
     destinationsBySource,
-    allAddresses,
+    allWikiAddresses,
     ticks,
     strategy,
     phaseA,
@@ -251,7 +256,7 @@ function simulateRecoveredPairs(params: {
       netTick,
       endpoints,
       destinationsBySource,
-      allAddresses,
+      allWikiAddresses,
       state,
       strategy,
       collectEdgeSubjects,
@@ -355,7 +360,7 @@ type ScanPhaseRow = {
 function buildPhaseGridRows(
   endpoints: EndpointRow[],
   destinationsBySource: Map<string, string[]>,
-  allAddresses: string[],
+  allWikiAddresses: string[],
   wikiPairs: Set<string>,
   ticks: number,
   aMin: number,
@@ -371,7 +376,7 @@ function buildPhaseGridRows(
       const { pairs, totalEdges, finalPhaseA, finalPhaseB } = simulateRecoveredPairs({
         endpoints,
         destinationsBySource,
-        allAddresses,
+        allWikiAddresses,
         ticks,
         strategy,
         phaseA: pa,
@@ -431,7 +436,7 @@ function printPhaseGridSummary(rows: ScanPhaseRow[], wikiSize: number, strategy:
 function runScan(params: {
   endpoints: EndpointRow[];
   destinationsBySource: Map<string, string[]>;
-  allAddresses: string[];
+  allWikiAddresses: string[];
   wikiPairs: Set<string>;
   ticks: number;
   aMin: number;
@@ -443,7 +448,7 @@ function runScan(params: {
   const {
     endpoints,
     destinationsBySource,
-    allAddresses,
+    allWikiAddresses,
     wikiPairs,
     ticks,
     aMin,
@@ -468,7 +473,7 @@ function runScan(params: {
     const { rows, pairUnionAcrossGrid } = buildPhaseGridRows(
       endpoints,
       destinationsBySource,
-      allAddresses,
+      allWikiAddresses,
       wikiPairs,
       ticks,
       aMin,
@@ -612,14 +617,7 @@ function main(): void {
   const { argv: args, listPairs } = stripListPairsFlag(afterSubjects);
 
   const endpoints = wikiSchedulerEndpointRows();
-  const allAddresses = endpoints.map((e) => e.address);
-  const destinationsBySource = new Map<string, string[]>();
-  for (const endpoint of endpoints) {
-    destinationsBySource.set(
-      endpoint.address,
-      buildDestinationList(endpoint.address, endpoint.sends_to ?? [], allAddresses),
-    );
-  }
+  const { allWikiAddresses, destinationsBySource } = buildWikiDestinationMaps(endpoints);
 
   if (args[0] === "scan") {
     const { ticks, aMin, aMax, bMin, bMax, strategies } = parseScanArgs(args.slice(1));
@@ -631,7 +629,7 @@ function main(): void {
     runScan({
       endpoints,
       destinationsBySource,
-      allAddresses,
+      allWikiAddresses,
       wikiPairs,
       ticks,
       aMin,
@@ -667,32 +665,59 @@ function main(): void {
     if (!Number.isFinite(phaseB)) throw new Error(`Invalid phaseB: ${args[phaseArgOffset + 1]}`);
   }
 
-  const wikiAllEdges: string[] = [];
-  for (let tick = 0; tick < ticks; tick += 1) {
-    wikiAllEdges.push(...collectWikiEdgesForTick(tick, endpoints, destinationsBySource));
-  }
+  const replySourcesByReceiver = buildReplySourcesByReceiver(endpoints, allWikiAddresses);
 
-  const {
-    pairs: recPairs,
-    totalEdges: recoveredTotalEdges,
-    finalPhaseA,
-    finalPhaseB,
-    edgeSubjectsByPair,
-  } = simulateRecoveredPairs({
-    endpoints,
-    destinationsBySource,
-    allAddresses,
-    ticks,
-    strategy,
-    phaseA,
-    phaseB,
-    collectEdgeSubjects: edgeSubjectsFile !== null,
-  });
+  const wikiAllEdges: string[] = [];
+  const wikiReplyEdges: string[] = [];
+  const recPairs = new Set<string>();
+  const recReplyAllEdges: string[] = [];
+  let recoveredTotalEdges = 0;
+  const state = initialRecoveredSchedulerState(phaseA, phaseB);
+  let netTick = 0;
+  const edgeSubjectsByPair = edgeSubjectsFile !== null ? new Map<string, EdgeSubjectAgg>() : undefined;
+
+  for (let tick = 0; tick < ticks; tick += 1) {
+    netTick = advanceNetTick(netTick);
+    const wikiP = collectWikiEdgesForTick(tick, endpoints, destinationsBySource);
+    wikiAllEdges.push(...wikiP);
+    wikiReplyEdges.push(...deriveReplyEdgesFromPrimaries(wikiP, replySourcesByReceiver));
+
+    const { edges: recP, contributions } = collectRecoveredEdgesForTick(
+      netTick,
+      endpoints,
+      destinationsBySource,
+      allWikiAddresses,
+      state,
+      strategy,
+      edgeSubjectsByPair !== undefined,
+    );
+    recoveredTotalEdges += recP.length;
+    for (const e of recP) recPairs.add(e);
+    const recR = deriveReplyEdgesFromPrimaries(recP, replySourcesByReceiver);
+    recReplyAllEdges.push(...recR);
+
+    if (edgeSubjectsByPair && contributions.length > 0) {
+      for (const { pair, decision } of contributions) {
+        const row = getOrCreateEdgeSubjectAgg(edgeSubjectsByPair, pair);
+        if (decision.profile) {
+          row.profiles.add(decision.profile);
+        }
+        mergeSubjectStringsFromDecision(row.subjects, decision);
+      }
+    }
+  }
+  const finalPhaseA = state.phaseA;
+  const finalPhaseB = state.phaseB;
+
   const recoveredAllEdges = [...recPairs];
 
   const wikiAgg = aggregateSets(wikiAllEdges);
   const recAgg = aggregateSets(recoveredAllEdges);
   const pairsMatch = setEqual(wikiAgg.pairs, recAgg.pairs);
+
+  const wikiReplyAgg = aggregateSets(wikiReplyEdges);
+  const recReplyAgg = aggregateSets(recReplyAllEdges);
+  const replyPairsMatch = setEqual(wikiReplyAgg.pairs, recReplyAgg.pairs);
 
   console.log(
     `[edge-compare] ticks=${ticks} strategy=${strategy} initialPhase=(${phaseA},${phaseB}) finalPhase=(${finalPhaseA},${finalPhaseB})`,
@@ -713,12 +738,27 @@ function main(): void {
   );
   console.log(`[edge-compare] same unique src>dst pairs: ${pairsMatch}`);
 
+  console.log("[edge-compare] replies (primary a>b & dst replies_to src ⇒ b>a, same tick as inducing primaries):");
+  console.log(
+    `  wiki      totalReplyEdges=${wikiReplyEdges.length} uniqueReplyPairs=${wikiReplyAgg.pairs.size} uniqueReplySenders=${wikiReplyAgg.senders.size} uniqueReplyReceivers=${wikiReplyAgg.receivers.size}`,
+  );
+  console.log(
+    `  recovered totalReplyEdges=${recReplyAllEdges.length} uniqueReplyPairs=${recReplyAgg.pairs.size} uniqueReplySenders=${recReplyAgg.senders.size} uniqueReplyReceivers=${recReplyAgg.receivers.size}`,
+  );
+  console.log(`[edge-compare] same unique reply pairs: ${replyPairsMatch}`);
+
   if (listPairs) {
     if (pairsMatch) {
       printSortedPairs("unique src>dst pairs (wiki = recovered)", wikiAgg.pairs);
     } else {
       printSortedPairs("unique src>dst pairs — wiki only", wikiAgg.pairs);
       printSortedPairs("unique src>dst pairs — recovered only", recAgg.pairs);
+    }
+    if (replyPairsMatch) {
+      printSortedPairs("unique reply pairs (wiki = recovered)", wikiReplyAgg.pairs);
+    } else {
+      printSortedPairs("unique reply pairs — wiki only", wikiReplyAgg.pairs);
+      printSortedPairs("unique reply pairs — recovered only", recReplyAgg.pairs);
     }
   }
 
@@ -753,6 +793,23 @@ function main(): void {
         console.log(`  ${p}`);
       }
       if (onlyRec.length > 12) console.log(`  … ${onlyRec.length - 12} more`);
+    }
+  }
+
+  if (!replyPairsMatch) {
+    const onlyWikiR = setDifference(wikiReplyAgg.pairs, recReplyAgg.pairs);
+    const onlyRecR = setDifference(recReplyAgg.pairs, wikiReplyAgg.pairs);
+    console.log(`[edge-compare] reply only in wiki (${onlyWikiR.length}):`);
+    for (const p of onlyWikiR.slice(0, 12)) {
+      console.log(`  ${p}`);
+    }
+    if (onlyWikiR.length > 12) console.log(`  … ${onlyWikiR.length - 12} more`);
+    if (onlyRecR.length > 0) {
+      console.log(`[edge-compare] reply only in recovered (${onlyRecR.length}):`);
+      for (const p of onlyRecR.slice(0, 12)) {
+        console.log(`  ${p}`);
+      }
+      if (onlyRecR.length > 12) console.log(`  … ${onlyRecR.length - 12} more`);
     }
   }
 }

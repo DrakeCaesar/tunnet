@@ -27,6 +27,12 @@ import {
   type CameraPersistState,
   type PilotPositionPersistState,
 } from "./view-3d";
+import {
+  nextPacketLabelMode,
+  packetLabelToggleButtonText,
+  parsePacketLabelModeFromStorage,
+  type PacketLabelMode,
+} from "../packet-label-mode";
 import { STORAGE_KEYS, parseCameraState, parsePilotPosition } from "./save-viewer-storage";
 
 function fitBoxToViewportAspect(box: ViewportBox, viewportWidthPx: number, viewportHeightPx: number): ViewportBox {
@@ -126,7 +132,9 @@ export function startSaveViewerController(): void {
   let simAdj: Map<string, PortRef> | null = null;
   let previousOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let currentOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
-  let showPacketIps = true;
+  let packetLabelMode: PacketLabelMode = parsePacketLabelModeFromStorage(
+    window.localStorage.getItem(STORAGE_KEYS.packetLabelMode),
+  );
   let tickIntervalMs = 200;
   let isPanning = false;
   let panMoved = false;
@@ -192,7 +200,7 @@ export function startSaveViewerController(): void {
   const renderGraphAndPackets = (progress = 1): void => {
     if (use3DView) return;
     const drawBox = renderGraph(currentModel, cameraBox);
-    renderPacketOverlay(currentModel, previousOccupancy, currentOccupancy, simAdj, progress, showPacketIps, drawBox);
+    renderPacketOverlay(currentModel, previousOccupancy, currentOccupancy, simAdj, progress, packetLabelMode, drawBox);
   };
 
   const worldFromClientPoint = (clientX: number, clientY: number): { x: number; y: number } => {
@@ -446,9 +454,11 @@ export function startSaveViewerController(): void {
     if (Object.keys(currentModel.topology.devices).length === 0) return;
     resetSimulator();
   });
+  togglePacketIpsButton.textContent = packetLabelToggleButtonText(packetLabelMode);
   togglePacketIpsButton.addEventListener("click", () => {
-    showPacketIps = !showPacketIps;
-    togglePacketIpsButton.textContent = showPacketIps ? "Hide IPs" : "Show IPs";
+    packetLabelMode = nextPacketLabelMode(packetLabelMode);
+    togglePacketIpsButton.textContent = packetLabelToggleButtonText(packetLabelMode);
+    window.localStorage.setItem(STORAGE_KEYS.packetLabelMode, packetLabelMode);
     renderGraphAndPackets();
   });
 

@@ -1,3 +1,5 @@
+import { packetLabelToggleButtonText } from "../packet-label-mode";
+
 export function mountLayout(): HTMLDivElement {
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) throw new Error("Missing #app root");
@@ -31,7 +33,7 @@ export function mountLayout(): HTMLDivElement {
             <span id="sv-tick-rate-value" class="meta">200 ms</span>
           </div>
           <div class="sim-buttons">
-            <button id="sv-toggle-packet-ips" type="button">Hide IPs</button>
+            <button id="sv-toggle-packet-ips" type="button">${packetLabelToggleButtonText("ipsSubject")}</button>
           </div>
           <div id="sv-stats" class="meta"></div>
         </div>

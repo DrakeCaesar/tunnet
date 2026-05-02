@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   cameraStatePilot: "tunnet.saveViewer.cameraStatePilot",
   playerPositionPilot: "tunnet.saveViewer.playerPositionPilot",
   tickIntervalMs: "tunnet.saveViewer.tickIntervalMs",
+  packetLabelMode: "tunnet.saveViewer.packetLabelMode",
 } as const;
 
 export function parseCameraState(raw: string | null): CameraPersistState | null {
