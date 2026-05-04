@@ -3699,6 +3699,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       // Never start entity drag from ports; ports are reserved for link dragging.
       if (!isControl || btn.classList.contains("builder-port")) return;
     }
+    if (wireBag.w!.builderPortFromClientPoint(ev.clientX, ev.clientY)) return;
     const rootId = entityEl.dataset.rootId!;
     const rootEnt = state.entities.find((e) => e.id === rootId);
     const seg = entityEl.closest<HTMLElement>(".builder-segment");
@@ -4836,6 +4837,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (downBtn?.classList.contains("builder-port")) return;
     const entityEl = target.closest<HTMLElement>(".builder-entity");
     if (!entityEl) return;
+    // Same as wire overlay proximity zone: reserve link-drag start without also arming move/rotate.
+    if (wireBag.w!.builderPortFromClientPoint(ev.clientX, ev.clientY)) return;
     const rootId = entityEl.dataset.rootId;
     const rootEnt = rootId ? state.entities.find((e) => e.id === rootId) : null;
     const preserveMulti = !!rootId && selectedEntityRootIds.has(rootId);
