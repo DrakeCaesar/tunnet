@@ -1120,6 +1120,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simTickDeliveredEntityRootIds = new Set<string>();
   let simTickCollisionDropEntityInstanceIds = new Set<string>();
   let simTickCollisionDropEntityRootIds = new Set<string>();
+  let simTickDeliveredElsPrev = new Set<HTMLElement>();
+  let simTickCollisionElsPrev = new Set<HTMLElement>();
   let simUiExpandedCacheState: BuilderState | null = null;
   let simUiExpandedCache: ExpandedBuilderState | null = null;
   const expandedBuilderStateForSimUi = (): ExpandedBuilderState => {
@@ -1906,34 +1908,55 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function applySimTickHighlightsToCanvas(): void {
-    canvasEl
-      .querySelectorAll<HTMLElement>(".builder-entity--tick-delivered, .builder-entity--tick-collision-drop")
-      .forEach((el) => {
-        el.classList.remove("builder-entity--tick-delivered", "builder-entity--tick-collision-drop");
-      });
+    const deliveredNext = new Set<HTMLElement>();
+    const collisionNext = new Set<HTMLElement>();
+
     simTickDeliveredEntityRootIds.forEach((rootId) => {
       canvasEl
         .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`)
-        .forEach((el) => el.classList.add("builder-entity--tick-delivered"));
+        .forEach((el) => deliveredNext.add(el));
     });
     simTickCollisionDropEntityInstanceIds.forEach((instanceId) => {
       canvasEl
         .querySelectorAll<HTMLElement>(`.builder-entity[data-instance-id="${instanceId}"]`)
-        .forEach((el) => {
-          el.classList.remove("builder-entity--tick-delivered");
-          el.classList.add("builder-entity--tick-collision-drop");
-        });
+        .forEach((el) => collisionNext.add(el));
     });
     simTickCollisionDropEntityRootIds.forEach((rootId) => {
       canvasEl
         .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`)
         .forEach((el) => {
-          // Instance-level highlights win if present.
           if (simTickCollisionDropEntityInstanceIds.has(el.dataset.instanceId ?? "")) return;
-          el.classList.remove("builder-entity--tick-delivered");
-          el.classList.add("builder-entity--tick-collision-drop");
+          collisionNext.add(el);
         });
     });
+
+    simTickDeliveredElsPrev.forEach((el) => {
+      if (!deliveredNext.has(el) || collisionNext.has(el)) {
+        el.classList.remove("builder-entity--tick-delivered");
+      }
+    });
+    deliveredNext.forEach((el) => {
+      if (!collisionNext.has(el) && !simTickDeliveredElsPrev.has(el)) {
+        el.classList.add("builder-entity--tick-delivered");
+      }
+    });
+
+    simTickCollisionElsPrev.forEach((el) => {
+      if (!collisionNext.has(el)) {
+        el.classList.remove("builder-entity--tick-collision-drop");
+      }
+    });
+    collisionNext.forEach((el) => {
+      if (!simTickCollisionElsPrev.has(el)) {
+        el.classList.add("builder-entity--tick-collision-drop");
+      }
+      if (deliveredNext.has(el)) {
+        el.classList.remove("builder-entity--tick-delivered");
+      }
+    });
+
+    simTickDeliveredElsPrev = deliveredNext;
+    simTickCollisionElsPrev = collisionNext;
   }
 
   function showDragGroupBounds(ids: string[]): void {
