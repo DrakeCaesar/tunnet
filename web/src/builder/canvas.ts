@@ -1043,6 +1043,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simAnimHandle: number | null = null;
   let simTickTimeoutHandle: number | null = null;
   let simNextTickDeadlineMs: number | null = null;
+  /** High-speed batching: wall-time when the next batch should start (catches up after slow steps). */
+  let simHighSpeedIdealNextMs: number | null = null;
   let simTickAnimStartMs: number | null = null;
   let simTickAnimDurationMs: number | null = null;
   let simAnimFinishFn: (() => void) | null = null;
@@ -1816,6 +1818,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       window.clearTimeout(simTickTimeoutHandle);
       simTickTimeoutHandle = null;
     }
+    simHighSpeedIdealNextMs = null;
   }
 
   function resetBuilderSimulation(resumeIfWasPlaying = false): void {
@@ -1970,18 +1973,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       updateSimBackButtonState();
     }
 
-    const tickWallStartMs = performance.now();
-    const targetTickIntervalMs = 1000 / Math.max(simSpeed, 0.1);
-    if (
-      simNextTickDeadlineMs === null ||
-      simNextTickDeadlineMs < tickWallStartMs - targetTickIntervalMs
-    ) {
-      simNextTickDeadlineMs = tickWallStartMs + targetTickIntervalMs;
-    }
-    const tickDeadlineMs = simNextTickDeadlineMs;
-    simNextTickDeadlineMs = tickDeadlineMs + targetTickIntervalMs * SIM_HIGH_SPEED_TICKS_PER_RENDER;
-
     const wallDelayMs = (SIM_HIGH_SPEED_TICKS_PER_RENDER * 1000) / Math.max(simSpeed, 0.1);
+    const afterBatch = performance.now();
+    if (simHighSpeedIdealNextMs === null) {
+      simHighSpeedIdealNextMs = afterBatch + wallDelayMs;
+    } else {
+      simHighSpeedIdealNextMs += wallDelayMs;
+      let skips = 0;
+      while (simHighSpeedIdealNextMs < afterBatch && skips < 500) {
+        simHighSpeedIdealNextMs += wallDelayMs;
+        skips += 1;
+      }
+    }
+    const delayMs = Math.max(0, simHighSpeedIdealNextMs - afterBatch);
 
     const now = performance.now();
     simAchievedTickEndTimesMs.push(now);
@@ -2009,9 +2013,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (simPlaying) {
       simTickTimeoutHandle = window.setTimeout(() => {
         runOneBuilderSimTick();
-      }, wallDelayMs);
+      }, delayMs);
     } else {
       simNextTickDeadlineMs = null;
+      simHighSpeedIdealNextMs = null;
     }
   }
 
@@ -2025,6 +2030,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       runHighSpeedSimTickBatch();
       return;
     }
+    simHighSpeedIdealNextMs = null;
     pushSimHistorySnapshot();
     const tickWallStartMs = performance.now();
     const frame = computeNextBuilderSimFrame();
@@ -2126,6 +2132,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     if (simPlaying && !wasPlaying) {
       simEmaAchievedSpeed = null;
       simAchievedTickEndTimesMs.length = 0;
+      simHighSpeedIdealNextMs = null;
     }
     if (!simPlaying && !simAnimating && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
       cancelBuilderSimTickTimers();
@@ -5543,6 +5550,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simSpeed = speedMultiplierFromExponent(simSpeedExponent);
     simEmaAchievedSpeed = null;
     simAchievedTickEndTimesMs.length = 0;
+    simHighSpeedIdealNextMs = null;
     // If we're mid-tick animation, retime smoothly instead of cancelling/restarting.
     if (simAnimating && simTickAnimStartMs !== null && simTickAnimDurationMs !== null) {
       const now = performance.now();
