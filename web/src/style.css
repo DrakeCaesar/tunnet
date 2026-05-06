@@ -870,6 +870,8 @@ textarea {
   border-radius: 8px;
   padding: 8px;
   font-family: inherit;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .builder-template {
