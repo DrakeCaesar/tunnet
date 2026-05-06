@@ -1162,6 +1162,40 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     rebuildEntityDomIndexIfNeeded();
     return entityElByInstanceId.get(instanceId) ?? null;
   };
+  let simDomCommitRaf: number | null = null;
+  let simDomNeedsHighlights = false;
+  let simDomNeedsPackets = false;
+  let simDomNeedsMeta = false;
+  let simDomPacketProgressQueued = 1;
+  const flushSimDomCommit = (): void => {
+    if (simDomCommitRaf !== null) {
+      cancelAnimationFrame(simDomCommitRaf);
+      simDomCommitRaf = null;
+    }
+    const needsHighlights = simDomNeedsHighlights;
+    const needsPackets = simDomNeedsPackets;
+    const needsMeta = simDomNeedsMeta;
+    const packetProgress = simDomPacketProgressQueued;
+    simDomNeedsHighlights = false;
+    simDomNeedsPackets = false;
+    simDomNeedsMeta = false;
+    if (needsHighlights) applySimTickHighlightsToCanvas();
+    if (needsPackets) renderBuilderPacketCircles(packetProgress);
+    if (needsMeta) updateBuilderSimMeta();
+  };
+  const scheduleSimDomCommit = (opts?: { highlights?: boolean; packets?: number; meta?: boolean }): void => {
+    if (opts?.highlights) simDomNeedsHighlights = true;
+    if (opts?.packets !== undefined) {
+      simDomNeedsPackets = true;
+      simDomPacketProgressQueued = opts.packets;
+    }
+    if (opts?.meta) simDomNeedsMeta = true;
+    if (simDomCommitRaf !== null) return;
+    simDomCommitRaf = requestAnimationFrame(() => {
+      simDomCommitRaf = null;
+      flushSimDomCommit();
+    });
+  };
   let simUiExpandedCacheState: BuilderState | null = null;
   let simUiExpandedCache: ExpandedBuilderState | null = null;
   const expandedBuilderStateForSimUi = (): ExpandedBuilderState => {
@@ -1734,7 +1768,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (rootId) simTickCollisionDropEntityRootIds.add(rootId);
     });
     simDropBoard.ingestDropEvents(frame.dropEventDeviceIds);
-    applySimTickHighlightsToCanvas();
+    scheduleSimDomCommit({ highlights: true });
     simPreviousStatsTotals = { ...frame.stats };
     const stepMs = frame.stepComputeMs;
     simLastStepComputeMs = stepMs;
@@ -1786,10 +1820,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       updateSimBackButtonState();
       simPacketProgress = 1;
       const tRender0 = performance.now();
-      renderBuilderPacketCircles(1);
-      const tRender1 = performance.now();
       const tMeta0 = performance.now();
-      updateBuilderSimMeta();
+      scheduleSimDomCommit({ packets: 1, meta: true });
+      const tRender1 = performance.now();
       const tMeta1 = performance.now();
       const tRefresh0 = performance.now();
       flushPendingBuilderSimulatorRefresh();
