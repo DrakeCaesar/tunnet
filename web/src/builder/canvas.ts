@@ -422,6 +422,20 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const simSpeedValueEl = simPanel.speedValueSpan;
   const simMetaEl = simPanel.metaEl;
   const canvasWrapEl = wireOverlayEl.parentElement as HTMLDivElement | null;
+  /** Filled by scroll/resize listeners — canvas paint uses this instead of reading scrollLeft/Top from DOM. */
+  const packetOverlayViewportCache = {
+    scrollLeft: 0,
+    scrollTop: 0,
+    clientWidth: 0,
+    clientHeight: 0,
+  };
+  function syncPacketOverlayViewportCacheFromDom(): void {
+    if (!canvasWrapEl) return;
+    packetOverlayViewportCache.scrollLeft = canvasWrapEl.scrollLeft;
+    packetOverlayViewportCache.scrollTop = canvasWrapEl.scrollTop;
+    packetOverlayViewportCache.clientWidth = canvasWrapEl.clientWidth;
+    packetOverlayViewportCache.clientHeight = canvasWrapEl.clientHeight;
+  }
   const wireBag: { w: ReturnType<typeof createBuilderWireOverlay> | null } = { w: null };
   const boxEl = document.createElement("div");
   boxEl.className = "builder-box-selection";
@@ -430,6 +444,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   if (canvasWrapEl) {
     canvasWrapEl.appendChild(boxEl);
     canvasWrapEl.appendChild(dragBoundsEl);
+    syncPacketOverlayViewportCacheFromDom();
+    canvasWrapEl.addEventListener("scroll", syncPacketOverlayViewportCacheFromDom, { passive: true });
+    new ResizeObserver(syncPacketOverlayViewportCacheFromDom).observe(canvasWrapEl);
   }
   const perfStats = new Map<BuilderPerfKey, BuilderPerfStat>();
   const PERF_EMA_ALPHA = 0.18;
@@ -1286,6 +1303,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let packetOverlayExtentHeight = 0;
   const invalidatePacketOverlayExtent = (): void => {
     packetOverlayExtentDirty = true;
+    syncPacketOverlayViewportCacheFromDom();
   };
   let simTickDeliveredEntityRootIds = new Set<string>();
   let simTickCollisionDropEntityInstanceIds = new Set<string>();
@@ -2811,11 +2829,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function builderPacketOverlayViewportCenter(): { x: number; y: number } | null {
-    const wrap = packetOverlayEl.parentElement;
-    if (!wrap) return null;
+    if (!canvasWrapEl) return null;
     return {
-      x: wrap.scrollLeft + wrap.clientWidth * 0.5,
-      y: wrap.scrollTop + wrap.clientHeight * 0.5,
+      x: packetOverlayViewportCache.scrollLeft + packetOverlayViewportCache.clientWidth * 0.5,
+      y: packetOverlayViewportCache.scrollTop + packetOverlayViewportCache.clientHeight * 0.5,
     };
   }
 
@@ -3347,7 +3364,8 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const t0 = performance.now();
     const wrap = packetOverlayEl.parentElement;
     if (!wrap) return;
-    packetOverlayEl.style.transform = `translate(${wrap.scrollLeft}px, ${wrap.scrollTop}px)`;
+    const { scrollLeft, scrollTop, clientWidth: viewCw, clientHeight: viewCh } = packetOverlayViewportCache;
+    packetOverlayEl.style.transform = `translate(${scrollLeft}px, ${scrollTop}px)`;
     const progress = clamp01(t);
     const tResize0 = performance.now();
     const { width: overlayWidth, height: overlayHeight } = readBuilderPacketOverlayExtent(wrap);
@@ -3386,16 +3404,16 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     packetOverlayCtx = ctx;
     if (!ctx) return;
     const dpr = Math.max(1, packetOverlayDpr > 0 ? packetOverlayDpr : window.devicePixelRatio || 1);
-    const viewMinX = wrap.scrollLeft;
-    const viewMinY = wrap.scrollTop;
-    const viewMaxX = viewMinX + wrap.clientWidth;
-    const viewMaxY = viewMinY + wrap.clientHeight;
+    const viewMinX = scrollLeft;
+    const viewMinY = scrollTop;
+    const viewMaxX = viewMinX + viewCw;
+    const viewMaxY = viewMinY + viewCh;
     ctx.setTransform(dpr, 0, 0, dpr, -viewMinX * dpr, -viewMinY * dpr);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(viewMinX, viewMinY, wrap.clientWidth, wrap.clientHeight);
+    ctx.rect(viewMinX, viewMinY, viewCw, viewCh);
     ctx.clip();
-    ctx.clearRect(viewMinX, viewMinY, wrap.clientWidth, wrap.clientHeight);
+    ctx.clearRect(viewMinX, viewMinY, viewCw, viewCh);
     packetHitRegionCount = 0;
     for (let i = 0; i < simPreparedPacketRenders.length; i += 1) {
       const render = simPreparedPacketRenders[i]!;
