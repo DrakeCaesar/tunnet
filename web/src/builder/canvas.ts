@@ -1023,6 +1023,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   let builderTopologySig = "";
+  let builderSimTopology: Topology = { devices: {}, links: [] };
   type SimFrame = {
     prevOccupancy: Array<{ port: PortRef; packet: Packet }>;
     currentOccupancy: Array<{ port: PortRef; packet: Packet }>;
@@ -1122,6 +1123,38 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simTickCollisionDropEntityRootIds = new Set<string>();
   let simTickDeliveredElsPrev = new Set<HTMLElement>();
   let simTickCollisionElsPrev = new Set<HTMLElement>();
+  let entityDomIndexDirty = true;
+  let entityElsByRootId = new Map<string, Set<HTMLElement>>();
+  let entityElByInstanceId = new Map<string, HTMLElement>();
+  const EMPTY_ENTITY_EL_SET = new Set<HTMLElement>();
+  const markEntityDomIndexDirty = (): void => {
+    entityDomIndexDirty = true;
+  };
+  const rebuildEntityDomIndexIfNeeded = (): void => {
+    if (!entityDomIndexDirty) return;
+    entityElsByRootId = new Map();
+    entityElByInstanceId = new Map();
+    canvasEl
+      .querySelectorAll<HTMLElement>(".builder-entity[data-root-id][data-instance-id]")
+      .forEach((el) => {
+        const rootId = el.dataset.rootId ?? "";
+        const instanceId = el.dataset.instanceId ?? "";
+        if (!rootId || !instanceId) return;
+        const byRoot = entityElsByRootId.get(rootId) ?? new Set<HTMLElement>();
+        byRoot.add(el);
+        entityElsByRootId.set(rootId, byRoot);
+        entityElByInstanceId.set(instanceId, el);
+      });
+    entityDomIndexDirty = false;
+  };
+  const entityElsForRootId = (rootId: string): ReadonlySet<HTMLElement> => {
+    rebuildEntityDomIndexIfNeeded();
+    return entityElsByRootId.get(rootId) ?? EMPTY_ENTITY_EL_SET;
+  };
+  const entityElForInstanceId = (instanceId: string): HTMLElement | null => {
+    rebuildEntityDomIndexIfNeeded();
+    return entityElByInstanceId.get(instanceId) ?? null;
+  };
   let simUiExpandedCacheState: BuilderState | null = null;
   let simUiExpandedCache: ExpandedBuilderState | null = null;
   const expandedBuilderStateForSimUi = (): ExpandedBuilderState => {
@@ -1137,7 +1170,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const simDropBoard = new SimulatorDropBoardController(
     simPanel.dropListEl,
     simPanel.dropEmptyEl,
-    () => compileBuilderPayload(state).topology as unknown as Topology,
+    () => builderSimTopology,
     {
       rowMeta(deviceId) {
         const expanded = expandedBuilderStateForSimUi();
@@ -1516,6 +1549,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function rebuildBuilderSimTopologyCache(top: Topology): void {
+    builderSimTopology = top;
     builderSimDevices = top.devices;
     builderSimAdj = buildPortAdjacency(top);
     packetRouteTemplateByKey.clear();
@@ -1908,26 +1942,22 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function applySimTickHighlightsToCanvas(): void {
+    rebuildEntityDomIndexIfNeeded();
     const deliveredNext = new Set<HTMLElement>();
     const collisionNext = new Set<HTMLElement>();
 
     simTickDeliveredEntityRootIds.forEach((rootId) => {
-      canvasEl
-        .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`)
-        .forEach((el) => deliveredNext.add(el));
+      entityElsForRootId(rootId).forEach((el) => deliveredNext.add(el));
     });
     simTickCollisionDropEntityInstanceIds.forEach((instanceId) => {
-      canvasEl
-        .querySelectorAll<HTMLElement>(`.builder-entity[data-instance-id="${instanceId}"]`)
-        .forEach((el) => collisionNext.add(el));
+      const el = entityElForInstanceId(instanceId);
+      if (el) collisionNext.add(el);
     });
     simTickCollisionDropEntityRootIds.forEach((rootId) => {
-      canvasEl
-        .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`)
-        .forEach((el) => {
-          if (simTickCollisionDropEntityInstanceIds.has(el.dataset.instanceId ?? "")) return;
-          collisionNext.add(el);
-        });
+      entityElsForRootId(rootId).forEach((el) => {
+        if (simTickCollisionDropEntityInstanceIds.has(el.dataset.instanceId ?? "")) return;
+        collisionNext.add(el);
+      });
     });
 
     simTickDeliveredElsPrev.forEach((el) => {
@@ -3402,6 +3432,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${CSS.escape(id)}"]`)
         .forEach((el) => el.remove());
     });
+    markEntityDomIndexDirty();
     const htmlCtx = {
       gridTileXPx: BUILDER_GRID_TILE_SIZE_X_PX,
       gridTileYPx: BUILDER_GRID_TILE_SIZE_Y_PX,
@@ -3473,6 +3504,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         .querySelectorAll<HTMLElement>(`.builder-entity[data-root-id="${CSS.escape(id)}"]`)
         .forEach((el) => el.remove());
     });
+    markEntityDomIndexDirty();
     applySelectionToCanvas();
     applySimTickHighlightsToCanvas();
     wireBag.w!.refreshWireOverlayAfterEntityRemoval(wireGeometryChanged);
@@ -4488,6 +4520,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         `;
       })
       .join("");
+    markEntityDomIndexDirty();
     const tHtml1 = performance.now();
     recordPerf("canvas.htmlBuild", tHtml1 - tHtml0);
     canvasEl.querySelectorAll<HTMLTextAreaElement>(".builder-note-editor[data-note-root-id]").forEach((editor) => {
