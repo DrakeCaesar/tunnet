@@ -1065,6 +1065,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simDeliveredPerTickAvg100: number | null = null;
   const simDeliveredHistory: number[] = [];
   const SIM_DELIVERED_AVG_WINDOW = 100;
+  /** When playing faster than this, run multiple `step()` calls per paint (see `SIM_HIGH_SPEED_TICKS_PER_RENDER`). */
+  const SIM_HIGH_SPEED_BATCH_THRESHOLD = 64;
+  const SIM_HIGH_SPEED_TICKS_PER_RENDER = 5;
   let simDropPctTick: number | null = null;
   let simDropPctCumulative: number | null = null;
   let simEmaAchievedSpeed: number | null = null;
@@ -1896,21 +1899,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
   }
 
-  function runOneBuilderSimTick(): void {
-    if (simAnimating) return;
-    if (simEndpointGhostPackets.length > 0) {
-      simEndpointGhostPackets = [];
-      invalidateBuilderPacketRenderCache();
-    }
-    pushSimHistorySnapshot();
-    const tickWallStartMs = performance.now();
-    const frame = computeNextBuilderSimFrame();
-    if (!frame) return;
-    simAnimating = true;
-    updateSimBackButtonState();
+  function applySimTickFrame(frame: SimFrame, opts?: { skipHighlightDomCommit?: boolean }): void {
     simPreviousOccupancy = frame.prevOccupancy;
     simPreviousOccupancyByPacketId = simOccupancyByPacketId(simPreviousOccupancy);
-    const statsBeforeTick = simPreviousStatsTotals;
     const emittedTick = frame.stats.emitted - simPreviousStatsTotals.emitted;
     const deliveredTickCount = frame.stats.delivered - simPreviousStatsTotals.delivered;
     const droppedTickCount = frame.stats.dropped - simPreviousStatsTotals.dropped;
@@ -1942,7 +1933,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (rootId) simTickCollisionDropEntityRootIds.add(rootId);
     });
     simDropBoard.ingestDropEvents(frame.dropEventDeviceIds);
-    scheduleSimDomCommit({ highlights: true });
+    if (!opts?.skipHighlightDomCommit) {
+      scheduleSimDomCommit({ highlights: true });
+    }
     simPreviousStatsTotals = { ...frame.stats };
     const stepMs = frame.stepComputeMs;
     simLastStepComputeMs = stepMs;
@@ -1960,6 +1953,85 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         setSelection(null);
       }
     }
+  }
+
+  function runHighSpeedSimTickBatch(): void {
+    simAnimating = true;
+    updateSimBackButtonState();
+    try {
+      for (let i = 0; i < SIM_HIGH_SPEED_TICKS_PER_RENDER; i++) {
+        pushSimHistorySnapshot();
+        const frame = computeNextBuilderSimFrame();
+        if (!frame) return;
+        applySimTickFrame(frame, { skipHighlightDomCommit: true });
+      }
+    } finally {
+      simAnimating = false;
+      updateSimBackButtonState();
+    }
+
+    const tickWallStartMs = performance.now();
+    const targetTickIntervalMs = 1000 / Math.max(simSpeed, 0.1);
+    if (
+      simNextTickDeadlineMs === null ||
+      simNextTickDeadlineMs < tickWallStartMs - targetTickIntervalMs
+    ) {
+      simNextTickDeadlineMs = tickWallStartMs + targetTickIntervalMs;
+    }
+    const tickDeadlineMs = simNextTickDeadlineMs;
+    simNextTickDeadlineMs = tickDeadlineMs + targetTickIntervalMs * SIM_HIGH_SPEED_TICKS_PER_RENDER;
+
+    const wallDelayMs = (SIM_HIGH_SPEED_TICKS_PER_RENDER * 1000) / Math.max(simSpeed, 0.1);
+
+    const now = performance.now();
+    simAchievedTickEndTimesMs.push(now);
+    if (simAchievedTickEndTimesMs.length > SIM_ACHIEVED_SPEED_WINDOW_TICKS) {
+      simAchievedTickEndTimesMs.splice(
+        0,
+        simAchievedTickEndTimesMs.length - SIM_ACHIEVED_SPEED_WINDOW_TICKS,
+      );
+    }
+    if (simAchievedTickEndTimesMs.length >= 2) {
+      const first = simAchievedTickEndTimesMs[0];
+      const last = simAchievedTickEndTimesMs[simAchievedTickEndTimesMs.length - 1];
+      const elapsedMs = last - first;
+      const completedBatches = simAchievedTickEndTimesMs.length - 1;
+      const completedSimTicks = completedBatches * SIM_HIGH_SPEED_TICKS_PER_RENDER;
+      if (elapsedMs > 1 && completedSimTicks > 0) {
+        simEmaAchievedSpeed = (completedSimTicks * 1000) / elapsedMs;
+      }
+    }
+
+    simPacketProgress = 1;
+    scheduleSimDomCommit({ highlights: true, packets: 1, meta: true });
+    flushPendingBuilderSimulatorRefresh();
+
+    if (simPlaying) {
+      simTickTimeoutHandle = window.setTimeout(() => {
+        runOneBuilderSimTick();
+      }, wallDelayMs);
+    } else {
+      simNextTickDeadlineMs = null;
+    }
+  }
+
+  function runOneBuilderSimTick(): void {
+    if (simAnimating) return;
+    if (simEndpointGhostPackets.length > 0) {
+      simEndpointGhostPackets = [];
+      invalidateBuilderPacketRenderCache();
+    }
+    if (simPlaying && simSpeed > SIM_HIGH_SPEED_BATCH_THRESHOLD) {
+      runHighSpeedSimTickBatch();
+      return;
+    }
+    pushSimHistorySnapshot();
+    const tickWallStartMs = performance.now();
+    const frame = computeNextBuilderSimFrame();
+    if (!frame) return;
+    simAnimating = true;
+    updateSimBackButtonState();
+    applySimTickFrame(frame);
     const targetTickIntervalMs = 1000 / Math.max(simSpeed, 0.1);
     if (
       simNextTickDeadlineMs === null ||
