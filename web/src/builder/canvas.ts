@@ -1759,6 +1759,19 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     canvasEl.querySelectorAll<HTMLElement>(".builder-entity.selected").forEach((el) => {
       el.classList.remove("selected");
     });
+    if (
+      selectedEntityRootIds.size === 0 &&
+      selection?.kind === "entity" &&
+      simDropBoard.traceDeviceId &&
+      simRootIdFromDeviceId(simDropBoard.traceDeviceId) === selection.rootId
+    ) {
+      canvasEl
+        .querySelectorAll<HTMLElement>(`.builder-entity[data-instance-id="${simDropBoard.traceDeviceId}"]`)
+        .forEach((el) => {
+          el.classList.add("selected");
+        });
+      return;
+    }
     const ids = selectedEntityRootIds.size
       ? Array.from(selectedEntityRootIds)
       : selection?.kind === "entity"
