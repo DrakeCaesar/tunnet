@@ -36,6 +36,8 @@ export interface BuilderLinkInstance {
   toInstanceId: string;
   toPort: number;
   isShadow: boolean;
+  /** Palette slot 0..7 copied from {@link BuilderLinkRoot.wireColorIndex}. */
+  wireColorIndex: number;
 }
 
 export interface ExpandedBuilderState {
@@ -174,17 +176,26 @@ function mapMaskWithDirectionByIndex(
   return changed ? parts.join(".") : mask;
 }
 
+/**
+ * Settings as seen on one mirrored canvas/simulator instance: mask nibbles are shifted for
+ * `segmentIndex`, other filter fields match the root entity.
+ */
+export function filterSettingsAtSegment(root: BuilderEntityRoot, segmentIndex: number): Record<string, string> {
+  const settings = { ...root.settings };
+  if (root.templateType === "filter" && typeof settings.mask === "string") {
+    settings.mask = mapMaskForSegmentIndex(settings.mask, root.layer, root.segmentIndex, segmentIndex);
+  }
+  return settings;
+}
+
 function transformSettingsForSegment(
   root: BuilderEntityRoot,
   segmentIndex: number,
 ): Record<string, string> {
-  const settings = { ...root.settings };
   if (root.templateType === "filter") {
-    if (typeof settings.mask === "string") {
-      settings.mask = mapMaskForSegmentIndex(settings.mask, root.layer, root.segmentIndex, segmentIndex);
-    }
-    return settings;
+    return filterSettingsAtSegment(root, segmentIndex);
   }
+  const settings = { ...root.settings };
   if (root.templateType === "endpoint") {
     settings.address = mirroredEndpointAddress(root, segmentIndex);
   }
@@ -306,6 +317,8 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
     const from = byId.get(root.fromEntityId);
     const to = byId.get(root.toEntityId);
     if (!from || !to) continue;
+    const wireColorIndex =
+      root.wireColorIndex !== undefined ? Math.max(0, Math.min(7, Math.floor(root.wireColorIndex))) : 0;
     const fromCount = LAYER_COUNTS[from.layer];
     const toCount = LAYER_COUNTS[to.layer];
     const pFrom = root.fromSegmentIndex;
@@ -332,6 +345,7 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
           toInstanceId: expandedEndpointInstanceId(to, toSeg),
           toPort: root.toPort,
           isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+          wireColorIndex,
         });
       }
       continue;
@@ -358,6 +372,7 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
           toInstanceId: expandedEndpointInstanceId(to, toSeg),
           toPort: root.toPort,
           isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+          wireColorIndex,
         });
       }
       continue;
@@ -391,6 +406,7 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
             toInstanceId: expandedEndpointInstanceId(to, toSeg),
             toPort: root.toPort,
             isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+            wireColorIndex,
           });
         }
         continue;
@@ -413,6 +429,7 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
           toInstanceId: expandedEndpointInstanceId(to, toSeg),
           toPort: root.toPort,
           isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+          wireColorIndex,
         });
       }
       continue;
@@ -444,6 +461,7 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
             toInstanceId: expandedEndpointInstanceId(to, toSeg),
             toPort: root.toPort,
             isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+            wireColorIndex,
           });
         }
         continue;
@@ -466,6 +484,7 @@ export function expandLinks(roots: BuilderLinkRoot[], entityRoots: BuilderEntity
           toInstanceId: expandedEndpointInstanceId(to, toSeg),
           toPort: root.toPort,
           isShadow: fromSeg !== from.segmentIndex || toSeg !== to.segmentIndex,
+          wireColorIndex,
         });
       }
       continue;

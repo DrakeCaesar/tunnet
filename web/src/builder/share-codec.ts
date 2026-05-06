@@ -1,4 +1,5 @@
 import type { BuilderEntityRoot, BuilderLayer, BuilderLinkRoot, BuilderState, BuilderTemplateType } from "./state";
+import { clampWireColorIndex } from "./wire-colors";
 
 const SHARE_STATE_VERSION = 3;
 const TEMPLATE_TYPES: BuilderTemplateType[] = ["endpoint", "relay", "hub", "filter", "text"];
@@ -6,7 +7,8 @@ const LAYERS: BuilderLayer[] = ["outer64", "middle16", "inner4", "core1"];
 const ROTATIONS = ["clockwise", "counterclockwise"] as const;
 
 type EncodedEntity = [number, number, number, number, number, unknown?, 1?];
-type EncodedLink = [number | string, number, number | string, number, 0 | 1 | 2 | 3, number?, number?];
+/** Opcode-specific trailing fields, optional wire palette index as last element when non-zero. */
+type EncodedLink = (number | string)[];
 type EncodedShareStateV3 = {
   v: 3;
   s: string[];
@@ -120,16 +122,21 @@ export function encodeBuilderShareState(state: BuilderState): unknown {
     const fromRef: number | string = from === undefined ? l.fromEntityId : from;
     const toRef: number | string = to === undefined ? l.toEntityId : to;
 
+    let row: EncodedLink;
     if (l.fromSegmentIndex !== undefined && l.toSegmentIndex !== undefined) {
-      return [fromRef, l.fromPort, toRef, l.toPort, 1, l.fromSegmentIndex, l.toSegmentIndex];
+      row = [fromRef, l.fromPort, toRef, l.toPort, 1, l.fromSegmentIndex, l.toSegmentIndex];
+    } else if (l.sameLayerSegmentDelta !== undefined) {
+      row = [fromRef, l.fromPort, toRef, l.toPort, 2, l.sameLayerSegmentDelta];
+    } else if (l.crossLayerBlockSlot !== undefined || l.voidBandInnerOuterCrossLayer === true) {
+      row = [fromRef, l.fromPort, toRef, l.toPort, 3, l.crossLayerBlockSlot ?? 0, l.voidBandInnerOuterCrossLayer ? 1 : 0];
+    } else {
+      row = [fromRef, l.fromPort, toRef, l.toPort, 0];
     }
-    if (l.sameLayerSegmentDelta !== undefined) {
-      return [fromRef, l.fromPort, toRef, l.toPort, 2, l.sameLayerSegmentDelta];
+    const wc = l.wireColorIndex;
+    if (wc !== undefined && wc !== 0) {
+      row.push(clampWireColorIndex(wc));
     }
-    if (l.crossLayerBlockSlot !== undefined || l.voidBandInnerOuterCrossLayer === true) {
-      return [fromRef, l.fromPort, toRef, l.toPort, 3, l.crossLayerBlockSlot ?? 0, l.voidBandInnerOuterCrossLayer ? 1 : 0];
-    }
-    return [fromRef, l.fromPort, toRef, l.toPort, 0];
+    return row;
   });
 
   return { v: SHARE_STATE_VERSION, s: strings, e: entities, l: links } satisfies EncodedShareStateV3;
@@ -200,6 +207,14 @@ export function decodeBuilderShareState(payload: unknown): BuilderState | null {
     const toEntityId = typeof toRef === "number" ? (entityList[toRef]?.id ?? "") : String(toRef);
     if (!fromEntityId || !toEntityId) return null;
     const opcode = row[4] ?? 0;
+    const baseLen = opcode === 0 ? 5 : opcode === 1 ? 7 : opcode === 2 ? 6 : opcode === 3 ? 7 : 5;
+    let wireColorTail: number | undefined;
+    if (row.length > baseLen) {
+      const last = row[row.length - 1];
+      if (typeof last === "number" && Number.isFinite(last)) {
+        wireColorTail = clampWireColorIndex(last);
+      }
+    }
     return {
       id: `l${i + 1}`,
       groupId: `l${i + 1}`,
@@ -210,6 +225,7 @@ export function decodeBuilderShareState(payload: unknown): BuilderState | null {
       ...(opcode === 1 ? { fromSegmentIndex: Number(row[5]), toSegmentIndex: Number(row[6]) } : {}),
       ...(opcode === 2 ? { sameLayerSegmentDelta: Number(row[5]) } : {}),
       ...(opcode === 3 ? { crossLayerBlockSlot: Number(row[5] ?? 0), ...(row[6] === 1 ? { voidBandInnerOuterCrossLayer: true } : {}) } : {}),
+      ...(wireColorTail !== undefined ? { wireColorIndex: wireColorTail } : {}),
     };
   });
   if (links.some((l) => !l)) return null;

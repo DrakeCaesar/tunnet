@@ -5,6 +5,7 @@ import {
 } from "./clone-engine";
 import type { BuilderState } from "./state";
 import { isOuterLeafVoidSegment, isStaticOuterLeafEndpoint } from "./state";
+import { builderWireStrokeHex } from "./wire-colors";
 
 /** Port DOM identity for link dragging (mirrors share rootId). */
 export type LinkSourceSelection = {
@@ -36,6 +37,8 @@ export type BuilderWireOverlayOptions = {
   afterWireOverlayPaint: (overlayPassStartMs: number, opts?: { skipPacketRefresh?: boolean }) => void;
   setBuilderDragCursor: (cursor: "crosshair") => void;
   clearBuilderDragCursor: () => void;
+  /** Index 0..7 for in-progress link drag stroke; committed links use per-link color from state. */
+  getActiveWireColorIndex: () => number;
   /** Called after clearing rubber-band state and refreshing wires once. */
   commitLinkDragResult: (input: {
     from: LinkSourceSelection;
@@ -51,6 +54,7 @@ export type RenderWireOpts = {
 
 const WIRE_PORT_DROP_ZONE_PX = 5;
 const WIRE_DRAG_START_THRESHOLD_PX = 3;
+const BUILDER_WIRE_STROKE_WIDTH_PX = 3;
 
 function portCacheKey(instanceId: string, port: number): string {
   return `${instanceId}#${port}`;
@@ -117,6 +121,7 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
     afterWireOverlayPaint,
     setBuilderDragCursor,
     clearBuilderDragCursor,
+    getActiveWireColorIndex,
     commitLinkDragResult,
   } = opts;
 
@@ -492,11 +497,11 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
             dragLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
             dragLine.setAttribute("class", "builder-wire-drag");
             dragLine.setAttribute("pointer-events", "none");
-            dragLine.setAttribute("stroke", "#f9e2af");
             dragLine.setAttribute("stroke-opacity", "0.9");
-            dragLine.setAttribute("stroke-width", "1.5");
+            dragLine.setAttribute("stroke-width", String(BUILDER_WIRE_STROKE_WIDTH_PX));
             wireOverlayEl.appendChild(dragLine);
           }
+          dragLine.setAttribute("stroke", builderWireStrokeHex(getActiveWireColorIndex()));
           dragLine.setAttribute("x1", String(e.sx));
           dragLine.setAttribute("y1", String(e.sy));
           dragLine.setAttribute("x2", String(e.ex));
@@ -666,7 +671,8 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
       } else if (externalIndexSet?.has(i)) {
         linkTag = ` data-builder-vlink="${i}"`;
       }
-      lineMarkup += `<line${linkTag} x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="#f9e2af" stroke-opacity="0.9" stroke-width="1.5"></line>`;
+      const strokeHex = builderWireStrokeHex(link.wireColorIndex);
+      lineMarkup += `<line${linkTag} x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" stroke="${strokeHex}" stroke-opacity="0.9" stroke-width="${BUILDER_WIRE_STROKE_WIDTH_PX}"></line>`;
     }
     recordPerf("wire.portResolve", resolveCost);
     recordPerf("wire.lineBuild", performance.now() - tLine0);
@@ -686,7 +692,8 @@ export function createBuilderWireOverlay(opts: BuilderWireOverlayOptions): {
           const x2 = drag.endClient.x - wrapRect.left + wrap.scrollLeft;
           const y2 = drag.endClient.y - wrapRect.top + wrap.scrollTop;
           const e = lineEndpointsAtPortEdges(fromCenter.x, fromCenter.y, fromCenter.radius, x2, y2, 0);
-          lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" class="builder-wire-drag" pointer-events="none"></line>`;
+          const dragHex = builderWireStrokeHex(getActiveWireColorIndex());
+          lineMarkup += `<line x1="${e.sx}" y1="${e.sy}" x2="${e.ex}" y2="${e.ey}" class="builder-wire-drag" pointer-events="none" stroke="${dragHex}" stroke-opacity="0.9" stroke-width="${BUILDER_WIRE_STROKE_WIDTH_PX}"></line>`;
         }
       }
     }

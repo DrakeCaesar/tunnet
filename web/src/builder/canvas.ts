@@ -45,6 +45,7 @@ import {
 } from "./canvas-scale";
 import { builderViewShellHtml } from "./builder-view-shell";
 import { createBuilderWireOverlay } from "./builder-wire-overlay";
+import { mountBuilderWireColorWheel } from "./wire-color-wheel";
 import {
   buildFilterDescription,
   buildTemplateDragImage,
@@ -63,6 +64,7 @@ import {
 } from "../packet-label-mode";
 import {
   expandBuilderState,
+  filterSettingsAtSegment,
   layerColumns,
   layerTitle,
   mapMaskForSegment,
@@ -390,6 +392,9 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   const panelPerformanceEl = root.querySelector<HTMLDivElement>("#builder-panel-performance")!;
   const templatesEl = root.querySelector<HTMLDivElement>("#builder-templates")!;
   const deleteDropZoneEl = root.querySelector<HTMLDivElement>("#builder-delete-drop-zone")!;
+  const wireColorWheelHostEl = root.querySelector<HTMLDivElement>("#builder-wire-color-wheel-host")!;
+  const wireColorChoiceRef: { index: number } = { index: 0 };
+  mountBuilderWireColorWheel(wireColorWheelHostEl, wireColorChoiceRef);
   const canvasEl = root.querySelector<HTMLDivElement>("#builder-canvas")!;
   const wireOverlayEl = root.querySelector<SVGSVGElement>("#builder-wire-overlay")!;
   const packetOverlayEl = root.querySelector<SVGSVGElement>("#builder-packet-overlay")!;
@@ -601,14 +606,14 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       panelPerformanceEl.remove();
     }
     if (sidebarCollapsed) {
-      controlsFloatingHostEl.append(panelTemplatesEl, panelScaleEl, panelSimulationEl, panelLayoutsEl);
+      controlsFloatingHostEl.append(panelTemplatesEl, wireColorWheelHostEl, panelScaleEl, panelSimulationEl, panelLayoutsEl);
       if (builderDevPerfVisible) {
         controlsFloatingHostEl.append(panelPerformanceEl);
       }
       setSimulatorPanelLayoutVariant(panelSimulationEl, "hud");
       return;
     }
-    controlsSidebarHostEl.append(panelLayoutsEl, panelScaleEl, panelSimulationEl, panelTemplatesEl);
+    controlsSidebarHostEl.append(panelLayoutsEl, panelSimulationEl, panelScaleEl, wireColorWheelHostEl, panelTemplatesEl);
     if (builderDevPerfVisible) {
       controlsSidebarHostEl.append(panelPerformanceEl);
     }
@@ -1145,6 +1150,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     },
     setBuilderDragCursor,
     clearBuilderDragCursor,
+    getActiveWireColorIndex: () => wireColorChoiceRef.index,
     commitLinkDragResult: ({ from, toPort, startedFromPacket }) => {
       if (startedFromPacket) suppressNextPacketClick = true;
       if (!toPort) {
@@ -1202,7 +1208,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       if (fromRoot.id !== toRoot.id && fromRoot.layer !== toRoot.layer && linkOpts === undefined) {
         return;
       }
-      const added = addLinkRootOneWirePerPort(state, fromRoot.id, from.port, toRoot.id, toP, linkOpts);
+      const added = addLinkRootOneWirePerPort(state, fromRoot.id, from.port, toRoot.id, toP, {
+        ...linkOpts,
+        wireColorIndex: wireColorChoiceRef.index,
+      });
       if (!added.link) return;
       state = added.state;
       schedulePersist();
@@ -1806,7 +1815,10 @@ export function mountBuilderView(options: BuilderMountOptions): void {
         : null) ?? canvasEl.querySelector<HTMLElement>(`.builder-entity[data-root-id="${rootId}"]`);
     if (!host) return;
     const tooltip = ensureFilterTooltipEl();
-    tooltip.textContent = buildFilterDescription(entity.settings);
+    const parsed = instanceId ? parseBuilderInstanceId(instanceId) : null;
+    const segmentIndex =
+      parsed !== null && Number.isInteger(parsed.segmentIndex) ? parsed.segmentIndex : entity.segmentIndex;
+    tooltip.textContent = buildFilterDescription(filterSettingsAtSegment(entity, segmentIndex));
     const r = host.getBoundingClientRect();
     tooltip.style.left = `${Math.round(r.left + r.width / 2)}px`;
     tooltip.style.top = `${Math.round(r.top - 10)}px`;
@@ -2146,6 +2158,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           sameLayerSegmentDelta: link.sameLayerSegmentDelta,
           crossLayerBlockSlot: link.crossLayerBlockSlot,
           voidBandInnerOuterCrossLayer: link.voidBandInnerOuterCrossLayer,
+          ...(link.wireColorIndex !== undefined ? { wireColorIndex: link.wireColorIndex } : {}),
         },
       );
       nextState = { ...nextState, links: [...nextState.links, createdLink] };
@@ -2205,6 +2218,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
           sameLayerSegmentDelta: link.sameLayerSegmentDelta,
           crossLayerBlockSlot: link.crossLayerBlockSlot,
           voidBandInnerOuterCrossLayer: link.voidBandInnerOuterCrossLayer,
+          ...(link.wireColorIndex !== undefined ? { wireColorIndex: link.wireColorIndex } : {}),
         },
       );
       nextState = { ...nextState, links: [...nextState.links, createdLink] };

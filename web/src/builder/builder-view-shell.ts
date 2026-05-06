@@ -32,6 +32,7 @@ export function builderViewShellHtml(canvasScale: CanvasScale): string {
             </div>
             <div id="builder-templates" class="builder-floating-templates"></div>
           </div>
+          <div id="builder-wire-color-wheel-host" class="builder-wire-color-wheel-host"></div>
           <div id="builder-panel-scale" class="builder-floating-scale-area">
             <div class="builder-floating-scale" aria-label="Canvas scale controls">
               <div class="builder-scale-controls">

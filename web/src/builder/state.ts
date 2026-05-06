@@ -42,6 +42,8 @@ export interface BuilderLinkRoot {
    * For one-wire, slotted cross-entity links only evict on an identical template, not on mirrored key overlap.
    */
   voidBandInnerOuterCrossLayer?: boolean;
+  /** Builder wire stroke slot 0..7; omitted on older saves (treated as 0). */
+  wireColorIndex?: number;
 }
 
 export interface BuilderState {
@@ -502,6 +504,7 @@ export function createLinkRoot(
     sameLayerSegmentDelta?: number;
     crossLayerBlockSlot?: number;
     voidBandInnerOuterCrossLayer?: boolean;
+    wireColorIndex?: number;
   },
 ): BuilderLinkRoot {
   const id = nextBuilderId(state, "l");
@@ -517,6 +520,7 @@ export function createLinkRoot(
     sameLayerSegmentDelta: extras?.sameLayerSegmentDelta,
     crossLayerBlockSlot: extras?.crossLayerBlockSlot,
     voidBandInnerOuterCrossLayer: extras?.voidBandInnerOuterCrossLayer,
+    ...(extras?.wireColorIndex !== undefined ? { wireColorIndex: extras.wireColorIndex } : {}),
   };
 }
 
@@ -670,6 +674,10 @@ function overlapsAnyInstancePort(
   return hit;
 }
 
+function clampWireColorIndexStored(n: number): number {
+  return Math.max(0, Math.min(7, Math.floor(Number.isFinite(n) ? n : 0)));
+}
+
 export type AddLinkRootOpts = {
   /** Same root: template segments; mirrors all clones with same port pair and segment offset. */
   sameEntityPin?: { fromSegmentIndex: number; toSegmentIndex: number };
@@ -679,6 +687,8 @@ export type AddLinkRootOpts = {
   crossLayerBlockSlot?: number;
   /** @see BuilderLinkRoot.voidBandInnerOuterCrossLayer */
   voidBandInnerOuterCrossLayer?: boolean;
+  /** Stroke palette index for new links. */
+  wireColorIndex?: number;
 };
 
 /**
@@ -696,6 +706,8 @@ export function addLinkRootOneWirePerPort(
   const byId = new Map(state.entities.map((e) => [e.id, e]));
   const pin = opts?.sameEntityPin;
   const delta = opts?.sameLayerSegmentDelta;
+  const wireColorExtra =
+    opts?.wireColorIndex !== undefined ? { wireColorIndex: clampWireColorIndexStored(opts.wireColorIndex) } : {};
   if (pin) {
     if (fromEntityId !== toEntityId) {
       return { state, link: null };
@@ -722,6 +734,7 @@ export function addLinkRootOneWirePerPort(
     const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort, {
       fromSegmentIndex,
       toSegmentIndex,
+      ...wireColorExtra,
     });
     return { state: { ...next, links: [...without, link] }, link };
   }
@@ -747,6 +760,7 @@ export function addLinkRootOneWirePerPort(
     const next: BuilderState = { ...state, links: without };
     const link = createLinkRoot(next, fromEntityId, fromPort, toEntityId, toPort, {
       sameLayerSegmentDelta: delta,
+      ...wireColorExtra,
     });
     return { state: { ...next, links: [...without, link] }, link };
   }
@@ -784,8 +798,11 @@ export function addLinkRootOneWirePerPort(
       ? {
           ...(slot !== undefined ? { crossLayerBlockSlot: slot } : {}),
           ...(ioVoid ? { voidBandInnerOuterCrossLayer: true as const } : {}),
+          ...wireColorExtra,
         }
-      : undefined,
+      : Object.keys(wireColorExtra).length > 0
+        ? wireColorExtra
+        : undefined,
   );
   return { state: { ...next, links: [...without, link] }, link };
 }

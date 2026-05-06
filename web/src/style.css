@@ -940,6 +940,34 @@ textarea {
   gap: var(--builder-hud-gap);
 }
 
+.builder-wire-color-wheel-host {
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.builder-wire-color-wheel-panel {
+  box-sizing: border-box;
+  padding: var(--builder-hud-gap);
+  border: 1px solid #2a3242;
+  border-radius: 10px;
+  background: rgba(15, 19, 27, 0.92);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+
+.builder-wire-color-wheel-wrap:focus-visible {
+  outline: 2px solid rgba(137, 180, 250, 0.85);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.builder-wire-color-wheel-svg {
+  display: block;
+}
+
+.builder-wire-color-wheel-seg {
+  stroke-linejoin: round;
+}
+
 .builder-floating-scale {
   position: relative;
   width: 280px;
@@ -1200,6 +1228,11 @@ textarea {
   pointer-events: auto;
 }
 
+.builder-controls-in-sidebar .builder-controls-sidebar-host {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-loadouts,
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation,
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-scale,
@@ -1207,6 +1240,23 @@ textarea {
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-performance {
   width: 100%;
   max-width: none;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-loadouts,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-simulation,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-tool-stack,
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-performance {
+  grid-column: 1 / -1;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-scale-area {
+  grid-column: 1;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-wire-color-wheel-host {
+  grid-column: 2;
+  width: auto;
+  justify-self: end;
 }
 
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-tool-stack {
@@ -1330,10 +1380,8 @@ textarea {
 }
 
 .builder-wire-overlay .builder-wire-drag {
-  stroke: #89b4fa;
-  stroke-width: 1.5;
   stroke-dasharray: 5 4;
-  stroke-opacity: 0.95;
+  stroke-linecap: round;
 }
 
 .builder-layer {
