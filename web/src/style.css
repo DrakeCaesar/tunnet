@@ -865,7 +865,7 @@ textarea {
   overflow: auto;
   line-height: 1;
   color: #b9c2d6;
-  background: #0f131b;
+  background: rgba(15, 19, 27, 0.56);
   border: 1px solid #2a3242;
   border-radius: 8px;
   padding: 8px;
@@ -1014,10 +1014,16 @@ textarea {
   width: 360px;
   max-width: 360px;
   box-sizing: border-box;
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  left: auto;
+  bottom: auto;
+  z-index: 8;
   padding: var(--builder-hud-gap);
   border: 1px solid #2a3242;
   border-radius: 10px;
-  background: rgba(15, 19, 27, 0.92);
+  background: rgba(15, 19, 27, 0.56);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
 }
@@ -1243,6 +1249,15 @@ textarea {
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-performance {
   width: 100%;
   max-width: none;
+}
+
+.builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-performance {
+  position: static;
+  top: auto;
+  right: auto;
+  left: auto;
+  bottom: auto;
+  z-index: auto;
 }
 
 .builder-controls-in-sidebar .builder-controls-sidebar-host .builder-floating-loadouts,

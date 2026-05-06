@@ -1065,11 +1065,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   let simDropPctTick: number | null = null;
   let simDropPctCumulative: number | null = null;
   let simEmaAchievedSpeed: number | null = null;
+  const SIM_ACHIEVED_SPEED_WINDOW_TICKS = 100;
+  const simAchievedTickEndTimesMs: number[] = [];
   let simLastStepComputeMs: number | null = null;
   let simEmaStepComputeMs: number | null = null;
   const SIM_STEP_COMPUTE_EMA_ALPHA = 0.2;
-  let simAchievedStartMs: number | null = null;
-  let simAchievedStartTick = 0;
   let simPreviousOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simCurrentOccupancy: Array<{ port: PortRef; packet: Packet }> = [];
   let simPreviousOccupancyByPacketId = new Map<number, { port: PortRef; packet: Packet }>();
@@ -1419,8 +1419,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       simDeliveredPerTick = null;
       simDropPctTick = null;
       simEmaAchievedSpeed = null;
-      simAchievedStartMs = null;
-      simAchievedStartTick = simStats.tick;
+      simAchievedTickEndTimesMs.length = 0;
       updateSimBackButtonState();
     };
     simAnimFinishFn = finishBackStep;
@@ -1664,8 +1663,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simDropPctTick = null;
     simDropPctCumulative = null;
     simEmaAchievedSpeed = null;
-    simAchievedStartMs = null;
-    simAchievedStartTick = 0;
+    simAchievedTickEndTimesMs.length = 0;
     simLastStepComputeMs = null;
     simEmaStepComputeMs = null;
     simTickDeliveredEntityRootIds = new Set();
@@ -1726,10 +1724,6 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     }
     pushSimHistorySnapshot();
     const tickWallStartMs = performance.now();
-    if (simAchievedStartMs === null) {
-      simAchievedStartMs = tickWallStartMs;
-      simAchievedStartTick = simStats.tick;
-    }
     const frame = computeNextBuilderSimFrame();
     if (!frame) return;
     simAnimating = true;
@@ -1809,9 +1803,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       simTickAnimStartMs = null;
       simTickAnimDurationMs = null;
       simAnimFinishFn = null;
-      if (simAchievedStartMs !== null) {
-        const elapsedMs = now - simAchievedStartMs;
-        const completedTicks = simStats.tick - simAchievedStartTick;
+      simAchievedTickEndTimesMs.push(now);
+      if (simAchievedTickEndTimesMs.length > SIM_ACHIEVED_SPEED_WINDOW_TICKS) {
+        simAchievedTickEndTimesMs.splice(
+          0,
+          simAchievedTickEndTimesMs.length - SIM_ACHIEVED_SPEED_WINDOW_TICKS,
+        );
+      }
+      if (simAchievedTickEndTimesMs.length >= 2) {
+        const first = simAchievedTickEndTimesMs[0];
+        const last = simAchievedTickEndTimesMs[simAchievedTickEndTimesMs.length - 1];
+        const elapsedMs = last - first;
+        const completedTicks = simAchievedTickEndTimesMs.length - 1;
         if (elapsedMs > 1 && completedTicks > 0) {
           simEmaAchievedSpeed = (completedTicks * 1000) / elapsedMs;
         }
@@ -1870,8 +1873,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     simPlayPauseBtn.textContent = simPlaying ? "❚❚" : "▶";
     if (simPlaying && !wasPlaying) {
       simEmaAchievedSpeed = null;
-      simAchievedStartMs = null;
-      simAchievedStartTick = simStats.tick;
+      simAchievedTickEndTimesMs.length = 0;
     }
     if (!simPlaying && !simAnimating && (simAnimHandle !== null || simTickTimeoutHandle !== null)) {
       cancelBuilderSimTickTimers();
@@ -5278,8 +5280,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     persistBuilderPageState();
     simSpeed = speedMultiplierFromExponent(simSpeedExponent);
     simEmaAchievedSpeed = null;
-    simAchievedStartMs = null;
-    simAchievedStartTick = simStats.tick;
+    simAchievedTickEndTimesMs.length = 0;
     // If we're mid-tick animation, retime smoothly instead of cancelling/restarting.
     if (simAnimating && simTickAnimStartMs !== null && simTickAnimDurationMs !== null) {
       const now = performance.now();

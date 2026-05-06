@@ -16,7 +16,7 @@ export function formatSendRateLabel(exp: number): string {
 
 /** Tick animation speed = 2^exponent (0.25× … 64×). */
 export const SPEED_EXP_MIN = -2;
-export const SPEED_EXP_MAX = 6;
+export const SPEED_EXP_MAX = 8;
 export const SPEED_EXP_DEFAULT = 1;
 
 export function speedMultiplierFromExponent(exp: number): number {
