@@ -26,6 +26,7 @@ import {
 import {
   formatPacketLabelSubject,
   PACKET_DOT_RADIUS_PX,
+  PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX,
   PACKET_IP_LABEL_OFFSET_X_PX,
   PACKET_IP_LABEL_OFFSET_Y_PX,
   PACKET_LABEL_ANCHOR_X_PX,
@@ -1126,13 +1127,160 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   };
   let packetLabelFontFamily = "sans-serif";
   let packetLabelFontSizePx = 11;
+  /** Avg advance per char for src/dest lines (calibrated from sample IPv4 at current label font). */
+  let packetIpCharAdvancePx = PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX;
+  const packetSubjectLineWidthCache = new Map<string, number>();
+  type PacketLabelTextureEntry = { canvas: HTMLCanvasElement; cssW: number; cssH: number };
+  const PACKET_LABEL_TEXTURE_CACHE_MAX = 192;
+  const packetLabelTextureCache = new Map<string, PacketLabelTextureEntry>();
   const refreshPacketLabelCanvasFont = (): void => {
     const rootStyle = window.getComputedStyle(root);
     const size = Number.parseFloat(rootStyle.fontSize || "");
     packetLabelFontSizePx = Number.isFinite(size) && size > 0 ? size : 11;
     packetLabelFontFamily = rootStyle.fontFamily || "sans-serif";
+    packetSubjectLineWidthCache.clear();
+    packetLabelTextureCache.clear();
+    const cal = document.createElement("canvas").getContext("2d");
+    if (cal) {
+      cal.font = `600 ${packetLabelFontSizePx}px ${packetLabelFontFamily}`;
+      const w = cal.measureText("0.0.0.0").width;
+      packetIpCharAdvancePx = w > 0 ? w / 7 : PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX;
+    } else {
+      packetIpCharAdvancePx = PACKET_IP_LABEL_MONO_CHAR_ADVANCE_PX * (packetLabelFontSizePx / 11);
+    }
   };
   refreshPacketLabelCanvasFont();
+  const cachedSubjectLineWidth = (
+    ctx: CanvasRenderingContext2D,
+    subjectFont: string,
+    displaySubject: string,
+  ): number => {
+    let w = packetSubjectLineWidthCache.get(displaySubject);
+    if (w === undefined) {
+      const prev = ctx.font;
+      ctx.font = subjectFont;
+      w = ctx.measureText(displaySubject).width;
+      ctx.font = prev;
+      packetSubjectLineWidthCache.set(displaySubject, w);
+    }
+    return w;
+  };
+  let packetLabelMeasureCtx: CanvasRenderingContext2D | null = null;
+  const getPacketLabelMeasureCtx = (): CanvasRenderingContext2D | null => {
+    if (!packetLabelMeasureCtx) {
+      const c = document.createElement("canvas");
+      c.width = 8;
+      c.height = 8;
+      packetLabelMeasureCtx = c.getContext("2d");
+    }
+    return packetLabelMeasureCtx;
+  };
+  const packetLabelTextureFillRoundRect = (
+    c: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number,
+  ): void => {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r);
+    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r);
+    c.quadraticCurveTo(x, y, x + r, y);
+    c.closePath();
+  };
+  const buildPacketLabelTexture = (
+    dpr: number,
+    mode: "ips" | "ipsSubject",
+    src: string,
+    dest: string,
+    formattedSubject: string,
+  ): PacketLabelTextureEntry => {
+    const subj = mode === "ipsSubject" ? formattedSubject : "";
+    const lines = subj ? [src, dest, subj] : [src, dest];
+    const primaryFont = `600 ${packetLabelFontSizePx}px ${packetLabelFontFamily}`;
+    const subjectFont = `500 ${packetLabelFontSizePx}px ${packetLabelFontFamily}`;
+    const ipBlockW = Math.max(src.length, dest.length) * packetIpCharAdvancePx;
+    let maxTextWidth = ipBlockW;
+    if (subj) {
+      const mc = getPacketLabelMeasureCtx();
+      if (mc) maxTextWidth = Math.max(ipBlockW, cachedSubjectLineWidth(mc, subjectFont, subj));
+    }
+    const padX = 6;
+    const padY = 4;
+    const lineGap = Math.max(2, Math.round(packetLabelFontSizePx * 0.2));
+    const textBlockHeight =
+      lines.length * packetLabelFontSizePx + Math.max(0, lines.length - 1) * lineGap;
+    const cssW = Math.ceil(maxTextWidth + padX * 2);
+    const cssH = Math.ceil(textBlockHeight + padY * 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(cssW * dpr));
+    canvas.height = Math.max(1, Math.ceil(cssH * dpr));
+    const c = canvas.getContext("2d");
+    if (!c) return { canvas, cssW, cssH };
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = "rgba(15, 19, 27, 0.88)";
+    c.strokeStyle = "rgba(58, 68, 90, 0.9)";
+    c.lineWidth = 1;
+    packetLabelTextureFillRoundRect(c, 0, 0, cssW, cssH, 4);
+    c.fill();
+    c.stroke();
+    c.font = primaryFont;
+    c.textBaseline = "top";
+    const textX = padX;
+    let textY = padY;
+    c.fillStyle = "#8f98aa";
+    c.fillText(src, textX, textY);
+    textY += packetLabelFontSizePx + lineGap;
+    c.fillStyle = "#f4f7ff";
+    c.fillText(dest, textX, textY);
+    if (subj) {
+      textY += packetLabelFontSizePx + lineGap;
+      c.font = subjectFont;
+      c.fillStyle = "#7a8499";
+      c.fillText(subj, textX, textY);
+    }
+    return { canvas, cssW, cssH };
+  };
+  const packetLabelTextureCacheKey = (
+    dpr: number,
+    mode: "ips" | "ipsSubject",
+    src: string,
+    dest: string,
+    formattedSubject: string,
+  ): string =>
+    JSON.stringify([dpr, packetLabelFontSizePx, packetLabelFontFamily, mode, src, dest, formattedSubject]);
+  const evictPacketLabelTextureOneIfNeeded = (): void => {
+    if (packetLabelTextureCache.size < PACKET_LABEL_TEXTURE_CACHE_MAX) return;
+    const k = packetLabelTextureCache.keys().next().value;
+    if (k !== undefined) packetLabelTextureCache.delete(k);
+  };
+  const ensurePacketLabelTexture = (
+    dpr: number,
+    mode: "ips" | "ipsSubject",
+    src: string,
+    dest: string,
+    subject: string | undefined,
+  ): PacketLabelTextureEntry => {
+    const formattedSubject = mode === "ipsSubject" ? formatPacketLabelSubject(subject) : "";
+    const key = packetLabelTextureCacheKey(dpr, mode, src, dest, formattedSubject);
+    const hit = packetLabelTextureCache.get(key);
+    if (hit) {
+      packetLabelTextureCache.delete(key);
+      packetLabelTextureCache.set(key, hit);
+      return hit;
+    }
+    evictPacketLabelTextureOneIfNeeded();
+    const built = buildPacketLabelTexture(dpr, mode, src, dest, formattedSubject);
+    packetLabelTextureCache.set(key, built);
+    return built;
+  };
   let packetOverlayExtentDirty = true;
   let packetOverlayExtentWidth = 0;
   let packetOverlayExtentHeight = 0;
@@ -2129,11 +2277,16 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function setSelection(next: Selection, opts?: SetSelectionOpts): void {
+    const prevSelectedPacketId = selection?.kind === "packet" ? selection.packetId : null;
     if (!(opts?.dropTraceFromView && next?.kind === "entity")) {
       simDropBoard.traceDeviceId = null;
     }
     const hadLinkDrag = wireBag.w!.isLinkDragActive();
     selection = next;
+    const nextSelectedPacketId = selection?.kind === "packet" ? selection.packetId : null;
+    if (prevSelectedPacketId !== nextSelectedPacketId) {
+      invalidateBuilderPacketRenderCache();
+    }
     selectedEntityRootIds.clear();
     wireBag.w!.clearLinkDrag();
     if (opts?.dropTraceFromView && next?.kind === "entity") {
@@ -2152,11 +2305,15 @@ export function mountBuilderView(options: BuilderMountOptions): void {
   }
 
   function setEntitySelectionSet(ids: Set<string>): void {
+    const prevSelectedPacketId = selection?.kind === "packet" ? selection.packetId : null;
     simDropBoard.traceDeviceId = null;
     const hadLinkDrag = wireBag.w!.isLinkDragActive();
     selectedEntityRootIds = new Set(ids);
     const firstId = selectedEntityRootIds.values().next().value as string | undefined;
     selection = firstId ? { kind: "entity", rootId: firstId } : null;
+    if (prevSelectedPacketId !== null) {
+      invalidateBuilderPacketRenderCache();
+    }
     wireBag.w!.clearLinkDrag();
     renderInspector();
     applySelectionToCanvas();
@@ -3012,8 +3169,7 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     const preparedRouteByKey = packetPreparedRouteByKey;
     const prepared: SimPreparedPacketRender[] = [];
     const tPoly0 = performance.now();
-    const expandedForPackets = expandedBuilderStateForSimUi();
-    const void003CandidateIds = void003BlockCandidateDeviceIdsInOrder(expandedForPackets);
+    const selectedPacketId = selection?.kind === "packet" ? selection.packetId : null;
 
     for (const { port, packet } of simCurrentOccupancy) {
       const fromEntry = simPreviousOccupancyByPacketId.get(packet.id);
@@ -3050,35 +3206,38 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       }
 
       let routeToDest: SimPreparedPolyline | null = null;
-      if (
-        finalDestRef &&
-        (finalDestRef.deviceId !== toRef.deviceId || finalDestRef.port !== toRef.port)
-      ) {
-        const fullRoute = buildPacketFullRouteTemplate(toRef, finalDestRef, {
-          src: packet.src,
-          dest: packet.dest,
-          ttl: packet.ttl,
-        });
-        routeToDest = fullRoute ? preparePolylineFromRouteTemplate(fullRoute, centerCache) : null;
-        if (!routeToDest || routeToDest.points.length < 2 || routeToDest.totalLen < 1) {
-          routeToDest = null;
-        }
-      } else if (!finalDestRef && isPacketDestVoid003Address(packet.dest)) {
-        for (const deviceId of void003CandidateIds) {
-          const fullRoute = buildPacketFullRouteTemplate(
-            toRef,
-            { deviceId, port: 0 },
-            { src: packet.src, dest: packet.dest, ttl: packet.ttl },
-            128,
-            { stopAtDeviceId: deviceId },
-          );
-          if (!fullRoute) continue;
-          const poly = preparePolylineFromRouteTemplate(fullRoute, centerCache);
-          if (!poly || poly.points.length < 2 || poly.totalLen < 1) continue;
-          routeToDest = poly;
-          const endRef = fullRoute[fullRoute.length - 1]!;
-          pFinal = builderPortCenterInOverlayCoords(endRef, centerCache);
-          break;
+      if (selectedPacketId === packet.id) {
+        if (
+          finalDestRef &&
+          (finalDestRef.deviceId !== toRef.deviceId || finalDestRef.port !== toRef.port)
+        ) {
+          const fullRoute = buildPacketFullRouteTemplate(toRef, finalDestRef, {
+            src: packet.src,
+            dest: packet.dest,
+            ttl: packet.ttl,
+          });
+          routeToDest = fullRoute ? preparePolylineFromRouteTemplate(fullRoute, centerCache) : null;
+          if (!routeToDest || routeToDest.points.length < 2 || routeToDest.totalLen < 1) {
+            routeToDest = null;
+          }
+        } else if (!finalDestRef && isPacketDestVoid003Address(packet.dest)) {
+          const void003CandidateIds = void003BlockCandidateDeviceIdsInOrder(expandedBuilderStateForSimUi());
+          for (const deviceId of void003CandidateIds) {
+            const fullRoute = buildPacketFullRouteTemplate(
+              toRef,
+              { deviceId, port: 0 },
+              { src: packet.src, dest: packet.dest, ttl: packet.ttl },
+              128,
+              { stopAtDeviceId: deviceId },
+            );
+            if (!fullRoute) continue;
+            const poly = preparePolylineFromRouteTemplate(fullRoute, centerCache);
+            if (!poly || poly.points.length < 2 || poly.totalLen < 1) continue;
+            routeToDest = poly;
+            const endRef = fullRoute[fullRoute.length - 1]!;
+            pFinal = builderPortCenterInOverlayCoords(endRef, centerCache);
+            break;
+          }
         }
       }
       const guideTarget = pFinal ?? (line?.points[line.points.length - 1] ?? pb);
@@ -3265,65 +3424,11 @@ export function mountBuilderView(options: BuilderMountOptions): void {
       packetHitRegionCount += 1;
       const labelMode = builderPageState.packetLabelMode;
       if (labelMode !== "hide") {
-        const showSubjectLine = labelMode === "ipsSubject";
-        const subjRaw = formatPacketLabelSubject(render.subject);
-        const subj = showSubjectLine ? subjRaw : "";
-        const lines = subj ? [render.src, render.dest, subj] : [render.src, render.dest];
-        const primaryFont = `600 ${packetLabelFontSizePx}px ${packetLabelFontFamily}`;
-        const subjectFont = `500 ${packetLabelFontSizePx}px ${packetLabelFontFamily}`;
-        ctx.font = primaryFont;
-        let maxTextWidth = 0;
-        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-          const line = lines[lineIndex]!;
-          if (lineIndex === 2) ctx.font = subjectFont;
-          const w = ctx.measureText(line).width;
-          if (w > maxTextWidth) maxTextWidth = w;
-          if (lineIndex === 2) ctx.font = primaryFont;
-        }
-        const padX = 6;
-        const padY = 4;
-        const lineGap = Math.max(2, Math.round(packetLabelFontSizePx * 0.2));
-        const textBlockHeight =
-          lines.length * packetLabelFontSizePx + Math.max(0, lines.length - 1) * lineGap;
-        const dims = {
-          width: Math.ceil(maxTextWidth + padX * 2),
-          height: Math.ceil(textBlockHeight + padY * 2),
-        };
+        const mode: "ips" | "ipsSubject" = labelMode === "ipsSubject" ? "ipsSubject" : "ips";
+        const tex = ensurePacketLabelTexture(dpr, mode, render.src, render.dest, render.subject);
         const boxX = render.x + PACKET_LABEL_ANCHOR_X_PX + PACKET_IP_LABEL_OFFSET_X_PX;
-        const boxY = render.y - dims.height * 0.5;
-        ctx.fillStyle = "rgba(15, 19, 27, 0.88)";
-        ctx.strokeStyle = "rgba(58, 68, 90, 0.9)";
-        ctx.lineWidth = 1;
-        const r = 4;
-        ctx.beginPath();
-        ctx.moveTo(boxX + r, boxY);
-        ctx.lineTo(boxX + dims.width - r, boxY);
-        ctx.quadraticCurveTo(boxX + dims.width, boxY, boxX + dims.width, boxY + r);
-        ctx.lineTo(boxX + dims.width, boxY + dims.height - r);
-        ctx.quadraticCurveTo(boxX + dims.width, boxY + dims.height, boxX + dims.width - r, boxY + dims.height);
-        ctx.lineTo(boxX + r, boxY + dims.height);
-        ctx.quadraticCurveTo(boxX, boxY + dims.height, boxX, boxY + dims.height - r);
-        ctx.lineTo(boxX, boxY + r);
-        ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.font = primaryFont;
-        ctx.textBaseline = "top";
-        const textX = boxX + padX;
-        let textY = boxY + padY;
-        ctx.fillStyle = "#8f98aa";
-        ctx.fillText(render.src, textX, textY);
-        textY += packetLabelFontSizePx + lineGap;
-        ctx.fillStyle = "#f4f7ff";
-        ctx.fillText(render.dest, textX, textY);
-        if (subj) {
-          textY += packetLabelFontSizePx + lineGap;
-          ctx.font = subjectFont;
-          ctx.fillStyle = "#7a8499";
-          ctx.fillText(subj, textX, textY);
-          ctx.font = primaryFont;
-        }
+        const boxY = render.y - tex.cssH * 0.5;
+        ctx.drawImage(tex.canvas, 0, 0, tex.canvas.width, tex.canvas.height, boxX, boxY, tex.cssW, tex.cssH);
       }
     }
     ctx.setLineDash([]);
