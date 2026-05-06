@@ -429,12 +429,18 @@ export function mountBuilderView(options: BuilderMountOptions): void {
     clientWidth: 0,
     clientHeight: 0,
   };
+  let packetOverlayViewportScrollRaf: number | null = null;
   function syncPacketOverlayViewportCacheFromDom(): void {
     if (!canvasWrapEl) return;
     packetOverlayViewportCache.scrollLeft = canvasWrapEl.scrollLeft;
     packetOverlayViewportCache.scrollTop = canvasWrapEl.scrollTop;
     packetOverlayViewportCache.clientWidth = canvasWrapEl.clientWidth;
     packetOverlayViewportCache.clientHeight = canvasWrapEl.clientHeight;
+    if (packetOverlayViewportScrollRaf !== null) return;
+    packetOverlayViewportScrollRaf = requestAnimationFrame(() => {
+      packetOverlayViewportScrollRaf = null;
+      renderBuilderPacketCircles(simPacketProgress);
+    });
   }
   const wireBag: { w: ReturnType<typeof createBuilderWireOverlay> | null } = { w: null };
   const boxEl = document.createElement("div");
